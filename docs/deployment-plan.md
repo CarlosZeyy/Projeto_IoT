@@ -19,8 +19,8 @@ Este documento é de responsabilidade do agente `security-devops` (SPEC-015). Os
 | Render (Web Service free) | `qc-api` | Dorme após 15 min sem tráfego; acorda em cerca de 1 min; 750 h/mês por workspace. RAM e CPU não informadas na página (≈ 512 MB, não confirmado) | <https://render.com/docs/free> | 2026-10-12 |
 | Koyeb (Hobby) — **reserva** | `qc-api` se o Render falhar | 1 web service, 512 MB, 0,1 vCPU, dorme após 1 h, sem cartão | <https://www.koyeb.com/pricing> | 2026-10-12 |
 | Supabase Free | Postgres | 500 MB de banco, 2 projetos ativos, **pausa após 1 semana sem atividade**, 5 GB de egress | <https://supabase.com/pricing> | 2026-10-12 |
-| Streamlit Community Cloud | `qc-dashboard` | Cerca de 0,078–2 CPU e 690 MB–2,7 GB de RAM; dorme após 12 h sem tráfego (qualquer visitante acorda); repositório privado exige permissão extra no GitHub | <https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app> | 2026-10-12 |
-| GitHub (repo privado + Actions) | Código, CI, keep-alive, Releases para o `model.onnx` | Actions grátis com cota mensal para repositórios privados | <https://docs.github.com/billing> | a verificar na SPEC-015 (CA-18) |
+| Streamlit Community Cloud | `qc-dashboard` | Cerca de 0,078–2 CPU e 690 MB–2,7 GB de RAM; dorme após 12 h sem tráfego (qualquer visitante acorda); repositório público não exige permissão extra (privado exigiria) | <https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app> | 2026-10-12 |
+| GitHub (repo **público** + Actions) | Código, CI, keep-alive, Releases para o `model.onnx` | Actions com runners padrão gratuito para repositórios públicos | <https://docs.github.com/billing> | a verificar na SPEC-015 (CA-18) |
 | Fly.io / Cloud Run / Oracle Cloud | **Não usar** | Exigem cartão ou conta de faturamento (violam R-01) | <https://docs.fly.io/about/pricing>, <https://docs.cloud.google.com/free/docs/free-cloud-features>, <https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier.htm> | 2026-10-12 |
 | HiveMQ Cloud | **Não usar no MVP** | A página oficial não lista mais plano gratuito Serverless | <https://www.hivemq.com/pricing/> | 2026-10-12 |
 
@@ -49,14 +49,14 @@ Chaves de dispositivo:
    3. Conferir que o RLS está ligado nas duas tabelas.
    4. Copiar a connection string do **pooler** (modo transaction). A API conecta com `prepare_threshold=None` (ADR-006).
 2. **Render:**
-   1. Criar o Web Service a partir do repositório privado, usando o blueprint `infra/render.yaml`.
+   1. Criar o Web Service a partir do repositório público `CarlosZeyy/Projeto_IoT`, usando o blueprint `infra/render.yaml`.
    2. Build: `pip install uv && uv sync --package qc-api --frozen --no-dev`.
    3. Start: `uv run --package qc-api uvicorn qc_api.main:app --host 0.0.0.0 --port $PORT`.
    4. Health check: `/api/v1/health`.
    5. Definir `DATABASE_URL` e `READ_API_KEY`.
 3. **Dispositivos:** rodar `register_device.py` para `edge-01` e `sim-01` e guardar as chaves nos `.env` locais.
 4. **Streamlit CC:**
-   1. Conectar o repositório privado. Entry point: `dashboard/app.py`.
+   1. Conectar o repositório público. Entry point: `dashboard/app.py`.
    2. Dependências: `dashboard/requirements.txt`, gerado por `uv export --package qc-dashboard --no-hashes --frozen`. A SPEC-015 confirma se a dependência local `packages/contracts` instala no Streamlit CC; se não, use o fallback descrito na SPEC.
    3. Secrets: `API_BASE_URL` e `READ_API_KEY`.
 5. **Keep-alive:** o workflow `.github/workflows/keepalive.yml` faz `GET $KEEPALIVE_URL/api/v1/health` a cada 3 dias. Isso mantém o Supabase ativo, porque o `/health` executa `SELECT 1`.

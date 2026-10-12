@@ -55,7 +55,7 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 ## 6. Perguntas em aberto
 
 1. **O que é "lote concluído"?** O contrato não tem esse evento. Opções: nenhuma inspeção no lote há X minutos (ex.: 10); o mesmo dispositivo começou outro lote; ou um campo/endpoint novo de fechamento de lote (mudança de contrato).
-2. **Gatilho:** ingestão (acorda junto com o Render) × verificação periódica pelo GitHub Actions (consome a cota de minutos do repositório privado; intervalo mínimo de 5 min).
+2. **Gatilho:** ingestão (acorda junto com o Render) × verificação periódica pelo GitHub Actions (gratuito em repositório público, mas cada execução acorda o Render; intervalo mínimo de 5 min).
 3. Enquanto houver menos de `baseline_lots` lotes, `p̄` muda a cada lote novo e um lote antigo pode passar a ficar fora de controle. Alertar só o lote recém-concluído, avaliado no momento da conclusão?
 4. Permitir alertas de dados `simulated` na demo, com o selo "SIMULADO" no texto?
 5. Limite global de mensagens por hora para evitar spam em caso de bug.

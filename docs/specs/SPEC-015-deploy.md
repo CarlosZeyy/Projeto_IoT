@@ -84,7 +84,7 @@ Código 0 se todas passarem; 1 se alguma falhar. Nenhuma chave é impressa.
 1. Supabase: usar o projeto já existente (conta pessoal, sem cartão); aplicar `infra/migrations/*.sql`; rodar as consultas do CA-14; copiar a connection string do pooler.
 2. Render: "New → Blueprint" com `infra/render.yaml`; definir `DATABASE_URL` e `READ_API_KEY` (gerada com `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
 3. Dispositivos: `register_device.py` para `edge-01` e `sim-01`; chaves nos `.env` locais.
-4. Streamlit CC: app do repositório privado, branch `main`, entrypoint `dashboard/app.py`, Python 3.12, Secrets `API_BASE_URL` e `READ_API_KEY`.
+4. Streamlit CC: app do repositório público, branch `main`, entrypoint `dashboard/app.py`, Python 3.12, Secrets `API_BASE_URL` e `READ_API_KEY`.
 5. GitHub: secret `KEEPALIVE_URL` = URL base da API; disparar o workflow manualmente.
 6. Rodar `scripts/smoke_test.py` e `scripts/simulate.py --lots 3` contra produção.
 
@@ -123,7 +123,7 @@ Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é i
 
 - A allowlist do `security-devops` (SPEC-001 §4.6) já cobre todos os caminhos que esta SPEC exige: `infra/**`, `.github/**`, `dashboard/requirements.txt`, `.streamlit/**`, `scripts/smoke_test.py`, `.env.example`, `.gitignore`, `pyproject.toml`, `uv.lock` e `docs/deployment-plan.md`.
 - `uv run` sincroniza o ambiente antes de rodar e, por padrão, inclui o grupo `dev`. Se o log do Render mostrar instalação no start, use `uv run --frozen --no-dev --package qc-api ...` e atualize §4.1, o `deployment-plan.md` e o CA-01 por `SPEC_ISSUE`.
-- Os limites de free tier mudam: confira cada um na fonte oficial antes de fixar e atualize "Verificado em" (inclusive a cota do GitHub Actions para repositório privado, hoje "a verificar na SPEC-015 (CA-18)").
+- Os limites de free tier mudam: confira cada um na fonte oficial antes de fixar e atualize "Verificado em" (inclusive as regras do GitHub Actions para repositório público, hoje "a verificar na SPEC-015 (CA-18)").
 - Os testes que conferem a detecção do CA-05 devem montar os exemplos de segredo por concatenação em tempo de execução, para o próprio arquivo de teste não casar com os padrões.
 - Workflows agendados podem atrasar alguns minutos; o intervalo de 3 dias tem folga contra a pausa de 7 dias do Supabase.
 
