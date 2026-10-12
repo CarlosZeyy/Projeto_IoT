@@ -6,7 +6,7 @@
 | Rodada | r1 |
 | Autor | developer |
 | Branch | `spec/SPEC-022-manutencao-setup` |
-| Commits | `ebef2a0`, `07a912c`, `38c5f07` (+ o commit deste relatório) |
+| Commits | `9701352`, `4507ae4`, `9e652d3` (+ o commit deste relatório) |
 
 ## Resumo
 
@@ -45,7 +45,7 @@ Mutação: rodei os testes novos de `tests/test_guard_paths.py` contra a versão
 
 Diretório de trabalho: raiz do repositório (`/home/carlos/Área de trabalho/Projeto_IoT_AI_Agent`). Não usei `Write`/`Edit` em nenhum arquivo de `.claude/**` nem em `reviews/README.md`.
 
-### 1. `.claude/hooks/guard_paths.py` (commit `ebef2a0`)
+### 1. `.claude/hooks/guard_paths.py` (commit `9701352`)
 
 ```bash
 cd "/home/carlos/Área de trabalho/Projeto_IoT_AI_Agent" && python3 - <<'EOF'
@@ -149,7 +149,7 @@ cd "/home/carlos/Área de trabalho/Projeto_IoT_AI_Agent" && S=/tmp/claude-1000/-
 
 Resultado: `30 failed, 86 passed` com o hook da `main` e `116 passed` com o hook novo.
 
-### 2. `.claude/agents/architect.md` e `reviews/README.md` (commit `38c5f07`)
+### 2. `.claude/agents/architect.md` e `reviews/README.md` (commit `9e652d3`)
 
 ```bash
 cd "/home/carlos/Área de trabalho/Projeto_IoT_AI_Agent" && python3 - <<'EOF'
