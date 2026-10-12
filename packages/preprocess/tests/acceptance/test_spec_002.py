@@ -460,3 +460,48 @@ def test_extra_bytes_and_path_give_same_tensor(tmp_path: Path) -> None:
 def test_extra_default_params_argument() -> None:
     img = formula_image(64, 48)
     assert preprocess(img).tobytes() == preprocess(img, PreprocessParams()).tobytes()
+
+
+# --------------------------------------------------------------------------- RV-07 (r1)
+# r1 review RV-07, fixed in r2: running out of memory is a server failure, not an image
+# defect, so load_image must let MemoryError propagate instead of wrapping it into
+# InvalidImageError. No mock: a fresh process gets a real address-space limit (Linux only)
+# well below what decoding (40 MB) plus RGB conversion (120 MB) of an 8000x5000 "L" PNG
+# needs, so load_image cannot succeed and the out-of-memory condition is genuine.
+
+_MEMORY_LIMIT_SCRIPT = """
+import gc, io, resource, sys
+from PIL import Image
+from qc_preprocess import InvalidImageError, load_image
+
+buf = io.BytesIO()
+Image.new("L", (8000, 5000), 7).save(buf, "PNG")
+data = buf.getvalue()
+del buf
+gc.collect()
+with open("/proc/self/status") as status:
+    vm = next(int(line.split()[1]) * 1024 for line in status if line.startswith("VmSize"))
+resource.setrlimit(resource.RLIMIT_AS, (vm + int(sys.argv[1]) * 2**20, resource.RLIM_INFINITY))
+try:
+    load_image(data)
+except MemoryError:
+    print("MemoryError")
+except InvalidImageError as exc:
+    print("InvalidImageError", type(exc.__cause__).__name__)
+else:
+    print("OK")
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="needs RLIMIT_AS and /proc")
+@pytest.mark.parametrize("headroom_mb", [60, 120])
+def test_extra_rv07_memory_error_propagates_from_load_image(headroom_mb: int) -> None:
+    proc = subprocess.run(
+        [sys.executable, "-c", _MEMORY_LIMIT_SCRIPT, str(headroom_mb)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "MemoryError"

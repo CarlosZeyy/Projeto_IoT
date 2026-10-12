@@ -918,36 +918,99 @@ def test_extra_models_validate_enum_members_directly() -> None:
     assert dumped["source"] == "simulated" and dumped["grade"] == "unusable"
 
 
-# --------------------------------------------------------------------------- known bugs
-# Documented in reviews/SPEC-002/r1-test-report.md. Non-strict xfail: the test states the
-# expected behavior and does not hide the bug; it turns into XPASS once the bug is fixed.
+# --------------------------------------------------------------------------- T-01 (r1)
+# Regression tests for bug T-01 (reviews/SPEC-002/r1-test-report.md, RV-01 in the r1
+# review): a datetime that leaves the datetime range once shifted to UTC raised a raw
+# OverflowError instead of a ValidationError. Section 4.3 requires every datetime to be
+# validated and normalized to UTC. Fixed in r2; these were an xfail in r1.
+
+YEAR1_PLUS5 = "0001-01-01T00:00:00+05:00"  # UTC instant is before year 1
+YEAR9999_MINUS5 = "9999-12-31T23:59:59-05:00"  # UTC instant is after year 9999
 
 
-@pytest.mark.xfail(
-    reason="T-01: datetime out of range after UTC normalization raises OverflowError",
-    raises=OverflowError,
-    strict=False,
-)
+def _json_ready(payload: dict[str, Any]) -> dict[str, Any]:
+    return {k: v.isoformat() if isinstance(v, datetime) else v for k, v in payload.items()}
+
+
+T01_CASES = [
+    ("create-inspected-year1", InspectionCreate, base_payload, "inspected_at", YEAR1_PLUS5),
+    ("create-inspected-9999", InspectionCreate, base_payload, "inspected_at", YEAR9999_MINUS5),
+    ("read-inspected-year1", InspectionRead, read_payload, "inspected_at", YEAR1_PLUS5),
+    ("read-inspected-9999", InspectionRead, read_payload, "inspected_at", YEAR9999_MINUS5),
+    ("read-received-year1", InspectionRead, read_payload, "received_at", YEAR1_PLUS5),
+    ("read-received-9999", InspectionRead, read_payload, "received_at", YEAR9999_MINUS5),
+    (
+        "timeseries-bucket",
+        TimeseriesPoint,
+        lambda: dict(TIMESERIES_JSON),
+        "bucket_start",
+        YEAR1_PLUS5,
+    ),
+    ("spc-point-started", SpcPoint, lambda: dict(SPC_JSON["points"][0]), "started_at", YEAR1_PLUS5),
+    ("spc-point-ended", SpcPoint, lambda: dict(SPC_JSON["points"][0]), "ended_at", YEAR9999_MINUS5),
+    ("lot-started", LotSummary, lambda: dict(LOT_JSON), "started_at", YEAR1_PLUS5),
+    ("lot-ended", LotSummary, lambda: dict(LOT_JSON), "ended_at", YEAR9999_MINUS5),
+]
+
+
+def _assert_single_value_error(exc: ValidationError, loc: tuple[Any, ...]) -> None:
+    errors = exc.errors()
+    assert len(errors) == 1, errors
+    assert errors[0]["type"] == "value_error"
+    assert errors[0]["loc"] == loc
+
+
+@pytest.mark.parametrize("how", ["python", "json", "datetime-object"])
 @pytest.mark.parametrize(
-    ("model", "field", "value"),
-    [
-        (InspectionCreate, "inspected_at", "0001-01-01T00:00:00+05:00"),
-        (InspectionCreate, "inspected_at", "9999-12-31T23:59:59-05:00"),
-        (InspectionRead, "received_at", "9999-12-31T23:59:59-05:00"),
-    ],
-    ids=["create-year1", "create-year9999", "read-received-year9999"],
+    ("model", "make", "field", "value"),
+    [c[1:] for c in T01_CASES],
+    ids=[c[0] for c in T01_CASES],
 )
-def test_bug_t01_out_of_range_datetime_raises_validation_error(
-    model: Any, field: str, value: str
+def test_extra_t01_out_of_range_after_utc_is_validation_error(
+    model: Any, make: Any, field: str, value: str, how: str
 ) -> None:
-    payload = read_payload() if model is InspectionRead else base_payload()
-    payload[field] = value
-    payload["inspected_at"] = (
-        payload["inspected_at"]
-        if isinstance(payload["inspected_at"], str)
-        else payload["inspected_at"].isoformat()
-    )
-    if isinstance(payload.get("received_at"), datetime):
-        payload["received_at"] = payload["received_at"].isoformat()
-    with pytest.raises(ValidationError):
-        model.model_validate_json(json.dumps(payload))
+    payload = make()
+    payload[field] = datetime.fromisoformat(value) if how == "datetime-object" else value
+    with pytest.raises(ValidationError) as info:
+        if how == "json":
+            model.model_validate_json(json.dumps(_json_ready(payload)))
+        else:
+            model.model_validate(payload)
+    _assert_single_value_error(info.value, (field,))
+
+
+def test_extra_t01_batch_points_to_the_bad_item_only() -> None:
+    items = [_json_ready(base_payload(inspection_id=str(uuid.uuid4()))) for _ in range(3)]
+    items[1]["inspected_at"] = YEAR1_PLUS5
+    with pytest.raises(ValidationError) as info:
+        BatchCreate.model_validate_json(json.dumps({"items": items}))
+    _assert_single_value_error(info.value, ("items", 1, "inspected_at"))
+
+
+def test_extra_t01_nested_spc_point_is_validation_error() -> None:
+    data = json.loads(json.dumps(SPC_JSON))
+    data["points"][0]["started_at"] = YEAR1_PLUS5
+    with pytest.raises(ValidationError) as info:
+        SpcResponse.model_validate_json(json.dumps(data))
+    _assert_single_value_error(info.value, ("points", 0, "started_at"))
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0001-01-01T00:00:00Z", datetime(1, 1, 1, tzinfo=UTC)),
+        ("0001-01-01T05:00:00+05:00", datetime(1, 1, 1, tzinfo=UTC)),
+        ("9999-12-31T23:59:59Z", datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)),
+        ("9999-12-31T18:59:59-05:00", datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)),
+    ],
+)
+def test_extra_t01_extremes_inside_utc_range_still_accepted(value: str, expected: datetime) -> None:
+    read = InspectionRead.model_validate(read_payload(received_at=value))
+    assert read.received_at == expected
+    assert read.received_at.tzinfo == UTC
+    lot = LotSummary.model_validate({**LOT_JSON, "started_at": value})
+    assert lot.started_at == expected
+    if expected.year == 1:  # the 5-minute future rule rejects year 9999 in InspectionCreate
+        create = InspectionCreate.model_validate(base_payload(inspected_at=value))
+        assert create.inspected_at == expected
+        assert create.inspected_at.tzinfo == UTC
