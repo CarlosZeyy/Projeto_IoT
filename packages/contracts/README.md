@@ -54,10 +54,12 @@ GRADE_LABELS_PT[Grade.UNUSABLE]             # "inutilizável"
 
 Tudo é reexportado na raiz (`from qc_contracts import ...`).
 
+Ao reusar as regexes públicas (`DEVICE_ID_PATTERN`, `LOT_ID_PATTERN`, `MODEL_VERSION_PATTERN`, `SHA256_PATTERN`) fora dos schemas, valide com `re.fullmatch` (ou pelo próprio schema / `pydantic.TypeAdapter`), **nunca** com `re.match` ou `re.search`: no módulo `re`, o `$` casa antes de um `\n` final, e `re.match(DEVICE_ID_PATTERN, "edge-01\n")` aceitaria o valor que o schema rejeita.
+
 Regras principais:
 
 - modelos de entrada (`InspectionCreate`, `BatchCreate`) rejeitam campos extras (`extra="forbid"`); modelos de resposta ignoram campos extras (`extra="ignore"`), para tolerar uma versão minor posterior;
-- datas exigem fuso e são normalizadas para UTC; `InspectionCreate.inspected_at` não pode estar mais de 5 min no futuro;
+- datas exigem fuso e são normalizadas para UTC; uma data que sai da faixa de `datetime` ao ser convertida para UTC (ex.: `0001-01-01T00:00:00+05:00`) é rejeitada com `ValidationError`; `InspectionCreate.inspected_at` não pode estar mais de 5 min no futuro;
 - `grade` é nulo se e somente se `object_type == "unknown"`; `grade_score` e `grade_confidence` são nulos se e somente se `grade` é nulo.
 
 ## Histórico de versões
