@@ -16,7 +16,7 @@ R-01 proíbe qualquer serviço que exija cartão de crédito. A nuvem precisa de
 | Render (web service free) | Dorme após 15 min sem tráfego; acorda em cerca de 1 min; 750 horas de instância por mês | <https://render.com/docs/free> |
 | Koyeb (Hobby) | 1 web service, 512 MB, 0,1 vCPU, dorme após 1 h, sem cartão | <https://www.koyeb.com/pricing> |
 | Supabase (Free) | 500 MB, 2 projetos ativos, pausa após 1 semana sem atividade | <https://supabase.com/pricing> |
-| Streamlit Community Cloud | Dorme após 12 h sem tráfego; repositório privado exige permissão extra no GitHub | <https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app> |
+| Streamlit Community Cloud | Dorme após 12 h sem tráfego; repositório privado exigiria permissão extra no GitHub (o deste projeto é público, ADR-015) | <https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app> |
 | Fly.io | Sem plano gratuito: período de teste e depois cartão | <https://docs.fly.io/about/pricing> |
 | Oracle Cloud Free Tier | "most users need a mobile phone number and a credit card to create an account" | <https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier.htm> |
 
