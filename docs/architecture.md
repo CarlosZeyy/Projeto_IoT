@@ -38,7 +38,9 @@ Fonte de verdade técnica do projeto. As SPECs detalham cada parte, mas **não p
 
 O acesso ao banco é feito com **psycopg 3 direto ao Postgres do Supabase** (connection string do pooler em modo transaction, guardada em `DATABASE_URL`, com `prepare_threshold=None`, porque esse modo não suporta prepared statements — ADR-006), e não pelo SDK `supabase-py`. Isso dá SQL explícito, transações e `ON CONFLICT` para a idempotência. A chave `service_role` não é necessária no MVP; se algum dia for, vale R-03.
 
-## 3. Contrato v0 (`qc-contracts` 0.1.0)
+## 3. Contrato v0 (`qc-contracts` 0.2.0)
+
+Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023). O histórico completo fica em `packages/contracts/README.md`.
 
 ### 3.1 Enums
 
@@ -73,10 +75,13 @@ A classe `other` do modelo é sempre mapeada para `unknown` no contrato.
 | `needs_review` | bool | sinalização da borda (confiança baixa) |
 | `model_version` | str | `^[a-z0-9.-]{3,40}$`, ex.: `partqc-mnv3-v1` |
 | `model_sha256` | str | 64 caracteres hexadecimais |
-| `latency_ms` | int | ≥ 0 (pré-processamento + inferência) |
+| `latency_ms` | int | 0 a 2 147 483 647 (`MAX_LATENCY_MS` = 2³¹ − 1, o limite da coluna `integer` do §5), medindo pré-processamento + inferência |
 | `source` | Source | |
 
 Campos extras são rejeitados (`extra="forbid"`).
+
+- **Coerção:** os modelos usam o modo padrão (lax) do Pydantic, sem `strict`. Depois da coerção, todas as faixas, regexes e invariantes continuam valendo. A decisão e os riscos aceitos estão na SPEC-023, §4.4.
+- **Regex fora dos schemas:** quem reusar as constantes `DEVICE_ID_PATTERN`, `LOT_ID_PATTERN`, `MODEL_VERSION_PATTERN` e `SHA256_PATTERN` (ou qualquer outra regex de validação) fora dos schemas valida com `re.fullmatch`, ou pelo próprio schema / `pydantic.TypeAdapter`. **Nunca** com `re.match` ou `re.search`: no módulo `re`, o `$` casa antes de um `\n` final, e `"edge-01\n"` passaria.
 
 ### 3.3 Respostas
 
@@ -167,7 +172,7 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 |---|---|---|
 | `GET /` | operador (navegador do notebook) | Console com QR code para `http://<ip-lan>:<porta>/capture?t=<token>`, status do modelo, tamanho do outbox, último envio, últimas inspeções |
 | `GET /capture?t=<token>` | celular | Página HTML/JS mínima: campo de lote, modo (inspeção/coleta), botão "Fotografar" (`<input type=file accept="image/*" capture="environment">`) e resultado. O JS redimensiona para no máximo 1280 px no lado maior e reencoda em JPEG (q=0,9) via canvas, o que também corrige a rotação EXIF |
-| `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG, ≤ 10 MB), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
+| `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG, ≤ 10 MB, ≤ 40 M pixels, proporção ≤ 10:1, validada por `qc_preprocess.load_image`), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
 | `GET /api/status` | console e celular | Modelo (versão, sha), outbox (pendentes), conectividade com a nuvem |
 
 **Sem modelo carregado** (`MODEL_DIR` vazio, por exemplo na S2, antes do primeiro treino): a borda sobe normalmente, o modo `collect` funciona e o modo `inspect` responde 503 com `{"detail": "model not loaded"}` (a página mostra o rótulo PT-BR). O stub de desenvolvimento (`--stub-model`, SPEC-007) **nunca** publica na nuvem.
@@ -238,5 +243,5 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
 | Console (que exibe o token) exposto por proxy ou túnel indevido | Console só para loopback **e** 403 se houver headers de proxy (`X-Forwarded-For`, `CF-Connecting-IP`); uvicorn com `proxy_headers=False` (defesa em profundidade; túneis são proibidos pela §8) |
 | Chave de dispositivo vazada | Hash no banco; rotação por `register_device.py --rotate` |
 | Leitura indevida pela chave anon do Supabase | RLS sem políticas; a API usa `DATABASE_URL` só no servidor |
-| Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão |
+| Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão. O `load_image` checa pelo cabeçalho, antes de decodificar, o limite de pixels (40 M) e de proporção (≤ 10:1), o que evita o OOM do resize (SPEC-023). Nenhum componente liga `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`, e o `load_image` se recusa a rodar com ela ligada |
 | Vazamento de segredo no Git | `.gitignore`, `.env.example` e a busca do reviewer (R-03) |

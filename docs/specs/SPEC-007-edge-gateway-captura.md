@@ -1,12 +1,14 @@
 # SPEC-007: Gateway de borda, página de captura e pareamento
 
+> **Aguardando reaprovação humana** (alteração de 2026-10-12: dependência da SPEC-023, proporção da imagem, `re.fullmatch` e flag de JPEG truncado; ver Histórico).
+
 | Campo | Valor |
 |---|---|
 | Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
-| Depende de | SPEC-002 |
+| Depende de | SPEC-002, SPEC-023 (`qc-preprocess` 0.2.0) |
 | Semana alvo | S2 |
 | Requisitos cobertos | RF-01, RF-02, RNF-03, RNF-05, RNF-06, RNF-08 |
 | ADRs relevantes | ADR-002, ADR-003, ADR-009, ADR-010, ADR-012 |
@@ -46,7 +48,7 @@ Implementa a base do `qc-edge` descrita em `docs/architecture.md` §6.1, §6.2 (
 | `EDGE_HOST` | `0.0.0.0` | IP literal |
 | `EDGE_PORT` | `8000` | 1–65535 |
 | `EDGE_SESSION_TOKEN` | gerado | se definido, ≥ 32 caracteres |
-| `DEVICE_ID` | `edge-01` | `^[a-z0-9-]{3,32}$` |
+| `DEVICE_ID` | `edge-01` | `qc_contracts.DEVICE_ID_PATTERN` (`^[a-z0-9-]{3,32}$`), com `re.fullmatch` ou com o `pattern` do Pydantic; nunca `re.match`/`re.search` (`architecture.md` §3.2) |
 | `EDGE_DATA_DIR` | `edge/data` | criado se não existir |
 | `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, limiares | — | lidos aqui, validados nas SPECs 008/009/010 |
 
@@ -111,8 +113,8 @@ O `lifespan` chama `start()` de cada `BackgroundService` na subida e `stop()` em
 Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no threadpool). Ordem: token (401) → tamanho (413) → campos (422) → imagem (415) → modelo (503).
 
 1. `image` > 10 MiB (10 485 760 bytes) → 413; um middleware também rejeita `Content-Length` > 10,5 MiB com 413 antes de ler o corpo.
-2. `lot_id` fora de `^[A-Za-z0-9_-]{1,40}$`, `mode` fora de `inspect|collect`, ou campo ausente → 422.
-3. Conteúdo: `qc_preprocess.load_image(bytes)` (SPEC-002: só JPEG/PNG pelo conteúdo, limite de pixels, EXIF) — `InvalidImageError` → 415. O nome e o content-type enviados pelo cliente são ignorados.
+2. `lot_id` fora de `qc_contracts.LOT_ID_PATTERN` (`^[A-Za-z0-9_-]{1,40}$`, validado com `re.fullmatch` ou com o `pattern` do Pydantic, nunca com `re.match`/`re.search`), `mode` fora de `inspect|collect`, ou campo ausente → 422.
+3. Conteúdo: `qc_preprocess.load_image(bytes)` (SPEC-002 e SPEC-023: só JPEG/PNG pelo conteúdo, até 40 M pixels, proporção de no máximo 10:1, EXIF) — `InvalidImageError` → 415. O nome e o content-type enviados pelo cliente são ignorados. O `RuntimeError` que o `load_image` levanta quando `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` está ligada **não** é tratado como 415: é erro de configuração do servidor e resulta em 500, sem stack trace. Nenhum módulo de `qc_edge` liga essa flag.
 4. `inferencer is None` → 503 `{"detail": "model not loaded"}`.
 5. Gera `inspection_id = uuid4()` e `inspected_at = clock()` (UTC); `inferencer.infer(img)`; `InferenceError` → 500 `{"detail": "inference failed"}`, nada gravado.
 6. Salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD de inspected_at>/<inspection_id>.jpg` (JPEG: bytes como recebidos; PNG: reencodado JPEG q=90). Nome sempre gerado pelo servidor.
@@ -123,15 +125,15 @@ Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no t
 
 ## 5. Critérios de aceite
 
-- **CA-01** — *Dado* `EDGE_PORT=70000` (ou `DEVICE_ID=Edge_01`, ou `EDGE_SESSION_TOKEN` com 10 caracteres), *quando* `main()` é chamado, *então* sai com código 2 e a mensagem cita a variável inválida.
+- **CA-01** — *Dado* `EDGE_PORT=70000` (ou `DEVICE_ID=Edge_01`, ou `DEVICE_ID` igual a `"edge-01\n"`, com quebra de linha final, ou `EDGE_SESSION_TOKEN` com 10 caracteres), *quando* `main()` é chamado, *então* sai com código 2 e a mensagem cita a variável inválida.
 - **CA-02** — *Dado* `EDGE_SESSION_TOKEN` ausente, *quando* o app é criado duas vezes, *então* cada token tem ≥ 43 caracteres URL-safe e os dois são diferentes; *dado* `EDGE_SESSION_TOKEN` com 40 caracteres, *então* é ele o aceito em `X-Session-Token`.
 - **CA-03** — *Dado* `StubInferencer` retornando `screw`/`good`, *quando* envio JPEG válido com `lot_id=L-001`, `mode=inspect` e token válido, *então* recebo 200; `inspection` tem os 14 campos do contrato, `source="live"`, `device_id` da config, `inspection_id` UUID v4, `inspected_at` com fuso UTC; `approved=true`; `labels_pt={"object_type":"parafuso","grade":"bom","verdict":"aprovada"}`; existe `captures/<data>/<inspection_id>.jpg`; o sink contém exatamente 1 item igual a `inspection`.
 - **CA-04** — *Dado* o stub retornando `nut`/`poor`, *então* `approved=false` e `verdict="reprovada"`; *dado* o stub retornando `unknown` (grau nulo), *então* `approved=null`, `labels_pt.grade=null` e `verdict="desconhecido"`.
 - **CA-05** — *Dado* um sink cujo `put` lança `SinkError`, *quando* envio uma foto válida, *então* recebo 503, nenhum arquivo fica em `captures/` e o sink está vazio.
 - **CA-06** — *Dado* requisição sem `X-Session-Token` ou com token errado, *quando* chamo `POST /api/capture` ou `GET /api/status`, *então* recebo 401, `StubInferencer` tem 0 chamadas e nenhum arquivo é criado.
 - **CA-07** — *Dado* token válido, *quando* envio `image` com 10 485 761 bytes, *então* recebo 413 e nada é salvo.
-- **CA-08** — *Dado* token válido, *quando* envio um arquivo de texto chamado `foto.jpg`, um GIF válido ou um JPEG truncado, *então* recebo 415 com `{"detail": ...}`.
-- **CA-09** — *Dado* token válido, *quando* `lot_id` é `"lote 1"`, `"../x"` ou 41 caracteres, ou `mode="foo"`, ou falta `image`, *então* recebo 422 e nada é salvo.
+- **CA-08** — *Dado* token válido, *quando* envio um arquivo de texto chamado `foto.jpg`, um GIF válido, um JPEG truncado ou um PNG válido de 100×1001 px (proporção acima de 10:1, SPEC-023), *então* recebo 415 com `{"detail": ...}`, `StubInferencer` tem 0 chamadas e nada é salvo.
+- **CA-09** — *Dado* token válido, *quando* `lot_id` é `"lote 1"`, `"../x"`, `"L-001\n"` (quebra de linha final) ou 41 caracteres, ou `mode="foo"`, ou falta `image`, *então* recebo 422 e nada é salvo.
 - **CA-10** — *Dado* `inferencer=None`, *quando* envio foto válida em `mode=inspect`, *então* recebo 503 `{"detail": "model not loaded"}`.
 - **CA-11** — *Dado* um inferenciador que lança `InferenceError`, *quando* envio foto válida, *então* recebo 500 `{"detail": "inference failed"}`, sem stack trace, sem arquivo salvo e sem item no sink.
 - **CA-12** — *Dado* upload com nome de arquivo `../../evil.jpg`, *quando* a captura é aceita, *então* o único arquivo novo sob a raiz temporária é `EDGE_DATA_DIR/captures/<data>/<inspection_id>.jpg`.
@@ -169,3 +171,9 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 - [ ] CI verde; `ruff` limpo
 - [ ] `edge/README.md`, `.env.example` e `.gitignore` atualizados
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-preprocess` 0.2.0); (b) §4.1 e §4.5, passo 2: `DEVICE_ID` e `lot_id` validados com as constantes de `qc_contracts` e `re.fullmatch` (ou `pattern` do Pydantic); (c) §4.5, passo 3: proporção máxima de 10:1 (415) e `RuntimeError` da flag `LOAD_TRUNCATED_IMAGES` → 500, com nenhum módulo da borda ligando a flag; (d) o CA-01 ganhou `DEVICE_ID="edge-01\n"`; (e) o CA-08 ganhou o PNG 100×1001 e as verificações "0 chamadas ao stub" e "nada salvo", que já decorriam da ordem do §4.5; (f) o CA-09 ganhou `lot_id="L-001\n"`. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 (RV-02), RV-04 e RV-06 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |

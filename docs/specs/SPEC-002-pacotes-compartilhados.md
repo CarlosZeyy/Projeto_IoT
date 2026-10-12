@@ -145,3 +145,9 @@ Imagens de teste são geradas em memória pelo próprio teste (Pillow/numpy); ne
 - [ ] CI verde; `ruff` limpo
 - [ ] `packages/contracts/README.md` com o histórico de versões; `uv.lock` atualizado
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | Nenhuma mudança de requisito nem de CA: o texto continua descrevendo a versão 0.1.0 entregue no PR #5. As pendências que o review destinou ao architect foram resolvidas fora desta SPEC: SPEC_ISSUE-01 (proporção da imagem), SPEC_ISSUE-02 (teto de `latency_ms`) e RV-06 (`LOAD_TRUNCATED_IMAGES`) na **SPEC-023** (pacotes 0.2.0); RV-04 (`re.fullmatch`) em `architecture.md` §3.2 e nas SPECs 004, 007 e 014; RV-05 (modo lax), registrado como risco aceito na SPEC-023 §4.4. Com a SPEC-023, a expectativa de versão do CA-01 desta SPEC nos testes de aceite passa a ser `"0.2.0"` (a troca é feita pelo tester da SPEC-023). | `reviews/SPEC-002/r1-review-report.md` e `r2-review-report.md` | Orquestrador, a pedido do humano |

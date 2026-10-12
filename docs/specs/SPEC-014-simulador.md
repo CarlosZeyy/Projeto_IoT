@@ -1,5 +1,7 @@
 # SPEC-014: Simulador de lotes
 
+> **Aguardando reaprovação humana** (alteração de 2026-10-12: `re.fullmatch` em `--device-id` e `--model-version`; ver Histórico).
+
 | Campo | Valor |
 |---|---|
 | Status | Ready |
@@ -53,6 +55,8 @@ O dashboard e a carta p (SPEC-006, SPEC-013) precisam de volume e de lotes fora 
 | `--model-version` | `sim-v0` | `^[a-z0-9.-]{3,40}$` |
 | `--dry-run` | falso | não faz requisição nem exige `--api-url`/`--api-key` |
 
+`--device-id` e `--model-version` são validados com `re.fullmatch(qc_contracts.DEVICE_ID_PATTERN, valor)` e `re.fullmatch(qc_contracts.MODEL_VERSION_PATTERN, valor)`, sem redefinir as regexes. **Nunca** com `re.match` ou `re.search`, que aceitam um `\n` final (`architecture.md` §3.2).
+
 Não existe argumento para mudar `source` (R-06): `--source` é argumento desconhecido (código 2). `model_sha256` é sempre `"0" * 64`.
 
 ### 4.2 Geração (determinística com a seed)
@@ -88,7 +92,7 @@ Os testes chamam `main([...], transport=MockTransport(...), sleep=<registrador>,
 - **CA-05** — *Dado* `--dry-run --seed 2 --lots 10 --lot-size 200 --unknown-rate 0.1`, *então* a fração de `unknown` está em 0,10 ± 0,03 e todo `unknown` tem `grade`, `grade_score` e `grade_confidence` nulos e `type_confidence < 0.70`.
 - **CA-06** — *Dado* `--dry-run --lots 5 --lot-size-min 3 --lot-size-max 8 --seed 3`, *então* cada lote tem entre 3 e 8 itens; *dado* `--lot-size-min 9 --lot-size-max 8`, ou `--lot-size 10 --lot-size-min 3 --lot-size-max 8`, *então* código 2.
 - **CA-07 (SPC)** — *Dado* `--dry-run --seed 42 --lots 30 --lot-size 200 --defect-rate 0.1 --unknown-rate 0 --out-of-control-lots 24,28`, *quando* agrego os itens por `lot_id` (n e defeitos via `is_defective`) no formato de entrada da SPEC-006 e chamo `qc_api.services.spc.compute_p_chart(lots, baseline_lots=20, min_lot_size=5)`, *então* `SIM-…-024` e `SIM-…-028` têm `out_of_control=true` e no máximo 2 dos outros 28 lotes têm `out_of_control=true`.
-- **CA-08** — *Dado* `--out-of-control-lots 0,3` com `--lots 10`, ou `11`, ou `a,b`, ou `3,3`, ou `--defect-rate 1.5`, ou `--unknown-rate -0.1`, *então* código 2.
+- **CA-08** — *Dado* `--out-of-control-lots 0,3` com `--lots 10`, ou `11`, ou `a,b`, ou `3,3`, ou `--defect-rate 1.5`, ou `--unknown-rate -0.1`, ou `--device-id` igual a `"sim-01\n"`, ou `--model-version` igual a `"sim-v0\n"` (quebra de linha final, passada como elemento de `argv`), *então* código 2.
 - **CA-09** — *Dado* `--start` igual a `now + 1 h`, *então* código 2 e 0 requisições.
 - **CA-10 (R-05)** — *Dado* a API falsa vazia e `--seed 42 --lots 10 --lot-size 25`, *quando* rodo, *então* há 1 `GET /api/v1/health` seguido de 3 `POST /api/v1/inspections/batch` (100, 100, 50 itens) com `X-API-Key`, o stdout contém `sent=250 created=250 duplicate=0` e o código é 0; *quando* rodo de novo com a mesma seed, *então* `sent=250 created=0 duplicate=250` e a API falsa continua com 250 registros.
 - **CA-11** — *Dado* a API falsa respondendo 503 e depois `httpx.ConnectError` ao primeiro lote e 201 na 3ª tentativa, *quando* rodo, *então* o código é 0, o `sleep` registrou `[2, 4]` e não há registro duplicado.
@@ -121,3 +125,9 @@ Os testes importam o script com `importlib.util.spec_from_file_location` (não h
 - [ ] CI verde; `ruff` limpo
 - [ ] `README.md` e `.env.example` atualizados
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | §4.1 exige `re.fullmatch` com `DEVICE_ID_PATTERN` e `MODEL_VERSION_PATTERN` de `qc_contracts`. O CA-08 ganhou os casos `"sim-01\n"` e `"sim-v0\n"`. Nenhum outro requisito muda; o `latency_ms` gerado (40 a 180) já respeita o teto do contrato 0.2.0 (SPEC-023). SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
