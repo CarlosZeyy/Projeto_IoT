@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
+| Status | Ready — **Aguardando reaprovação humana** |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -27,6 +27,7 @@ Implementa a base do `qc-edge` descrita em `docs/architecture.md` §6.1, §6.2 (
 - `edge/src/qc_edge/inference.py`: `ModelInfo`, `InferenceResult`, `InferenceError`, Protocol `Inferencer`, `StubInferencer`.
 - `edge/src/qc_edge/sink.py`: `SinkStats`, `SinkError`, Protocol `InspectionSink`, `InMemorySink`, Protocol `BackgroundService`.
 - `edge/src/qc_edge/netinfo.py` (`detect_lan_ips`), `security.py` (token), `app.py` (`create_app`), `cli.py` (`main`, console script `qc-edge`).
+- `edge/src/qc_edge/limits.py`: limites próprios da rota de captura e `load_capture_image` (§4.7).
 - `edge/src/qc_edge/templates/console.html` e `capture.html`; `edge/src/qc_edge/static/capture.js` (e `capture.css`, opcional).
 - `edge/README.md`: como rodar, variáveis, firewall no Arch (ufw, firewalld, nftables) e plano B (hotspot).
 - `.env.example` (variáveis da borda) e `.gitignore` (`edge/data/`).
@@ -109,15 +110,15 @@ O `lifespan` chama `start()` de cada `BackgroundService` na subida e `stop()` em
 
 **Console (`GET /`)**: aceito só se `request.client.host` ∈ {`127.0.0.1`, `::1`} **e** sem os headers `X-Forwarded-For`, `Forwarded` ou `CF-Connecting-IP` (defesa em profundidade contra proxy/túnel, proibidos por `architecture.md` §8; ver também §9); senão 403. Renderizado no servidor, `<meta http-equiv="refresh" content="5">`, sem JS. Mostra: QR em SVG inline (`qrcode` com `qrcode.image.svg.SvgPathImage`) para `http://<ip>:<porta>/capture?t=<token>` usando o primeiro IP detectado; a URL em texto; os outros IPs como links `/?ip=<ip>` (o parâmetro só é aceito se estiver na lista detectada); modelo (carregado ou não, versão); `pending`, `dead`, conectividade e `last_success_at` do sink; as últimas 10 inspeções da sessão (memória, `deque(maxlen=10)`, mais recente primeiro) com hora, lote, tipo e grau em PT-BR.
 
-**Página `/capture`**: HTML + JS puro, sem framework, sem build, sem recurso externo (CDN), `capture.js` ≤ 200 linhas. Campos: `lot_id` (persistido em `localStorage`), seletor de modo inspeção/coleta (coleta desabilitado até a SPEC-010), botão grande "Fotografar" = `<input type="file" accept="image/*" capture="environment">`. O JS redimensiona para no máximo 1280 px no lado maior (sem ampliar), com `createImageBitmap(file, {imageOrientation: "from-image"})` quando disponível (fallback `<img>`), e reencoda em JPEG q=0,9 via canvas. Envia `multipart/form-data` com o token lido de `?t=` no header `X-Session-Token`; desabilita o botão durante o envio. Cartão de resultado com os rótulos de `labels_pt`, cor por veredito (aprovada verde, reprovada vermelho, desconhecido cinza, `needs_review` com borda amarela e "Revisar"), latência da borda (`latency_ms`) e tempo total medido no celular. Mensagens PT-BR para 401, 413, 415, 422, 503 e falha de rede.
+**Página `/capture`**: HTML + JS puro, sem framework, sem build, sem recurso externo (CDN), `capture.js` ≤ 200 linhas. Campos: `lot_id` (persistido em `localStorage`), seletor de modo inspeção/coleta (coleta desabilitado até a SPEC-010), botão grande "Fotografar" = `<input type="file" accept="image/*" capture="environment">`. O JS redimensiona para no máximo 1280 px no lado maior (sem ampliar), com `createImageBitmap(file, {imageOrientation: "from-image"})` quando disponível (fallback `<img>`), e reencoda em JPEG q=0,9 via canvas. Envia **sempre** a imagem reencodada: se a reencodagem falhar (ex.: `canvas.toBlob` devolve `null`), mostra "Não foi possível preparar a foto. Tente de novo." e não envia o arquivo original, que passaria dos limites da rota (§4.7). Envia `multipart/form-data` com o token lido de `?t=` no header `X-Session-Token`; desabilita o botão durante o envio. Cartão de resultado com os rótulos de `labels_pt`, cor por veredito (aprovada verde, reprovada vermelho, desconhecido cinza, `needs_review` com borda amarela e "Revisar"), latência da borda (`latency_ms`) e tempo total medido no celular. Mensagens PT-BR para 401, 413, 415, 422, 503 e falha de rede.
 
 ### 4.5 `POST /api/capture` (modo `inspect`)
 
 Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no threadpool). Ordem: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`, §4.6) → imagem (415) → modelo (503).
 
-1. `image` > 10 MiB (10 485 760 bytes) → 413; um middleware também rejeita `Content-Length` > 10,5 MiB com 413 antes de ler o corpo.
+1. `image` > `CAPTURE_MAX_BYTES` (3 MiB, 3 145 728 bytes, §4.7) → 413; um middleware também rejeita `Content-Length` > `CAPTURE_MAX_REQUEST_BYTES` (3,5 MiB, 3 670 016 bytes) com 413 antes de ler o corpo.
 2. `lot_id` fora de `qc_contracts.LOT_ID_PATTERN` (`^[A-Za-z0-9_-]{1,40}$`, validado com `re.fullmatch` ou com o `pattern` do Pydantic, nunca com `re.match`/`re.search`), `mode` fora de `inspect|collect`, ou campo ausente → 422.
-3. Conteúdo: `qc_preprocess.load_image(bytes)` (SPEC-002, SPEC-023 e SPEC-024: só JPEG/PNG pelo conteúdo, até 40 M pixels, proporção de no máximo 10:1, JPEG com no máximo 64 marcadores de scan, EXIF), chamado **dentro** do limitador de §4.6 — `InvalidImageError` → 415. O nome e o content-type enviados pelo cliente são ignorados. O `RuntimeError` que o `load_image` levanta quando `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` está ligada **não** é tratado como 415: é erro de configuração do servidor e resulta em 500, sem stack trace. Nenhum módulo de `qc_edge` liga essa flag.
+3. Conteúdo: `qc_edge.limits.load_capture_image(bytes)` (§4.7: até 4 M pixels, checados pelo cabeçalho antes de decodificar; depois, `qc_preprocess.load_image`, com as regras das SPECs 002, 023 e 024: só JPEG/PNG pelo conteúdo, até 40 M pixels, proporção de no máximo 10:1, JPEG com no máximo 64 marcadores de scan, EXIF), chamado **dentro** do limitador de §4.6 — `InvalidImageError` → 415. O nome e o content-type enviados pelo cliente são ignorados. O `RuntimeError` que o `load_capture_image` (ou o `load_image`) levanta quando `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` está ligada **não** é tratado como 415: é erro de configuração do servidor e resulta em 500, sem stack trace. Nenhum módulo de `qc_edge` liga essa flag.
 4. `inferencer is None` → 503 `{"detail": "model not loaded"}`.
 5. Gera `inspection_id = uuid4()` e `inspected_at = clock()` (UTC); `inferencer.infer(img)`; `InferenceError` → 500 `{"detail": "inference failed"}`, nada gravado.
 6. Salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD de inspected_at>/<inspection_id>.jpg` (JPEG: bytes como recebidos; PNG: reencodado JPEG q=90). Nome sempre gerado pelo servidor.
@@ -128,14 +129,51 @@ Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no t
 
 ### 4.6 Limitador de decodificações (SEC-02)
 
-A maior imagem aceita custa até cerca de 300 MB durante `load_image` + `preprocess` (pico medido de 343 MB a 40 M pixels, `reviews/SPEC-023/r1-security-report.md`), e o threadpool do Starlette atende até 40 requisições ao mesmo tempo.
+A maior imagem aceita pelo `load_image` custa até cerca de 300 MB durante `load_image` + `preprocess` (pico medido de 343 MB a 40 M pixels, `reviews/SPEC-023/r1-security-report.md`), e o threadpool do Starlette atende até 40 requisições ao mesmo tempo.
+
+**Dimensionamento** (SEC-24-02 de `reviews/SPEC-024/r1-security-report.md`):
+
+- **Só com os limites do `load_image`** (corpo de 10 MiB, 40 M pixels), o pior caso aceito por decodificação foi **medido** em cerca de **2,5 s de CPU e 360 MB**. Ele combina 64 scans repetidos (~2 s), a inundação de segmentos vazios sem nenhum scan (2,6 M segmentos APP1: 2,37 s e 362 MB) e o pico de ~300 MB da imagem de 40 M pixels. Com 2 slots, seriam ~720 MB de pico.
+- **Com os limites da rota (§4.7: 3 MiB e 4 M pixels)**, a **estimativa** por proporção linear cai para cerca de **1,4 s e 110 MB por slot**, ou ~220 MB com 2 slots. A inundação de 3 MiB custa ~0,7 s e ~110 MB por leitura e é lida duas vezes (na sondagem e no `load_image`), e 64 scans a 4 M pixels custam ~0,2 s. O security-devops desta SPEC mede esse pior caso e registra o resultado no security-report.
+- Os padrões ficam: `max_concurrent_decodes=2` e `decode_wait_s=10`.
+- **Consequência aceita:** quem tiver o token de sessão e estiver no hotspot da dupla consegue manter os dois slots ocupados. Uma requisição legítima espera então até `decode_wait_s` e recebe 503 `server busy`. É uma degradação, e não uma queda do notebook.
+
+**Mecanismo:**
 
 - `create_app` cria **um** `threading.BoundedSemaphore(max_concurrent_decodes)` por app.
 - No `POST /api/capture`, depois da validação dos campos (422) e antes do passo 3, o handler chama `acquire(timeout=decode_wait_s)`:
   - não conseguiu → 503 `{"detail": "server busy"}`; nada é salvo, o inferenciador não é chamado e o sink não recebe nada;
   - conseguiu → executa os passos 3 a 7 (decodificação, inferência, gravação da foto e `sink.put`) e libera o semáforo num `finally`, inclusive em erro.
-- **Regra para a borda (`architecture.md` §9):** toda chamada a `qc_preprocess.load_image` em `qc_edge` acontece com esse semáforo. A SPEC-010 (modo coleta, "mesmas regras da SPEC-007") usa o mesmo limitador.
+- **Regra para a borda (`architecture.md` §9):** toda chamada a `load_capture_image` (§4.7), e portanto a `qc_preprocess.load_image`, em `qc_edge` acontece com esse semáforo. A sondagem do cabeçalho também fica dentro dele. A SPEC-010 (modo coleta, "mesmas regras da SPEC-007") usa o mesmo limitador.
 - A página do celular mostra o 503 `server busy` como "Borda ocupada. Tente de novo." (rótulo PT-BR em `capture.js`).
+
+### 4.7 Limites próprios da rota de captura (SEC-24-02)
+
+A página `/capture` sempre envia a foto reencodada pelo `capture.js` (§4.4): no máximo 1280 px no lado maior, ou seja, no máximo 1 638 400 pixels (1280×1280). Os limites do `load_image` (10 MiB e 40 M pixels) existem para o ML, que lê as fotos originais do celular. Na rota, eles só servem a quem não usa a página. Por isso, a rota tem limites próprios, mais apertados, em `edge/src/qc_edge/limits.py`:
+
+```python
+CAPTURE_MAX_BYTES: int = 3_145_728          # 3 MiB: campo image (413)
+CAPTURE_MAX_REQUEST_BYTES: int = 3_670_016  # 3,5 MiB: Content-Length da requisição (413, middleware)
+CAPTURE_MAX_PIXELS: int = 4_000_000         # largura × altura (415)
+def load_capture_image(data: bytes) -> PIL.Image.Image
+```
+
+`load_capture_image` faz, nesta ordem:
+
+1. Se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` for verdadeira, levanta `RuntimeError` com `LOAD_TRUNCATED_IMAGES` na mensagem. A flag continua sendo a primeira verificação, como no `load_image`.
+2. **Sondagem do cabeçalho:** uma função privada abre `PIL.Image.open(io.BytesIO(data), formats=("JPEG", "PNG"))` num bloco `with`, lê só o `size`, **sem** chamar `.load()`, e devolve só `(largura, altura)`. Assim, a memória da sondagem é liberada antes do passo 4. Toda exceção levantada nessa abertura vira `qc_preprocess.InvalidImageError` (`raise ... from exc`): com bytes hostis, o Pillow levanta `UnidentifiedImageError`, `OSError`, `SyntaxError`, `ValueError`, `DecompressionBombError` e outras. É o único `except Exception` permitido, e só em volta dessa chamada.
+3. Se `largura × altura > CAPTURE_MAX_PIXELS`, levanta `InvalidImageError` com uma mensagem que contém `capture pixel limit`.
+4. Devolve `qc_preprocess.load_image(data)`, com todas as regras das SPECs 002, 023 e 024.
+
+**Por que 3 MiB e 4 M pixels:**
+
+- 4 M pixels dão uma folga de cerca de 2,4× sobre o máximo da página (1280×1280).
+- Um JPEG q=0,9 de 1280×1280 fica na ordem de centenas de KB a 2 MB, mesmo com textura forte. É uma estimativa: o CA-20 registra os tamanhos reais.
+- Os dois limites cortam juntos os resíduos medidos (§4.6): a área corta o custo por scan e o pico de memória da decodificação (cerca de 10×), e o corpo corta as inundações de segmentos (cerca de 3×).
+- Não mexem no `qc-preprocess` nem no ML, e não dependem de o canvas gerar JPEG baseline (a objeção da SPEC-024 §7 era à recusa de JPEG progressivo).
+- A paridade do ADR-004 continua valendo: a rota só rejeita mais imagens, e toda imagem aceita passa pelo mesmo `load_image` e pelo mesmo `preprocess`.
+
+O modo `collect` (SPEC-010) usa a mesma função e os mesmos limites.
 
 ## 5. Critérios de aceite
 
@@ -145,8 +183,8 @@ A maior imagem aceita custa até cerca de 300 MB durante `load_image` + `preproc
 - **CA-04** — *Dado* o stub retornando `nut`/`poor`, *então* `approved=false` e `verdict="reprovada"`; *dado* o stub retornando `unknown` (grau nulo), *então* `approved=null`, `labels_pt.grade=null` e `verdict="desconhecido"`.
 - **CA-05** — *Dado* um sink cujo `put` lança `SinkError`, *quando* envio uma foto válida, *então* recebo 503, nenhum arquivo fica em `captures/` e o sink está vazio.
 - **CA-06** — *Dado* requisição sem `X-Session-Token` ou com token errado, *quando* chamo `POST /api/capture` ou `GET /api/status`, *então* recebo 401, `StubInferencer` tem 0 chamadas e nenhum arquivo é criado.
-- **CA-07** — *Dado* token válido, *quando* envio `image` com 10 485 761 bytes, *então* recebo 413 e nada é salvo.
-- **CA-08** — *Dado* token válido, *quando* envio um arquivo de texto chamado `foto.jpg`, um GIF válido, um JPEG truncado, um PNG válido de 100×1001 px (proporção acima de 10:1, SPEC-023) ou um JPEG válido 64×48 com um segmento COM de 64 pares `FF DA` logo depois do SOI (65 marcadores, SPEC-024), *então* recebo 415 com `{"detail": ...}`, `StubInferencer` tem 0 chamadas e nada é salvo.
+- **CA-07** — *Dado* token válido, *quando* envio `image` com 3 145 729 bytes, *então* recebo 413, `StubInferencer` tem 0 chamadas e nada é salvo; *quando* envio uma requisição com o header `Content-Length: 3670017`, *então* recebo 413 e `StubInferencer` tem 0 chamadas; e *quando* envio um JPEG válido de 64×48 completado com bytes `00` depois do EOI (`FF D9`) até exatamente 3 145 728 bytes, *então* recebo 200.
+- **CA-08** — *Dado* token válido, *quando* envio um arquivo de texto chamado `foto.jpg`, um GIF válido, um JPEG truncado, um PNG válido de 100×1001 px (proporção acima de 10:1, SPEC-023), um JPEG válido 64×48 com um segmento COM de 64 pares `FF DA` logo depois do SOI (65 marcadores, SPEC-024) ou um JPEG válido de 2001×2000 px (4 002 000 pixels, acima do limite da rota, §4.7), *então* recebo 415 com `{"detail": ...}`, `StubInferencer` tem 0 chamadas e nada é salvo.
 - **CA-09** — *Dado* token válido, *quando* `lot_id` é `"lote 1"`, `"../x"`, `"L-001\n"` (quebra de linha final) ou 41 caracteres, ou `mode="foo"`, ou falta `image`, *então* recebo 422 e nada é salvo.
 - **CA-10** — *Dado* `inferencer=None`, *quando* envio foto válida em `mode=inspect`, *então* recebo 503 `{"detail": "model not loaded"}`.
 - **CA-11** — *Dado* um inferenciador que lança `InferenceError`, *quando* envio foto válida, *então* recebo 500 `{"detail": "inference failed"}`, sem stack trace, sem arquivo salvo e sem item no sink.
@@ -158,18 +196,20 @@ A maior imagem aceita custa até cerca de 300 MB durante `load_image` + `preproc
 - **CA-17 (R-02)** — *Dado* uma captura feita, *então* `GET /captures/<data>/<id>.jpg` e `GET /data/captures/<data>/<id>.jpg` retornam 404; o objeto entregue ao sink é um `InspectionCreate` cujas chaves de `model_dump()` são exatamente os campos de `architecture.md` §3.2; e nenhum módulo de `qc_edge` importa `httpx`, `requests` ou `urllib.request`, exceto `qc_edge.publisher` (criado na SPEC-009) — verificação estática.
 - **CA-18** — *Dado* o socket UDP simulado retornando `192.168.0.42`, *então* `detect_lan_ips()[0] == "192.168.0.42"`; *dado* que o socket falha e `getaddrinfo` devolve `127.0.1.1`, `169.254.3.3` e `10.0.0.7`, *então* o resultado é `["10.0.0.7"]`; *dado* nenhum candidato, *então* `["127.0.0.1"]` e o console mostra o aviso.
 - **CA-19 (R-03)** — *Dado* captura de logs desde a subida até 3 capturas (sucesso, 401 e 415), *então* o valor do token e o `DEVICE_API_KEY` configurado não aparecem em nenhuma linha.
-- **CA-20 (manual)** — Topologia preferida: 1. ligar `qc-edge` com `--stub-model` e liberar a porta conforme `edge/README.md`; 2. no celular A (Android, Chrome) e depois no celular B (o outro celular da dupla, navegador padrão), ler o QR do console na mesma Wi-Fi; 3. tocar "Fotografar": abre a câmera **traseira** (direto ou após escolher "Câmera" no seletor do Android, ADR-003; registrar qual); 4. fotografar 10 peças; 5. conferir em cada uma o cartão de resultado em menos de 3 s (tempo total exibido) e 10 linhas novas no console.
+- **CA-20 (manual)** — Topologia preferida: 1. ligar `qc-edge` com `--stub-model` e liberar a porta conforme `edge/README.md`; 2. no celular A (Android, Chrome) e depois no celular B (o outro celular da dupla, navegador padrão), ler o QR do console na mesma Wi-Fi; 3. tocar "Fotografar": abre a câmera **traseira** (direto ou após escolher "Câmera" no seletor do Android, ADR-003; registrar qual); 4. fotografar 10 peças; 5. conferir em cada uma o cartão de resultado em menos de 3 s (tempo total exibido) e 10 linhas novas no console; 6. no notebook, registrar no test-report o tamanho do maior arquivo em `EDGE_DATA_DIR/captures/` de cada celular (deve ficar abaixo de 3 145 728 bytes, §4.7).
 - **CA-21 (manual)** — Plano B: 1. ligar o hotspot do celular A e conectar o notebook a ele; 2. recarregar o console e usar o QR do novo IP; 3. repetir os passos 3–5 do CA-20 com 3 fotos em cada celular.
 - **CA-22 (security, SEC-02)** — *Dado* `create_app(..., max_concurrent_decodes=2, decode_wait_s=0.5)` e um inferenciador de teste cujo `infer` registra o número de chamadas simultâneas e bloqueia até um `threading.Event` ser liberado, *quando* 4 requisições válidas são enviadas em paralelo (4 threads) e o evento só é liberado depois que 2 respostas chegaram, *então* exatamente 2 respostas são 503 com `{"detail": "server busy"}`, as outras 2 são 200, o máximo de chamadas simultâneas a `infer` é 2, o sink tem 2 itens e `captures/` tem exatamente 2 arquivos.
 - **CA-23 (SEC-02)** — *Dado* o mesmo inferenciador com `max_concurrent_decodes=2` e `decode_wait_s=5`, *quando* 4 requisições válidas são enviadas em paralelo e o evento é liberado 0,3 s depois do envio, *então* as 4 respostas são 200 e o máximo de chamadas simultâneas a `infer` é 2; e *dado* um inferenciador que lança `InferenceError` na 1ª chamada, *quando* 3 requisições são enviadas em sequência com `max_concurrent_decodes=1`, *então* as respostas são 500, 200 e 200 (o semáforo é liberado depois do erro); e `create_app(..., max_concurrent_decodes=0)` ou `decode_wait_s=0` levanta `ValueError`.
 - **CA-24 (security, SEC-04)** — *Dado* `PIL.ImageFile.LOAD_TRUNCATED_IMAGES = True` (via `monkeypatch.setattr`), *quando* `main()` é chamado com `uvicorn.run` substituído por um espião, *então* sai com código 1, a saída de log contém `LOAD_TRUNCATED_IMAGES` e o espião não é chamado; e *quando* um `TestClient(create_app(...))` entra no bloco `with`, *então* levanta `RuntimeError` cuja mensagem contém `LOAD_TRUNCATED_IMAGES`. Com a flag em `False`, os dois sobem normalmente.
 - **CA-25 (security, SEC-04)** — *Dado* os arquivos `*.py` de `git ls-files` cujo caminho não tem nenhum componente `tests`, *quando* analisados com `ast`, *então* nenhum contém atribuição (`Assign`, `AugAssign` ou `AnnAssign`) a um alvo `Name` ou `Attribute` chamado `LOAD_TRUNCATED_IMAGES`, nem chamada `setattr(<qualquer>, "LOAD_TRUNCATED_IMAGES", <qualquer>)`.
+- **CA-26 (security, SEC-24-02)** — *Dado* o módulo `qc_edge.limits`, *então* `CAPTURE_MAX_BYTES == 3_145_728`, `CAPTURE_MAX_REQUEST_BYTES == 3_670_016` e `CAPTURE_MAX_PIXELS == 4_000_000`. *Dado* um JPEG válido de 2000×2000 px e outro de 2001×2000 px, ambos aceitos por `qc_preprocess.load_image`, *quando* passam por `load_capture_image`, *então* o primeiro devolve uma imagem `RGB` de 2000×2000 e o segundo levanta `InvalidImageError` cuja mensagem contém `capture pixel limit`; e, com `PIL.ImageFile.ImageFile.load` envolvido por um espião que chama o original (`monkeypatch`), o espião tem 0 chamadas no caso 2001×2000 (a checagem vem antes de decodificar). Via `POST /api/capture`, o 2000×2000 recebe 200 e o 2001×2000 recebe 415.
+- **CA-27 (security, SEC-24-02)** — *Dado* `load_capture_image`, *quando* recebe `b"not an image"`, `b""` ou um GIF válido, *então* levanta `InvalidImageError` (nunca outra exceção); *quando* recebe o JPEG 64×48 com COM de 64 pares `FF DA` do CA-08, *então* levanta `InvalidImageError` cuja mensagem contém `JPEG scans` (as regras do `load_image` continuam valendo); e, *dado* `PIL.ImageFile.LOAD_TRUNCATED_IMAGES = True` (via `monkeypatch.setattr`), *quando* recebe o JPEG de 2001×2000 do CA-26, *então* levanta `RuntimeError` cuja mensagem contém `LOAD_TRUNCATED_IMAGES` (a flag vem antes da sondagem).
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
-| Unitário (autor) | config, token, `detect_lan_ips`, rotas com `StubInferencer`/`InMemorySink` | `edge/tests/` |
+| Unitário (autor) | config, token, `detect_lan_ips`, rotas com `StubInferencer`/`InMemorySink`, `load_capture_image` (limite exato de pixels, ordem flag → sondagem → `load_image`) | `edge/tests/` |
 | Aceite (tester) | Um por CA automatizável (`httpx.ASGITransport` com `client=` para simular a origem; `tmp_path` como `EDGE_DATA_DIR`; socket simulado com `monkeypatch`; nos CA-22 e CA-23, threads com `TestClient` e um inferenciador de teste controlado por `threading.Event`) | `edge/tests/acceptance/test_spec_007.py` |
 | Manual (dupla) | CA-20 e CA-21, resultado no test-report | celulares reais |
 
@@ -181,6 +221,8 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 - `<input capture>` funciona em HTTP (não exige contexto seguro), diferente de `getUserMedia` (SPEC-019).
 - **SEC-05 (filtros de `warnings`):** no Python 3.12, `warnings.catch_warnings` altera estado global e não é seguro entre threads. O `load_image` não depende disso (o limite efetivo é a checagem explícita de `MAX_PIXELS`), e nenhuma decisão de segurança da borda pode depender de filtros de `warnings`.
 - A checagem da flag na subida (§4.2 e §4.3) fecha a janela entre a leitura da flag no `load_image` e a nova consulta do Pillow dentro do `.load()` (SEC-04): como nenhum módulo do processo altera a flag (CA-25), ela não muda depois da subida.
+- **Sondagem do §4.7:** não tente ler a largura e a altura interpretando os segmentos do JPEG à mão. Use o `Image.open` do Pillow, que é o mesmo parser do `load_image`, e não chame `.load()` nem `.draft()` na sondagem. Gerar os JPEGs de 2000×2000 e 2001×2000 dos CAs em cor sólida mantém os arquivos pequenos (dezenas de KB).
+- **JPEG aritmético (SEC-24-02, item c):** hoje, o libjpeg-turbo empacotado na wheel do Pillow 12.3.0 não decodifica JPEG com codificação aritmética, e o `load_image` o recusa com `InvalidImageError` em ~10 ms. Isso limita o custo de scans sem dados. Ao subir o Pillow no `uv.lock`, em qualquer SPEC, siga a regra de `docs/architecture.md` §9 (reconferir essa recusa).
 - `pydantic-settings` e `qrcode` entram como dependências do `qc-edge`; nada de torch (R-12).
 - `edge/README.md` deve trazer: detectar o firewall ativo (`systemctl is-active ufw firewalld nftables`); `sudo ufw allow 8000/tcp`; `sudo firewall-cmd --add-port=8000/tcp` (e `--permanent` opcional); regra `nft add rule inet filter input tcp dport 8000 accept` (ajustar tabela e chain); como desfazer cada uma; e o passo a passo do plano B (`nmcli dev wifi connect <SSID>`).
 
@@ -200,3 +242,4 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-024 (`qc-preprocess` 0.3.0, limite de 64 marcadores de scan no JPEG), com o caso novo no CA-08; (b) §4.6 nova: limitador de decodificações (`BoundedSemaphore`, padrão 2, espera de 10 s, 503 `server busy`), com os parâmetros `max_concurrent_decodes` e `decode_wait_s` em `create_app` e a ordem do §4.5 atualizada; (c) checagem de `LOAD_TRUNCATED_IMAGES` na subida, no `lifespan` e na CLI (código 1); (d) CAs novos: CA-22 e CA-23 (limitador), CA-24 (flag na subida) e CA-25 (nenhum código fora de `tests/` altera a flag); (e) §7 com a regra sobre filtros de `warnings`. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-01, SEC-02, SEC-04 e SEC-05 de `reviews/SPEC-023/r1-security-report.md`, e a nota sobre a janela da flag de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-12 | Mudanças: (a) §4.6: dimensionamento do limitador com o custo medido (~2,5 s e ~360 MB por decodificação só com os limites do `load_image`; ~1,4 s e ~110 MB estimados com os da rota), mantendo os padrões 2 e 10 s; (b) §4.7 nova, adotada pelo architect: limites próprios da rota em `qc_edge/limits.py` (corpo de 3 MiB, `Content-Length` de 3,5 MiB e 4 M pixels checados pelo cabeçalho antes de decodificar), com `load_capture_image`; a §4.5 (passos 1 e 3) passa a usá-la; (c) §4.4: o `capture.js` nunca envia o arquivo original; (d) o CA-07 trocou o limite de 10 MiB pelo de 3 MiB e ganhou os casos do `Content-Length` e da fronteira exata; o CA-08 ganhou o JPEG de 2001×2000; o CA-20 ganhou o passo 6 (tamanho real das fotos); CAs novos: CA-26 e CA-27 (`load_capture_image`); (e) §7: notas sobre a sondagem e sobre a recusa do JPEG aritmético ao subir o Pillow. SPEC marcada como "Aguardando reaprovação humana". | SEC-24-02 de `reviews/SPEC-024/r1-security-report.md` | Orquestrador, a pedido do humano |

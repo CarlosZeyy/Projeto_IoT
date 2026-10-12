@@ -37,14 +37,14 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [001](specs/SPEC-001-setup-repositorio.md) | Setup do repositório e ferramentas | developer | infra | — | S1 | Done |
 | [002](specs/SPEC-002-pacotes-compartilhados.md) | Pacotes compartilhados v0 (`qc-contracts` e `qc-preprocess`) | developer | contrato | 001 | S1 | Done |
 | [003](specs/SPEC-003-schema-banco.md) | Schema Supabase, migrações e RLS | developer | security | 002 | S2 | In Security (r1) |
-| [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023 | S2 | Ready |
+| [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023, 024 | S2 | Ready — aguardando reaprovação humana |
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Ready |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Ready |
-| [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Ready |
+| [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Ready — aguardando reaprovação humana |
 | [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | Ready |
 | [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007 | S3 | Ready |
-| [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | Ready |
-| [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready |
+| [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | Ready — aguardando reaprovação humana |
+| [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready — aguardando reaprovação humana |
 | [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | Ready |
 | [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006 (e 002, 012) | S4 | Ready |
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Ready |
@@ -72,8 +72,9 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 ```
 
 - A **SPEC-023** (pacotes 0.2.0, pendências do review da SPEC-002) entra **antes** da 004 e da 007 e pode correr em paralelo com a 003 (`002 → 023 → 004/007`).
-- A **SPEC-024** (`qc-preprocess` 0.3.0, SEC-01 do security-report da SPEC-023) entra **antes** da 007 (`023 → 024 → 007`). A 004 não depende dela.
-- As pendências de produção do executor de migrações (SPEC-003) ficam na **SPEC-015**; a regra de testes "sem suíte dentro da suíte" (`architecture.md` §10) é aplicada pelo tester da **SPEC-004**.
+- A **SPEC-024** (`qc-preprocess` 0.3.0, SEC-01 do security-report da SPEC-023) entra **antes** da 007 (`023 → 024 → 007`). A 004 depende dela só pela migração das expectativas de versão (abaixo), e a 024 já está mergeada (PR #9).
+- As pendências de produção do executor de migrações (SPEC-003) ficam na **SPEC-015**. As duas regras de testes de `architecture.md` §10, "sem suíte dentro da suíte" e "expectativas de versão" (migração única), são aplicadas pelo tester da **SPEC-004**.
+- As pendências da SPEC-024: o dimensionamento do limitador e os limites próprios da rota de captura (3 MiB e 4 M pixels) entram na **SPEC-007** (§4.6 e §4.7) e são herdados pela **SPEC-010**. O problema `too_many_jpeg_scans` entra na **SPEC-011**, e a "foto com movimento" desligada, no `docs/dataset-protocol.md` §3.
 - O **ML depende de dados**: a coleta (humana) começa já na S1, mesmo antes da SPEC-010.
 - A SPEC-008 é desenvolvida com um **modelo dummy** (ONNX gerado nos testes, com as mesmas entradas e saídas) e não depende da SPEC-012. O modelo real é só um artefato trocado via `MODEL_DIR`.
 

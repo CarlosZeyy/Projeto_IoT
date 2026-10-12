@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
+| Status | Ready — **Aguardando reaprovação humana** |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -41,7 +41,7 @@ No modo coleta, cada foto vira um arquivo em `DATASET_DIR/raw/...` e uma linha v
 
 | Campo | Regra | Erro |
 |---|---|---|
-| `image` | mesmas regras da SPEC-007 (≤ 10 MiB → senão 413; JPEG/PNG pelo conteúdo + `load_image` → senão 415) | 413 / 415 |
+| `image` | mesmas regras da SPEC-007 (≤ 3 MiB → senão 413; `qc_edge.limits.load_capture_image`, SPEC-007 §4.7: até 4 M pixels e depois o `load_image` → senão 415), dentro do limitador de decodificações (SPEC-007 §4.6) | 413 / 415 |
 | `mode` | `collect` | 422 |
 | `item_id` | `^[SNOT]-\d{3}$` | 422 |
 | `object_type` | `screw` \| `nut` \| `other` (classe do modelo; `unknown` não é aceito) | 422 |
@@ -99,7 +99,7 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 - **CA-11** — *Dado* `manifest.csv` existente com cabeçalho diferente, *quando* envio uma coleta válida, *então* 500 `{"detail": "manifest header mismatch"}`, o arquivo não muda e nenhuma imagem é gravada.
 - **CA-12** — *Dado* `inferencer=None` e um `StubInferencer` contando chamadas em outro caso, *quando* faço 3 coletas válidas, *então* todas retornam 200, o stub tem 0 chamadas e o sink continua vazio (nada vai para a nuvem — R-02).
 - **CA-13 (R-02)** — *Dado* uma coleta feita, *então* `GET /raw/screw/fair/<arquivo>`, `GET /ml/data/manifest.csv` e `GET /manifest.csv` retornam 404.
-- **CA-14** — *Dado* coleta sem token ou com token errado, *então* 401 e nada gravado; com imagem de 10 485 761 bytes, 413; com texto renomeado para `.jpg`, 415.
+- **CA-14** — *Dado* coleta sem token ou com token errado, *então* 401 e nada gravado; com imagem de 3 145 729 bytes, 413; com texto renomeado para `.jpg` ou com um JPEG válido de 2001×2000 px (acima do limite da rota, SPEC-007 §4.7), 415; em todos os casos, `DATASET_DIR` não ganha imagem nem linha no manifest.
 - **CA-15** — *Dado* um manifest com 130 linhas de `screw/perfect` em 9 itens, 40 de `nut/poor` em 3 itens e 10 de `other` em 10 itens, *quando* chamo `compute_coverage`, *então* as células têm `(130, 9)`, `(40, 3)` e `(10, 10)` com metas `(120, 12)`, `(120, 12)` e `(150, 30)`, e as outras 8 células de grau são `(0, 0)`; e o console (loopback) contém `<table id="coverage">` com "130/120".
 - **CA-16** — *Dado* `GET /capture?t=<válido>`, *então* o HTML contém os campos `item_id`, `object_type`, `grade`, `labeler`, `angle` e `notes`, e o seletor de modo com "coleta" habilitado.
 - **CA-17 (manual)** — 1. ligar `qc-edge` sem modelo; 2. no celular, ativar "coleta", preencher `S-001`, parafuso, perfeito, `a`, ângulo 0; 3. tirar 5 fotos: o ângulo avança 0→4 e aparece "Peça completa"; 4. recarregar a página: os campos continuam preenchidos; 5. trocar para "outro": o grau fica desabilitado; 6. conferir no notebook 5 arquivos em `raw/screw/perfect/` e 5 linhas no manifest, e a tabela de cobertura com `5/120` e `1/12`.
@@ -132,3 +132,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 |---|---|---|---|
 | 2026-10-12 | §4.1 exige `re.fullmatch` em `item_id`, `re.fullmatch` em `angle` antes de `int()` e igualdade exata (sem `strip()`) em `object_type`, `grade` e `labeler`, por virarem nome de arquivo ou caminho. O CA-05 ganhou os casos `item_id="S-012\n"`, `angle="2\n"` e `object_type="screw\n"` (422, `DATASET_DIR` intacto). Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` (regra geral em `architecture.md` §3.2) | Humano, via orquestrador |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-12 | §4.1: o campo `image` segue os limites próprios da rota da SPEC-007 §4.7 (3 MiB e 4 M pixels, via `load_capture_image`), dentro do limitador de decodificações. O CA-14 trocou 10 485 761 por 3 145 729 bytes e ganhou o JPEG de 2001×2000 (415) e a verificação de `DATASET_DIR` intacto. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-24-02 de `reviews/SPEC-024/r1-security-report.md` (decisão registrada na SPEC-007) | Orquestrador, a pedido do humano |

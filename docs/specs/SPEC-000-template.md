@@ -50,6 +50,8 @@ Cada critério deve ser **testável e independente**. O tester escreve um teste 
 
 Não crie CA de "suíte inteira" (`ruff` + `pytest -q` = 0) como teste automatizado: o CI e o test-report já verificam isso (`docs/architecture.md` §10).
 
+Se a SPEC aumenta a versão de um pacote, siga as "Expectativas de versão" de `docs/architecture.md` §10. O CA fixa a versão nova, e a §3.1 autoriza o tester a converter só as asserções exatas do arquivo de aceite da SPEC vigente anterior.
+
 ## 7. Riscos e notas para o implementador
 
 ## 8. Definição de pronto
