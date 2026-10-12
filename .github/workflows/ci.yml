@@ -18,9 +18,10 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          # Credenciais de um contêiner efêmero do CI, descartado ao fim do job: não é segredo (R-03).
+          # `trust` (conexão sem senha) vale só para este contêiner efêmero do CI, descartado ao
+          # fim do job e acessível apenas pelo runner. Nunca use `trust` fora do CI (R-03).
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: partqc_test
         ports:
           - 5432:5432
@@ -30,8 +31,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # Aponta para o serviço postgres:16 acima (contêiner efêmero, só do CI): não é segredo (R-03).
-      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/partqc_test
+      # Aponta para o serviço postgres:16 acima (contêiner efêmero em `trust`, só do CI): sem senha.
+      TEST_DATABASE_URL: postgresql://postgres@localhost:5432/partqc_test
       UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v7

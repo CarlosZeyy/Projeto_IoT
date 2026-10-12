@@ -44,10 +44,23 @@ def test_runner_and_postgres_service(job: dict) -> None:
     assert "pg_isready" in service["options"]
 
 
+def test_postgres_service_uses_trust_without_password(job: dict) -> None:
+    """SPEC-022 §4.2: the CI Postgres runs in `trust`, with no password key at all."""
+    (service,) = job["services"].values()
+    env = service["env"]
+    assert env["POSTGRES_HOST_AUTH_METHOD"] == "trust"
+    assert not [key for key in env if "PASSWORD" in key.upper()]
+
+
+def test_ci_file_has_no_password_material() -> None:
+    # Built at run time so that this test file does not contain the sequences itself.
+    forbidden = ["POSTGRES_" + "PASSWORD", "postgres:" + "postgres@"]
+    text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert [s for s in forbidden if s in text] == []
+
+
 def test_env(job: dict) -> None:
-    assert job["env"]["TEST_DATABASE_URL"] == (
-        "postgresql://postgres:postgres@localhost:5432/partqc_test"
-    )
+    assert job["env"]["TEST_DATABASE_URL"] == "postgresql://postgres@localhost:5432/partqc_test"
     assert str(job["env"]["UV_FROZEN"]) == "1"
 
 
