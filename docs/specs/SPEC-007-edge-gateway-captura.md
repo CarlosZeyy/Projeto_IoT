@@ -2,11 +2,11 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
+| Status | Ready — **Aguardando reaprovação humana** |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
-| Depende de | SPEC-002, SPEC-023 (`qc-preprocess` 0.2.0) |
+| Depende de | SPEC-002, SPEC-023, SPEC-024 (`qc-preprocess` 0.3.0) |
 | Semana alvo | S2 |
 | Requisitos cobertos | RF-01, RF-02, RNF-03, RNF-05, RNF-06, RNF-08 |
 | ADRs relevantes | ADR-002, ADR-003, ADR-009, ADR-010, ADR-012 |
@@ -81,14 +81,19 @@ class BackgroundService(Protocol):
     def stop(self) -> None: ...
 
 def create_app(settings: EdgeSettings, inferencer: Inferencer | None, sink: InspectionSink, *,
-               background: Sequence[BackgroundService] = (), clock: Callable[[], datetime] = utc_now) -> FastAPI
+               background: Sequence[BackgroundService] = (), clock: Callable[[], datetime] = utc_now,
+               max_concurrent_decodes: int = 2, decode_wait_s: float = 10.0) -> FastAPI
 ```
 
 O `lifespan` chama `start()` de cada `BackgroundService` na subida e `stop()` em ordem inversa no desligamento. SPECs seguintes podem acrescentar parâmetros só por palavra-chave, com padrão.
 
+- `max_concurrent_decodes` (inteiro ≥ 1) e `decode_wait_s` (> 0) configuram o limitador de decodificações (§4.6). Fora da faixa → `ValueError` em `create_app`. Não há variável de ambiente para eles: a CLI usa os padrões.
+- **Checagem da flag na subida (SEC-04):** a primeira coisa que o `lifespan` faz, antes de iniciar os `BackgroundService`, é verificar `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`. Se for verdadeira, levanta `RuntimeError` com uma mensagem que contém `LOAD_TRUNCATED_IMAGES`, e o app não sobe.
+
 ### 4.3 CLI `qc-edge` e rede
 
-- `main()`: carrega `EdgeSettings`, monta `inferencer` e `sink`, registra no log a URL do console (`http://127.0.0.1:<porta>/`) e roda `uvicorn` em `EDGE_HOST:EDGE_PORT` com `proxy_headers=False`. Nesta SPEC: `inferencer=None`, `sink=InMemorySink()`; a flag `--stub-model` usa `StubInferencer` e, com ela, **nada é publicado na nuvem** (regra que a SPEC-009 deve manter, por R-06: resultado falso não pode subir como `live`).
+- `main()`: carrega `EdgeSettings`, monta `inferencer` e `sink`, verifica a flag (abaixo), registra no log a URL do console (`http://127.0.0.1:<porta>/`) e roda `uvicorn` em `EDGE_HOST:EDGE_PORT` com `proxy_headers=False`.
+- **Flag na CLI (SEC-04):** depois de montar `inferencer` e `sink` (quando todos os módulos da borda, inclusive o `onnxruntime` da SPEC-008, já foram importados) e **antes** de chamar `uvicorn`, se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` for verdadeira, `main()` registra um erro que contém `LOAD_TRUNCATED_IMAGES` e sai com código 1, sem chamar o `uvicorn`. Nenhum módulo de `qc_edge` altera a flag. Nesta SPEC: `inferencer=None`, `sink=InMemorySink()`; a flag `--stub-model` usa `StubInferencer` e, com ela, **nada é publicado na nuvem** (regra que a SPEC-009 deve manter, por R-06: resultado falso não pode subir como `live`).
 - Token: `EDGE_SESSION_TOKEN` ou `secrets.token_urlsafe(32)` na subida; comparação com `secrets.compare_digest`. O token **nunca** aparece em log.
 - `detect_lan_ips() -> list[str]`: (1) socket UDP `connect` para um endereço privado não roteável (ex.: `10.254.254.254:1`, nenhum pacote é enviado) e `getsockname()`; (2) fallback: IPv4 de `socket.getaddrinfo(socket.gethostname(), None, AF_INET)`. Remove duplicados, `127.0.0.0/8` e `169.254.0.0/16`; lista vazia → `["127.0.0.1"]` e aviso no console. Recalculado a cada render do console (troca para o hotspot).
 
@@ -108,11 +113,11 @@ O `lifespan` chama `start()` de cada `BackgroundService` na subida e `stop()` em
 
 ### 4.5 `POST /api/capture` (modo `inspect`)
 
-Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no threadpool). Ordem: token (401) → tamanho (413) → campos (422) → imagem (415) → modelo (503).
+Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no threadpool). Ordem: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`, §4.6) → imagem (415) → modelo (503).
 
 1. `image` > 10 MiB (10 485 760 bytes) → 413; um middleware também rejeita `Content-Length` > 10,5 MiB com 413 antes de ler o corpo.
 2. `lot_id` fora de `qc_contracts.LOT_ID_PATTERN` (`^[A-Za-z0-9_-]{1,40}$`, validado com `re.fullmatch` ou com o `pattern` do Pydantic, nunca com `re.match`/`re.search`), `mode` fora de `inspect|collect`, ou campo ausente → 422.
-3. Conteúdo: `qc_preprocess.load_image(bytes)` (SPEC-002 e SPEC-023: só JPEG/PNG pelo conteúdo, até 40 M pixels, proporção de no máximo 10:1, EXIF) — `InvalidImageError` → 415. O nome e o content-type enviados pelo cliente são ignorados. O `RuntimeError` que o `load_image` levanta quando `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` está ligada **não** é tratado como 415: é erro de configuração do servidor e resulta em 500, sem stack trace. Nenhum módulo de `qc_edge` liga essa flag.
+3. Conteúdo: `qc_preprocess.load_image(bytes)` (SPEC-002, SPEC-023 e SPEC-024: só JPEG/PNG pelo conteúdo, até 40 M pixels, proporção de no máximo 10:1, JPEG com no máximo 64 marcadores de scan, EXIF), chamado **dentro** do limitador de §4.6 — `InvalidImageError` → 415. O nome e o content-type enviados pelo cliente são ignorados. O `RuntimeError` que o `load_image` levanta quando `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` está ligada **não** é tratado como 415: é erro de configuração do servidor e resulta em 500, sem stack trace. Nenhum módulo de `qc_edge` liga essa flag.
 4. `inferencer is None` → 503 `{"detail": "model not loaded"}`.
 5. Gera `inspection_id = uuid4()` e `inspected_at = clock()` (UTC); `inferencer.infer(img)`; `InferenceError` → 500 `{"detail": "inference failed"}`, nada gravado.
 6. Salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD de inspected_at>/<inspection_id>.jpg` (JPEG: bytes como recebidos; PNG: reencodado JPEG q=90). Nome sempre gerado pelo servidor.
@@ -120,6 +125,17 @@ Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no t
 8. 200: `{"inspection": <InspectionCreate em JSON>, "labels_pt": {"object_type", "grade", "verdict"}, "approved": bool | null}`. `approved = None` se `grade is None`, senão `not is_defective(grade)`; `verdict` ∈ "aprovada", "reprovada", "desconhecido". Rótulos vêm de `qc_contracts.labels`.
 
 `mode=collect` nesta SPEC responde 501; o comportamento final é da SPEC-010 (não há CA para isso aqui).
+
+### 4.6 Limitador de decodificações (SEC-02)
+
+A maior imagem aceita custa até cerca de 300 MB durante `load_image` + `preprocess` (pico medido de 343 MB a 40 M pixels, `reviews/SPEC-023/r1-security-report.md`), e o threadpool do Starlette atende até 40 requisições ao mesmo tempo.
+
+- `create_app` cria **um** `threading.BoundedSemaphore(max_concurrent_decodes)` por app.
+- No `POST /api/capture`, depois da validação dos campos (422) e antes do passo 3, o handler chama `acquire(timeout=decode_wait_s)`:
+  - não conseguiu → 503 `{"detail": "server busy"}`; nada é salvo, o inferenciador não é chamado e o sink não recebe nada;
+  - conseguiu → executa os passos 3 a 7 (decodificação, inferência, gravação da foto e `sink.put`) e libera o semáforo num `finally`, inclusive em erro.
+- **Regra para a borda (`architecture.md` §9):** toda chamada a `qc_preprocess.load_image` em `qc_edge` acontece com esse semáforo. A SPEC-010 (modo coleta, "mesmas regras da SPEC-007") usa o mesmo limitador.
+- A página do celular mostra o 503 `server busy` como "Borda ocupada. Tente de novo." (rótulo PT-BR em `capture.js`).
 
 ## 5. Critérios de aceite
 
@@ -130,7 +146,7 @@ Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no t
 - **CA-05** — *Dado* um sink cujo `put` lança `SinkError`, *quando* envio uma foto válida, *então* recebo 503, nenhum arquivo fica em `captures/` e o sink está vazio.
 - **CA-06** — *Dado* requisição sem `X-Session-Token` ou com token errado, *quando* chamo `POST /api/capture` ou `GET /api/status`, *então* recebo 401, `StubInferencer` tem 0 chamadas e nenhum arquivo é criado.
 - **CA-07** — *Dado* token válido, *quando* envio `image` com 10 485 761 bytes, *então* recebo 413 e nada é salvo.
-- **CA-08** — *Dado* token válido, *quando* envio um arquivo de texto chamado `foto.jpg`, um GIF válido, um JPEG truncado ou um PNG válido de 100×1001 px (proporção acima de 10:1, SPEC-023), *então* recebo 415 com `{"detail": ...}`, `StubInferencer` tem 0 chamadas e nada é salvo.
+- **CA-08** — *Dado* token válido, *quando* envio um arquivo de texto chamado `foto.jpg`, um GIF válido, um JPEG truncado, um PNG válido de 100×1001 px (proporção acima de 10:1, SPEC-023) ou um JPEG válido 64×48 com um segmento COM de 64 pares `FF DA` logo depois do SOI (65 marcadores, SPEC-024), *então* recebo 415 com `{"detail": ...}`, `StubInferencer` tem 0 chamadas e nada é salvo.
 - **CA-09** — *Dado* token válido, *quando* `lot_id` é `"lote 1"`, `"../x"`, `"L-001\n"` (quebra de linha final) ou 41 caracteres, ou `mode="foo"`, ou falta `image`, *então* recebo 422 e nada é salvo.
 - **CA-10** — *Dado* `inferencer=None`, *quando* envio foto válida em `mode=inspect`, *então* recebo 503 `{"detail": "model not loaded"}`.
 - **CA-11** — *Dado* um inferenciador que lança `InferenceError`, *quando* envio foto válida, *então* recebo 500 `{"detail": "inference failed"}`, sem stack trace, sem arquivo salvo e sem item no sink.
@@ -144,13 +160,17 @@ Campos: `image` (arquivo), `lot_id`, `mode`. Handler síncrono (`def`, roda no t
 - **CA-19 (R-03)** — *Dado* captura de logs desde a subida até 3 capturas (sucesso, 401 e 415), *então* o valor do token e o `DEVICE_API_KEY` configurado não aparecem em nenhuma linha.
 - **CA-20 (manual)** — Topologia preferida: 1. ligar `qc-edge` com `--stub-model` e liberar a porta conforme `edge/README.md`; 2. no celular A (Android, Chrome) e depois no celular B (o outro celular da dupla, navegador padrão), ler o QR do console na mesma Wi-Fi; 3. tocar "Fotografar": abre a câmera **traseira** (direto ou após escolher "Câmera" no seletor do Android, ADR-003; registrar qual); 4. fotografar 10 peças; 5. conferir em cada uma o cartão de resultado em menos de 3 s (tempo total exibido) e 10 linhas novas no console.
 - **CA-21 (manual)** — Plano B: 1. ligar o hotspot do celular A e conectar o notebook a ele; 2. recarregar o console e usar o QR do novo IP; 3. repetir os passos 3–5 do CA-20 com 3 fotos em cada celular.
+- **CA-22 (security, SEC-02)** — *Dado* `create_app(..., max_concurrent_decodes=2, decode_wait_s=0.5)` e um inferenciador de teste cujo `infer` registra o número de chamadas simultâneas e bloqueia até um `threading.Event` ser liberado, *quando* 4 requisições válidas são enviadas em paralelo (4 threads) e o evento só é liberado depois que 2 respostas chegaram, *então* exatamente 2 respostas são 503 com `{"detail": "server busy"}`, as outras 2 são 200, o máximo de chamadas simultâneas a `infer` é 2, o sink tem 2 itens e `captures/` tem exatamente 2 arquivos.
+- **CA-23 (SEC-02)** — *Dado* o mesmo inferenciador com `max_concurrent_decodes=2` e `decode_wait_s=5`, *quando* 4 requisições válidas são enviadas em paralelo e o evento é liberado 0,3 s depois do envio, *então* as 4 respostas são 200 e o máximo de chamadas simultâneas a `infer` é 2; e *dado* um inferenciador que lança `InferenceError` na 1ª chamada, *quando* 3 requisições são enviadas em sequência com `max_concurrent_decodes=1`, *então* as respostas são 500, 200 e 200 (o semáforo é liberado depois do erro); e `create_app(..., max_concurrent_decodes=0)` ou `decode_wait_s=0` levanta `ValueError`.
+- **CA-24 (security, SEC-04)** — *Dado* `PIL.ImageFile.LOAD_TRUNCATED_IMAGES = True` (via `monkeypatch.setattr`), *quando* `main()` é chamado com `uvicorn.run` substituído por um espião, *então* sai com código 1, a saída de log contém `LOAD_TRUNCATED_IMAGES` e o espião não é chamado; e *quando* um `TestClient(create_app(...))` entra no bloco `with`, *então* levanta `RuntimeError` cuja mensagem contém `LOAD_TRUNCATED_IMAGES`. Com a flag em `False`, os dois sobem normalmente.
+- **CA-25 (security, SEC-04)** — *Dado* os arquivos `*.py` de `git ls-files` cujo caminho não tem nenhum componente `tests`, *quando* analisados com `ast`, *então* nenhum contém atribuição (`Assign`, `AugAssign` ou `AnnAssign`) a um alvo `Name` ou `Attribute` chamado `LOAD_TRUNCATED_IMAGES`, nem chamada `setattr(<qualquer>, "LOAD_TRUNCATED_IMAGES", <qualquer>)`.
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
 | Unitário (autor) | config, token, `detect_lan_ips`, rotas com `StubInferencer`/`InMemorySink` | `edge/tests/` |
-| Aceite (tester) | Um por CA automatizável (`httpx.ASGITransport` com `client=` para simular a origem; `tmp_path` como `EDGE_DATA_DIR`; socket simulado com `monkeypatch`) | `edge/tests/acceptance/test_spec_007.py` |
+| Aceite (tester) | Um por CA automatizável (`httpx.ASGITransport` com `client=` para simular a origem; `tmp_path` como `EDGE_DATA_DIR`; socket simulado com `monkeypatch`; nos CA-22 e CA-23, threads com `TestClient` e um inferenciador de teste controlado por `threading.Event`) | `edge/tests/acceptance/test_spec_007.py` |
 | Manual (dupla) | CA-20 e CA-21, resultado no test-report | celulares reais |
 
 Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenciador (stub).
@@ -159,6 +179,8 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 
 - O `uvicorn` aplica `X-Forwarded-For` de `127.0.0.1` por padrão; por isso `proxy_headers=False` e a checagem de headers no console.
 - `<input capture>` funciona em HTTP (não exige contexto seguro), diferente de `getUserMedia` (SPEC-019).
+- **SEC-05 (filtros de `warnings`):** no Python 3.12, `warnings.catch_warnings` altera estado global e não é seguro entre threads. O `load_image` não depende disso (o limite efetivo é a checagem explícita de `MAX_PIXELS`), e nenhuma decisão de segurança da borda pode depender de filtros de `warnings`.
+- A checagem da flag na subida (§4.2 e §4.3) fecha a janela entre a leitura da flag no `load_image` e a nova consulta do Pillow dentro do `.load()` (SEC-04): como nenhum módulo do processo altera a flag (CA-25), ela não muda depois da subida.
 - `pydantic-settings` e `qrcode` entram como dependências do `qc-edge`; nada de torch (R-12).
 - `edge/README.md` deve trazer: detectar o firewall ativo (`systemctl is-active ufw firewalld nftables`); `sudo ufw allow 8000/tcp`; `sudo firewall-cmd --add-port=8000/tcp` (e `--permanent` opcional); regra `nft add rule inet filter input tcp dport 8000 accept` (ajustar tabela e chain); como desfazer cada uma; e o passo a passo do plano B (`nmcli dev wifi connect <SSID>`).
 
@@ -176,3 +198,4 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 |---|---|---|---|
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-preprocess` 0.2.0); (b) §4.1 e §4.5, passo 2: `DEVICE_ID` e `lot_id` validados com as constantes de `qc_contracts` e `re.fullmatch` (ou `pattern` do Pydantic); (c) §4.5, passo 3: proporção máxima de 10:1 (415) e `RuntimeError` da flag `LOAD_TRUNCATED_IMAGES` → 500, com nenhum módulo da borda ligando a flag; (d) o CA-01 ganhou `DEVICE_ID="edge-01\n"`; (e) o CA-08 ganhou o PNG 100×1001 e as verificações "0 chamadas ao stub" e "nada salvo", que já decorriam da ordem do §4.5; (f) o CA-09 ganhou `lot_id="L-001\n"`. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 (RV-02), RV-04 e RV-06 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-12 | Mudanças: (a) dependência da SPEC-024 (`qc-preprocess` 0.3.0, limite de 64 marcadores de scan no JPEG), com o caso novo no CA-08; (b) §4.6 nova: limitador de decodificações (`BoundedSemaphore`, padrão 2, espera de 10 s, 503 `server busy`), com os parâmetros `max_concurrent_decodes` e `decode_wait_s` em `create_app` e a ordem do §4.5 atualizada; (c) checagem de `LOAD_TRUNCATED_IMAGES` na subida, no `lifespan` e na CLI (código 1); (d) CAs novos: CA-22 e CA-23 (limitador), CA-24 (flag na subida) e CA-25 (nenhum código fora de `tests/` altera a flag); (e) §7 com a regra sobre filtros de `warnings`. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-01, SEC-02, SEC-04 e SEC-05 de `reviews/SPEC-023/r1-security-report.md`, e a nota sobre a janela da flag de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |

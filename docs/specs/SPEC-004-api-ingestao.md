@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
+| Status | Ready — **Aguardando reaprovação humana** |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -28,6 +28,11 @@ Um dispositivo registrado grava inspeções via `POST /api/v1/inspections` e `/i
 - `.env.example`: `MAX_BODY_BYTES` e `LOG_LEVEL` no bloco `qc-api`, com comentário.
 - `README.md` ("Como rodar"): subir a API local e registrar um dispositivo.
 - Testes em `api/tests/`.
+- **Tester desta SPEC (manutenção, `docs/architecture.md` §10):** remover os dois testes que rodam a suíte inteira em subprocesso, sem tocar em mais nada nesses arquivos além de imports e helpers que ficarem sem uso:
+  - `test_ca15_ruff_and_full_suite_without_ci_and_db_url` de `tests/acceptance/test_spec_022.py`;
+  - `test_ca13_ruff_and_full_suite` (e o helper `_clean_env`) de `packages/contracts/tests/acceptance/test_spec_023.py`.
+
+  No lugar de cada um, fica um comentário de uma linha, em inglês: `# CA-15: checked by CI and by the test-report, not by a test (docs/architecture.md section 10).` (com `CA-13` no arquivo da SPEC-023). O developer não toca em `tests/acceptance/`.
 
 ### 3.2 Fora
 
@@ -81,8 +86,10 @@ Um dispositivo registrado grava inspeções via `POST /api/v1/inspections` e `/i
 ### 4.5 Proteções e erros
 
 - **Limite de corpo** (middleware ASGI, todas as rotas): `Content-Length > MAX_BODY_BYTES` → 413 sem ler o corpo; sem `Content-Length` (chunked), conta os bytes lidos e responde 413 ao passar do limite. Corpo: `{"detail": "Request body too large"}`.
-- **Precedência** para JSON bem formado: 413 → 503 (banco indisponível ao autenticar) → 401 → 422 → 403.
+- **Precedência** para JSON bem formado: 413 → 503 (banco indisponível ao autenticar) → 401 → 422 (validação do contrato) → 403 → 422 (valor que o banco recusa, abaixo).
 - Banco indisponível (`psycopg.OperationalError`, `PoolTimeout`) → 503 `{"detail": "Database unavailable"}`.
+- **Valor aceito pelo contrato, mas recusado pelo banco** (`psycopg.DataError`, a classe SQLSTATE `22`, levantada no `insert` da rota única ou de qualquer item do lote): `rollback` da transação inteira (nada gravado e `last_seen_at` inalterado) e 422 com o corpo exato `{"detail": "Value cannot be stored"}`. O log registra só a rota, o `device_id` e o SQLSTATE (ex.: `22003`), nunca os valores nem a mensagem do servidor. O caso conhecido é o underflow das colunas `real` (`float4`): o contrato aceita `type_confidence`, `grade_confidence` e `grade_score` em `(0, ~7e-46]`, e o cast `float8 → float4` do Postgres falha com `22003` ("Numbers too close to zero that are not representable as distinct from zero will cause an underflow error", <https://www.postgresql.org/docs/16/datatype-numeric.html>, consultado em 2026-10-12). A borda legítima não produz esses valores, porque as saídas do ONNX são `float32` (SEC-03 de `reviews/SPEC-023/r1-security-report.md`). O 422 é o que faz o publisher da SPEC-009 isolar o item por bissecção e marcá-lo como `dead`, em vez de reenviar o lote para sempre (o que aconteceria com 500).
+- **Inteiro JSON grande demais para o Python:** o FastAPI decodifica o corpo com `json.loads`, e um inteiro com mais de 4 300 dígitos levanta `ValueError` (limite de conversão `int`/`str` do Python 3.12). A resposta tem de ser 4xx (400 ou 422, conforme a versão do FastAPI travada no `uv.lock`), nunca 500, e nada é gravado (CA-26).
 - Exceção inesperada → 500 `{"detail": "Internal server error"}`; o traceback vai só para o log do servidor.
 - Erros de validação usam o 422 padrão do FastAPI (`{"detail": [...]}`).
 - `latency_ms` acima de `qc_contracts.MAX_LATENCY_MS` (2 147 483 647, contrato 0.2.0, SPEC-023) é barrado pelo próprio `InspectionCreate` e vira 422. Ele nunca chega ao `insert`, que responderia 500 (a coluna é `integer`, SPEC-003 CA-23).
@@ -123,13 +130,16 @@ Contexto comum: banco de teste migrado (fixtures `migrated_db`/`clean_db` da SPE
 - **CA-22** — Dado `lab-02` registrado, quando `register_device.py --device-id lab-02` roda sem `--rotate`, então sai com 1 e o hash não muda; quando roda com `--rotate`, sai com 0 e imprime uma chave nova `k2`; então a chave antiga recebe 401 e `k2` recebe 201.
 - **CA-23** — Dado o banco migrado, quando `register_device.py --rotate --device-id ghost-01` roda, então sai com 1; com `--device-id Edge_01`, sai com 2; com `--device-id` igual a `"edge-01\n"` (quebra de linha final, passada como elemento de `argv` no `subprocess`), sai com 2; sem `DATABASE_URL` e sem `--database-url`, sai com 2. Em nenhum caso o stdout contém `DEVICE_API_KEY=`, e `devices` não ganha linha.
 - **CA-24** — Dado `P(X)` com `latency_ms=2147483647` (igual a `qc_contracts.MAX_LATENCY_MS`) e a chave `KE`, quando `POST /api/v1/inspections`, então 201 e a linha gravada tem `latency_ms = 2147483647`; e um lote `[P(A), P(B)]` em que `P(B)` tem `latency_ms=2147483648` responde 422, sem `Traceback` no corpo, e a tabela não ganha nenhuma linha de `A` nem de `B`.
+- **CA-25 (security, SEC-03)** — Dado a chave `KE` e `edge-01` com `last_seen_at` nulo, quando `POST /api/v1/inspections` recebe `P(X)` com `grade_score=1e-50`, e quando `POST /api/v1/inspections/batch` recebe `[P(A), P(B)]` em que `P(B)` tem `type_confidence=5e-324`, então cada resposta é 422 com o corpo exato `{"detail": "Value cannot be stored"}`, a tabela não ganha nenhuma linha (`X`, `A` ou `B`), `last_seen_at` continua nulo e nenhum registro de log contém `1e-50` nem `5e-324`; e `P(Y)` com `type_confidence=1e-40` (subnormal representável em `float4`) responde 201.
+- **CA-26 (security)** — Dado a chave `KE`, quando o corpo é o JSON de `P(X)` com o valor de `latency_ms` substituído, no texto, por um inteiro de 5 000 dígitos (corpo abaixo de 256 KB), então a resposta tem status 400 ou 422 (nunca 500), o corpo não contém `Traceback` e nada é gravado.
+- **CA-27 (manutenção, `architecture.md` §10)** — Dado o repositório desta SPEC, quando se roda `uv run pytest --collect-only -q tests/acceptance/test_spec_022.py packages/contracts/tests/acceptance/test_spec_023.py`, então o código de saída é 0, a saída não lista `test_ca15_ruff_and_full_suite_without_ci_and_db_url` nem `test_ca13_ruff_and_full_suite`, e os demais testes desses dois arquivos continuam coletados (a contagem de cada arquivo cai exatamente 1 em relação à `main`).
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
 | Unitário (autor) | `hash_api_key`, `require_read_key`, middleware de limite (sem banco), settings; rotas e script contra o banco de teste | `api/tests/` |
-| Aceite (tester) | Um teste por CA (marcados `db`, exceto CA-17, CA-19 e CA-20) | `api/tests/acceptance/test_spec_004.py` |
+| Aceite (tester) | Um teste por CA (marcados `db`, exceto CA-17, CA-19, CA-20 e CA-27); a remoção dos dois testes de §3.1 | `api/tests/acceptance/test_spec_004.py`, `tests/acceptance/test_spec_022.py`, `packages/contracts/tests/acceptance/test_spec_023.py` |
 
 Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco" usa uma porta fechada local. O script é testado com `subprocess` e `sys.executable`.
 
@@ -140,6 +150,9 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 - `TestClient` precisa do bloco `with` para rodar o `lifespan`.
 - O `sys.stdout.write` do script é a saída do próprio CLI (a chave), não log; isso não viola a regra "nada de `print`".
 - Um `duplicate` para um ID que pertence a outro dispositivo é aceito como está em `architecture.md` §3.3 (sem 409); registrado aqui como decisão consciente.
+- `psycopg.DataError` é a mesma classe de `psycopg.errors.DataError`, base de todos os erros SQLSTATE `22`. Capture-a só em volta da escrita (`insert` e `update devices`), nunca de forma genérica: `IntegrityError` (classe `23`) e `OperationalError` continuam com o tratamento atual.
+- **Alternativas ao 422 do SEC-03, não adotadas:** (a) migração `002` trocando as três colunas `real` por `double precision`: muda o schema aprovado da SPEC-003 (e o CA-04 dela), exige SPEC e migração novas e ainda deixaria a API sem rede de segurança para a classe `22`; (b) rejeitar `0 < x < 1e-30` no contrato (minor 0.3.0): cria uma regra numérica arbitrária e um aumento de versão do contrato para um valor que nenhum produtor legítimo emite. O 422 resolve o efeito real (500 e lote reenviado para sempre) com o menor diff.
+- Até a remoção do §3.1, cada `uv run pytest -q` roda a suíte 4 vezes (RV-01 de `reviews/SPEC-023/r1-review-report.md`). Remova os dois testes no início da etapa de teste, para encurtar as execuções seguintes.
 
 ## 8. Definição de pronto
 
@@ -155,3 +168,4 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 |---|---|---|---|
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-contracts` 0.2.0); (b) nota em §4.5 sobre o teto de `latency_ms` (422, nunca 500); (c) §4.6 exige `re.fullmatch` para `--device-id`; (d) o CA-01 compara `contract_version` com `qc_contracts.__version__`; (e) o CA-08 ganhou o caso `latency_ms=2147483648`; (f) o CA-23 ganhou o caso `"edge-01\n"`; (g) CA-24 novo, com os limites de `latency_ms` na rota única e no lote. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-02 (RV-03) e RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-12 | Mudanças: (a) §4.5: `psycopg.DataError` (SQLSTATE `22`) na escrita → `rollback` e 422 `{"detail": "Value cannot be stored"}`, com a precedência atualizada; (b) §4.5: inteiro JSON com mais de 4 300 dígitos → 4xx, nunca 500; (c) §3.1: o tester remove os dois testes que rodam a suíte inteira em subprocesso (CA-15 da SPEC-022 e CA-13 da SPEC-023), conforme a regra nova de `architecture.md` §10; (d) CAs novos: CA-25 (underflow de `float4` → 422), CA-26 (inteiro de 5 000 dígitos → 4xx) e CA-27 (remoção dos meta-testes); (e) §7 com as alternativas não adotadas. Nenhum CA existente mudou. SPEC marcada como "Aguardando reaprovação humana". | SEC-03 e "Notas para a SPEC-004" de `reviews/SPEC-023/r1-security-report.md`; RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |

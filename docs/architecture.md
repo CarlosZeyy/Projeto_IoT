@@ -38,6 +38,8 @@ Fonte de verdade técnica do projeto. As SPECs detalham cada parte, mas **não p
 
 O acesso ao banco é feito com **psycopg 3 direto ao Postgres do Supabase** (connection string do pooler em modo transaction, guardada em `DATABASE_URL`, com `prepare_threshold=None`, porque esse modo não suporta prepared statements — ADR-006), e não pelo SDK `supabase-py`. Isso dá SQL explícito, transações e `ON CONFLICT` para a idempotência. A chave `service_role` não é necessária no MVP; se algum dia for, vale R-03.
 
+As **migrações** são a exceção: o `infra/migrate.py` usa um advisory lock de sessão, que não sobrevive entre transações no modo transaction. Por isso, elas rodam pela conexão direta ou pelo pooler em **modo session** (porta 5432), nunca pela porta 6543, e o executor recusa essa porta (SPEC-015 §4.7).
+
 ## 3. Contrato v0 (`qc-contracts` 0.2.0)
 
 Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023). O histórico completo fica em `packages/contracts/README.md`.
@@ -142,14 +144,14 @@ Resposta:
 - **Leitura:** chave única `READ_API_KEY` (variável de ambiente da API), usada pelo dashboard.
 - Sem chave ou com chave inválida: 401.
 
-**Outras proteções:** corpo limitado a 256 KB, CORS fechado (o dashboard chama do servidor, não do navegador) e documentação em `/docs`.
+**Outras proteções:** corpo limitado a 256 KB, CORS fechado (o dashboard chama do servidor, não do navegador) e documentação em `/docs`. Um valor que o contrato aceita mas o banco recusa (`psycopg.DataError`, SQLSTATE classe `22`, como o underflow das colunas `real` do §5) vira 422 `{"detail": "Value cannot be stored"}`, com `rollback` de tudo, e nunca 500 (SPEC-004).
 
 ## 5. Banco (Supabase Postgres)
 
 ```sql
-devices(device_id text pk, api_key_hash text not null, created_at timestamptz default now(), last_seen_at timestamptz)
+devices(device_id text pk, api_key_hash text not null unique, created_at timestamptz not null default now(), last_seen_at timestamptz)
 inspections(
-  inspection_id uuid pk, device_id text fk→devices, lot_id text not null,
+  inspection_id uuid pk, device_id text not null fk→devices, lot_id text not null,
   inspected_at timestamptz not null, received_at timestamptz not null default now(),
   object_type text not null check(...), grade text null check(...),
   grade_score real, type_confidence real not null, grade_confidence real,
@@ -159,10 +161,15 @@ inspections(
   check ((object_type = 'unknown') = (grade is null))
 )
 -- índices: (inspected_at), (lot_id), (source, inspected_at), (device_id)
--- RLS habilitado nas duas tabelas, sem políticas → as chaves anon/authenticated não leem nada.
+-- RLS habilitado em devices, inspections e schema_migrations, sem políticas e sem force
+--   → as chaves anon/authenticated não leem nem escrevem nada; o dono (a API) não é afetado.
 ```
 
-As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para poder rodar de novo sem erro (`if not exists`). São aplicadas por `infra/migrate.py`, que registra cada uma em `schema_migrations` com um checksum (SPEC-003); o SQL Editor do Supabase e o `psql` são a alternativa manual. A idempotência usa `INSERT ... ON CONFLICT (inspection_id) DO NOTHING RETURNING inspection_id`: sem linha retornada, a resposta é `duplicate`.
+- **Restrições** (SPEC-003 §4.1): os `check` espelham os enums, as faixas e as regexes do contrato (defesa em profundidade). `inspections.device_id` é `not null`, porque o contrato o exige (SPEC_ISSUE-02 da SPEC-003, ratificado).
+- **Colunas `real` (`float4`):** arredondam (ex.: `0.97` vira `0.9700000286`) e recusam com `22003` todo valor diferente de zero que arredonde para zero (abaixo de cerca de `7e-46`). A API converte esse erro em 422 (§4); a borda legítima não produz esses valores.
+- **Grants do Supabase:** o RLS não cobre `TRUNCATE`, `REFERENCES` e `TRIGGER`. Projetos novos do Supabase deixaram de dar grants automáticos a `anon`/`authenticated` nas tabelas novas do `public` (changelog 45329, <https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically>, consultado em 2026-10-12), mas isso depende da opção escolhida na criação. A SPEC-015 (CA-14) confere os grants em produção e os revoga se existirem; o `revoke` não vai para uma migração, porque esses papéis não existem no Postgres local nem no do CI.
+
+As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para poder rodar de novo sem erro (`if not exists`). São aplicadas por `infra/migrate.py`, que registra cada uma em `schema_migrations` com um checksum (SPEC-003), pela conexão direta ou pelo pooler em modo session (§2, SPEC-015 §4.7); o SQL Editor do Supabase e o `psql` são a alternativa manual. A idempotência usa `INSERT ... ON CONFLICT (inspection_id) DO NOTHING RETURNING inspection_id`: sem linha retornada, a resposta é `duplicate`.
 
 ## 6. Gateway de borda (`qc-edge`)
 
@@ -172,7 +179,7 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 |---|---|---|
 | `GET /` | operador (navegador do notebook) | Console com QR code para `http://<ip-lan>:<porta>/capture?t=<token>`, status do modelo, tamanho do outbox, último envio, últimas inspeções |
 | `GET /capture?t=<token>` | celular | Página HTML/JS mínima: campo de lote, modo (inspeção/coleta), botão "Fotografar" (`<input type=file accept="image/*" capture="environment">`) e resultado. O JS redimensiona para no máximo 1280 px no lado maior e reencoda em JPEG (q=0,9) via canvas, o que também corrige a rotação EXIF |
-| `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG, ≤ 10 MB, ≤ 40 M pixels, proporção ≤ 10:1, validada por `qc_preprocess.load_image`), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
+| `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG, ≤ 10 MB, ≤ 40 M pixels, proporção ≤ 10:1, JPEG com ≤ 64 marcadores de scan, validada por `qc_preprocess.load_image` dentro do limitador de decodificações, §9), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
 | `GET /api/status` | console e celular | Modelo (versão, sha), outbox (pendentes), conectividade com a nuvem |
 
 **Sem modelo carregado** (`MODEL_DIR` vazio, por exemplo na S2, antes do primeiro treino): a borda sobe normalmente, o modo `collect` funciona e o modo `inspect` responde 503 com `{"detail": "model not loaded"}` (a página mostra o rótulo PT-BR). O stub de desenvolvimento (`--stub-model`, SPEC-007) **nunca** publica na nuvem.
@@ -243,5 +250,16 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
 | Console (que exibe o token) exposto por proxy ou túnel indevido | Console só para loopback **e** 403 se houver headers de proxy (`X-Forwarded-For`, `CF-Connecting-IP`); uvicorn com `proxy_headers=False` (defesa em profundidade; túneis são proibidos pela §8) |
 | Chave de dispositivo vazada | Hash no banco; rotação por `register_device.py --rotate` |
 | Leitura indevida pela chave anon do Supabase | RLS sem políticas; a API usa `DATABASE_URL` só no servidor |
-| Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão. O `load_image` checa pelo cabeçalho, antes de decodificar, o limite de pixels (40 M) e de proporção (≤ 10:1), o que evita o OOM do resize (SPEC-023). Nenhum componente liga `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`, e o `load_image` se recusa a rodar com ela ligada |
+| Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão. O `load_image` checa pelo cabeçalho, antes de decodificar, o limite de pixels (40 M) e de proporção (≤ 10:1), o que evita o OOM do resize (SPEC-023), e recusa JPEG com mais de 64 marcadores de scan (`FF DA`), o que limita a CPU gasta com scans progressivos repetidos (SPEC-024). Nenhum componente liga `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`: o `load_image` se recusa a rodar com ela ligada, e a borda se recusa a subir (SPEC-007) |
+| Muitos uploads simultâneos na borda (memória e CPU) | Toda chamada a `load_image` em `qc_edge` passa por um semáforo de decodificações (padrão 2, espera de 10 s, depois 503 `server busy`); vale para os modos `inspect` e `collect` (SPEC-007 §4.6, SPEC-010) |
+| Valor aceito pelo contrato e recusado pelo banco | 422 com `rollback` (§4); o publisher da borda isola o item por bissecção e o marca como `dead` (SPEC-009) |
 | Vazamento de segredo no Git | `.gitignore`, `.env.example` e a busca do reviewer (R-03) |
+
+## 10. Testes (regras do projeto)
+
+- **Marcadores:** `db` (exige `TEST_DATABASE_URL`; sem ela, o teste é pulado, e no CI a sessão falha; SPEC-001 e SPEC-003), `acceptance` e `slow`.
+- **Sem suíte dentro da suíte** (RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md`):
+  - Nenhum teste roda a suíte inteira em subprocesso (`pytest` sem caminhos, ou com um diretório inteiro de `testpaths`). Com k testes assim, cada um se protegendo só da própria recursão, a suíte roda muitas vezes por execução, e uma execução interna pode recriar o schema do banco de teste no meio da sessão externa.
+  - Um CA do tipo "`ruff check`, `ruff format --check` e `pytest -q` terminam com código 0" é verificado pelo CI (R-09) e pela execução da suíte inteira que o tester já faz e registra no test-report. Ele não ganha teste automatizado: o test-report o marca como "verificado pela execução da suíte" e cita a contagem de testes. As SPECs novas não precisam escrever esse CA, porque a Definição de pronto já exige CI verde.
+  - Um teste que precise rodar o pytest em subprocesso (ex.: as travas de banco da SPEC-001 e da SPEC-003) passa caminhos de arquivo explícitos, nunca inclui outro teste que rode pytest em subprocesso e, se usar o banco, usa um banco próprio (nome com `test`) ou não usa `migrated_db`.
+  - Implementação: os dois testes que violavam a regra (CA-15 da SPEC-022 e CA-13 da SPEC-023) são removidos pelo tester da SPEC-004. O reviewer confere a regra em toda SPEC.
