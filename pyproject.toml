@@ -1,0 +1,72 @@
+# Raiz do workspace uv do PartQC (SPEC-001, ADR-010).
+# Projeto virtual: não é empacotado; só agrega os membros, as ferramentas e o grupo dev.
+
+[project]
+name = "partqc"
+version = "0.0.0"
+description = "PartQC workspace root (virtual project)"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "pytest-cov",
+    "httpx",
+    "pyyaml",
+    "psycopg[binary]>=3.2",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.8"
+
+[tool.uv.workspace]
+members = [
+    "packages/contracts",
+    "packages/preprocess",
+    "api",
+    "edge",
+    "dashboard",
+    "ml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Desde o ruff 0.17, `ruff format` também formata blocos de código em Markdown. Os trechos em
+# docs/ são ilustrativos (não são código do projeto), então Markdown fica fora do ruff.
+extend-exclude = ["*.md"]
+# O hook de guarda roda com o python3 do sistema e precisa ser compatível com Python >= 3.10.
+per-file-target-version = { ".claude/hooks/*.py" = "py310" }
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "qc_contracts",
+    "qc_preprocess",
+    "qc_api",
+    "qc_edge",
+    "qc_dashboard",
+    "qc_ml",
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+    "packages/contracts/tests",
+    "packages/preprocess/tests",
+    "api/tests",
+    "edge/tests",
+    "dashboard/tests",
+    "ml/tests",
+]
+addopts = "-ra --strict-markers --import-mode=importlib"
+markers = [
+    "acceptance: acceptance test written by the tester (tests/acceptance/)",
+    "db: requires a PostgreSQL database in TEST_DATABASE_URL",
+    "slow: slow test",
+]
