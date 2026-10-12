@@ -1,6 +1,6 @@
 [project]
 name = "qc-preprocess"
-version = "0.0.0"
+version = "0.1.0"
 description = "Deterministic image preprocessing shared by training and edge"
 requires-python = ">=3.12,<3.13"
 dependencies = [
