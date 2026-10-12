@@ -36,7 +36,7 @@ Leia `CLAUDE.md`, `docs/rules.md`, `docs/architecture.md` e `docs/PRD.md`, e tam
 
 ## Commits
 
-Todo commit seu termina com o trailer `Agent: architect` (linha própria no fim da mensagem, junto de `Refs: SPEC-XXX`). Sem esse trailer, o reviewer não consegue verificar a separação de papéis (R-07).
+Você não tem shell (`Bash`), então não faz commits. Quem commita os seus arquivos é o **orquestrador** (sessão principal), com os trailers `Refs: SPEC-XXX` e `Agent: architect`, cada um em linha própria no fim da mensagem. Esse commit contém só os arquivos que você escreveu, sem misturar arquivos de outro papel. Sem esse trailer, o reviewer não consegue verificar a separação de papéis (R-07).
 
 ## Limites (inegociáveis)
 

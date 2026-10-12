@@ -67,13 +67,17 @@ Use sempre `--all-packages` ou `--package <pkg>` no `uv sync`: sem isso, o uv re
 Os testes marcados `db` usam um Postgres descartável indicado por `TEST_DATABASE_URL`, lida só do ambiente (o `.env` não é lido pelo pytest). Sem a variável, eles são pulados (`TEST_DATABASE_URL not set`). Com `CI=true` e sem a variável, o pytest falha antes de rodar qualquer teste.
 
 ```bash
-# Postgres 16 local em Docker (ou use o Postgres do sistema)
-docker run -d --name partqc-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=partqc_test -p 55432:5432 postgres:16
+# Postgres 16 local em Docker (ou use o Postgres do sistema), sem senha (trust)
+docker run -d --name partqc-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=partqc_test -p 127.0.0.1:55432:5432 postgres:16
 # nas próximas vezes: docker start partqc-pg
 
-export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/partqc_test
+export TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test
 uv run pytest -q
 ```
+
+A porta é publicada só em `127.0.0.1`: com `trust`, quem alcança a porta entra sem senha, e o padrão do Docker (`-p 55432:5432`) publica em todas as interfaces, ou seja, na LAN.
+
+**Contêiner antigo:** um contêiner `partqc-pg` criado antes da SPEC-022 (com senha) não aceita a URL acima. Recrie-o com `docker rm -f partqc-pg` seguido do `docker run` acima.
 
 ### CI
 
@@ -82,5 +86,7 @@ O workflow `ci` (`.github/workflows/ci.yml`) roda em todo PR e em push na `main`
 ### Hook de guarda de caminhos (R-07)
 
 Cada subagente em `.claude/agents/` roda `.claude/hooks/guard_paths.py --role <papel>` antes de `Write`, `Edit`, `MultiEdit` e `NotebookEdit`, e a escrita fora do papel é bloqueada. O hook usa o `python3` do sistema (só biblioteca padrão), para funcionar mesmo sem `.venv`. Ele passa a valer depois de reiniciar a sessão do Claude Code.
+
+**Workspace trust:** os hooks do frontmatter dos agentes de projeto só rodam se a pasta tiver a confiança (workspace trust) aceita no Claude Code. Numa máquina ou num clone novo, rode `claude` uma vez na pasta e aceite o diálogo de confiança; uma sessão `claude -p` não conta como aceite. Sem isso, o hook não roda e a escrita fora do papel passa (constatado no CA-23 da SPEC-001, em 2026-10-12).
 
 **Limitação:** o hook **não** intercepta escritas feitas pelo `Bash` (por exemplo, `echo > arquivo` ou `uv lock`). A R-07 continua verificada pelo reviewer com `git log` e os trailers `Agent:` dos commits ([reviews/checklist.md](reviews/checklist.md) §2).

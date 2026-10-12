@@ -11,7 +11,7 @@ Leia nesta ordem na primeira vez. Os agentes devem ler pelo menos os itens 1 a 3
 | 5 | [dataset-protocol.md](dataset-protocol.md) | Rubrica dos 5 graus, corrosão, captura, manifest, split | Dupla (alterações via architect) |
 | 6 | [deployment-plan.md](deployment-plan.md) | Serviços, limites, segredos, publicação, checklist da demo | security-devops |
 | 7 | [adr/](adr/) | Decisões de arquitetura (ADR-001…015) | architect |
-| 8 | [specs/](specs/) | Especificações de entrega (SPEC-001…021) | architect |
+| 8 | [specs/](specs/) | Especificações de entrega (SPEC-001…022) | architect |
 | 9 | [glossary.md](glossary.md) | Termos | architect |
 | 10 | [professor-questions.md](professor-questions.md) | Pendências de validação externa | Dupla |
 | — | [archive/ideia-original.md](archive/ideia-original.md) | Especificação v0 (frutas + webcam), só como histórico | — |

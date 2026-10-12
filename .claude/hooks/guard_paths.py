@@ -5,15 +5,18 @@ Usage (from the `hooks:` field of each `.claude/agents/*.md`):
 
     python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_paths.py" --role <role>
 
-Reads the PreToolUse event JSON from stdin, takes the target path from
-``tool_input.file_path`` (Write, Edit, MultiEdit) or ``tool_input.notebook_path``
-(NotebookEdit) and decides whether ``<role>`` may write there.
+Reads the PreToolUse event JSON from stdin, picks the path field from ``tool_name``
+(SPEC-022 §4.1, case-sensitive): ``tool_input.file_path`` for Write, Edit and MultiEdit,
+``tool_input.notebook_path`` for NotebookEdit; then decides whether ``<role>`` may write there.
 
 * allowed -> exit 0, no output;
 * denied  -> exit 2, reason on stderr (Claude Code shows it to the agent and blocks the call).
 
-It fails closed (exit 2) on invalid JSON, missing path, missing/unknown role, a path outside the
-project root or a path inside ``.git/``.
+It fails closed (exit 2) on invalid JSON, missing/unknown role, a path outside the project root,
+a path inside ``.git/`` and on every ambiguous event: no ``tool_input`` object, no ``tool_name``
+string, a ``tool_name`` outside the map above, both ``file_path`` and ``notebook_path`` keys
+present in ``tool_input`` (whatever their values), or the expected field missing, not a string,
+empty or only whitespace.
 
 KNOWN LIMITATION: this hook only sees Write/Edit/MultiEdit/NotebookEdit. Writes made through the
 Bash tool (``echo > file``, ``uv lock``, ``git`` ...) are NOT intercepted. R-07 is still checked
@@ -127,18 +130,46 @@ def is_allowed(role: str, rel_path: str) -> bool:
     return True
 
 
+# Path field read for each tool (SPEC-022 §4.1). Exact, case-sensitive names: any other
+# tool_name is denied.
+PATH_FIELD_BY_TOOL: dict[str, str] = {
+    "Write": "file_path",
+    "Edit": "file_path",
+    "MultiEdit": "file_path",
+    "NotebookEdit": "notebook_path",
+}
+# The field of the other kind of tool: none of the four tools sends it, so its key being present
+# (with any value, even null or "") makes the event malformed.
+OTHER_PATH_FIELD: dict[str, str] = {
+    "file_path": "notebook_path",
+    "notebook_path": "file_path",
+}
+
+
 def target_path(event: object) -> str:
-    """Extract the raw target path from a PreToolUse event."""
+    """Extract the raw target path from a PreToolUse event (SPEC-022 §4.1).
+
+    Checks run in this order and the first failure raises GuardError: event not an object,
+    no ``tool_input`` object, no ``tool_name`` string, unknown ``tool_name``, both path keys
+    present, expected field missing/not a string/empty/whitespace.
+    """
     if not isinstance(event, dict):
         raise GuardError("event is not a JSON object")
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
         raise GuardError("event has no tool_input object")
-    for key in ("file_path", "notebook_path"):
-        value = tool_input.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    raise GuardError("tool_input has no file_path or notebook_path")
+    tool_name = event.get("tool_name")
+    if not isinstance(tool_name, str):
+        raise GuardError("event has no tool_name string")
+    field = PATH_FIELD_BY_TOOL.get(tool_name)
+    if field is None:
+        raise GuardError(f"unknown tool_name {tool_name!r}")
+    if OTHER_PATH_FIELD[field] in tool_input:
+        raise GuardError("tool_input has both file_path and notebook_path")
+    value = tool_input.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise GuardError(f"tool_input.{field} missing or empty for {tool_name}")
+    return value
 
 
 def relative_to_root(raw_path: str, cwd: object, root: Path = PROJECT_ROOT) -> str:

@@ -56,6 +56,8 @@ Cada SPEC passa por um ciclo com papéis separados. Quem faz não aprova o que f
 
 **Rastreio de papéis:** como todos os commits usam a mesma identidade git (R-13), cada commit de agente leva o trailer `Agent: <papel>`. O reviewer confere com `git log --format='%h %s%n%(trailers:key=Agent)' main..HEAD` e cruza com `git show --stat`: arquivos de `tests/acceptance/` só podem aparecer em commits `Agent: tester`, e código de produção só em commits do autor.
 
+**Commits do architect:** o `architect` não tem shell, então quem commita os arquivos dele é o orquestrador, com `Agent: architect` e `Refs: SPEC-XXX`. Esse commit é esperado e não é desvio de papel, desde que contenha só arquivos de `docs/` (exceto `docs/rules.md` sem pedido explícito do humano) e nenhum arquivo de outro papel. As mudanças de status feitas pelo próprio orquestrador vão em commits separados, com `Agent: orchestrator`.
+
 ## Arquivos de cada SPEC
 
 ```text
