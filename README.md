@@ -46,4 +46,41 @@ Cada entrega é uma SPEC, implementada por um loop de agentes com papéis separa
 
 ## Como rodar
 
-Esta seção será preenchida conforme as SPECs forem concluídas (SPEC-001: ambiente; SPEC-007: borda; SPEC-015: deploy).
+Esta seção cresce conforme as SPECs forem concluídas (SPEC-001: ambiente; SPEC-007: borda; SPEC-015: deploy).
+
+### Ambiente (SPEC-001)
+
+Pré-requisito: [uv](https://docs.astral.sh/uv/) ≥ 0,8 (`sudo pacman -S uv` no Arch, ou `curl -LsSf https://astral.sh/uv/install.sh | sh`). O Python do sistema não é usado: o uv instala e fixa o 3.12 (`.python-version`).
+
+```bash
+uv python install 3.12
+uv sync --all-packages --frozen            # workspace inteiro, sem torch (o que o CI usa)
+uv sync --all-packages --extra train       # + torch/timm para treinar localmente (pesado)
+uv run ruff check . && uv run ruff format --check .
+uv run pytest -q
+```
+
+Use sempre `--all-packages` ou `--package <pkg>` no `uv sync`: sem isso, o uv remove os membros do workspace do ambiente.
+
+### Testes de banco (marcador `db`)
+
+Os testes marcados `db` usam um Postgres descartável indicado por `TEST_DATABASE_URL`, lida só do ambiente (o `.env` não é lido pelo pytest). Sem a variável, eles são pulados (`TEST_DATABASE_URL not set`). Com `CI=true` e sem a variável, o pytest falha antes de rodar qualquer teste.
+
+```bash
+# Postgres 16 local em Docker (ou use o Postgres do sistema)
+docker run -d --name partqc-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=partqc_test -p 55432:5432 postgres:16
+# nas próximas vezes: docker start partqc-pg
+
+export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/partqc_test
+uv run pytest -q
+```
+
+### CI
+
+O workflow `ci` (`.github/workflows/ci.yml`) roda em todo PR e em push na `main`: `uv sync --all-packages --frozen`, `ruff check`, `ruff format --check` e `pytest -q` com um serviço `postgres:16`. O teste `tests/test_dependency_isolation.py` garante, pelo `uv.lock`, que `qc-api` e `qc-dashboard` não dependem de torch, torchvision, timm nem onnxruntime (R-12).
+
+### Hook de guarda de caminhos (R-07)
+
+Cada subagente em `.claude/agents/` roda `.claude/hooks/guard_paths.py --role <papel>` antes de `Write`, `Edit`, `MultiEdit` e `NotebookEdit`, e a escrita fora do papel é bloqueada. O hook usa o `python3` do sistema (só biblioteca padrão), para funcionar mesmo sem `.venv`. Ele passa a valer depois de reiniciar a sessão do Claude Code.
+
+**Limitação:** o hook **não** intercepta escritas feitas pelo `Bash` (por exemplo, `echo > arquivo` ou `uv lock`). A R-07 continua verificada pelo reviewer com `git log` e os trailers `Agent:` dos commits ([reviews/checklist.md](reviews/checklist.md) §2).
