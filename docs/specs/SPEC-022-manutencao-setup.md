@@ -11,6 +11,8 @@
 | Requisitos cobertos | R-07 (hook de guarda e rastreio de papéis), R-03 e RNF-06 (nenhuma credencial no Git), RNF-09 (ruff + pytest no CI) |
 | ADRs relevantes | ADR-010 (Python 3.12 + uv; exceção do `python3` do sistema para o hook), ADR-011 (loop de agentes, trailers `Agent:`), ADR-015 (git/GitHub e PRs) |
 
+**Aguardando reaprovação humana** (correção do SPEC_ISSUE-01 da r1; ver Histórico).
+
 ## 1. Contexto
 
 A SPEC-001 foi mergeada (PR #3) com quatro pendências pequenas, todas no setup e nenhuma em código de componente:
@@ -114,7 +116,7 @@ O hook da SPEC-001 já está ativo e nega ao `developer`, nas ferramentas `Write
 
 ## 5. Critérios de aceite
 
-Nos CAs do hook, `<raiz>` é a raiz do repositório, os caminhos são enviados como absolutos, o evento é passado no stdin a `python3 .claude/hooks/guard_paths.py --role <papel>`, e "stderr contém X" significa que o stderr contém `guard_paths: blocked: X`.
+Nos CAs do hook, `<raiz>` é a raiz do repositório, os caminhos são enviados como absolutos e o evento é passado no stdin a `python3 .claude/hooks/guard_paths.py --role <papel>`. Nos CA-01 a CA-04 (mensagens de `GuardError`, §4.1), "stderr contém X" significa que o stderr contém `guard_paths: blocked: X`; no CA-06 (negação por papel, formato inalterado da §4.6 da SPEC-001, sem `blocked:`), significa que o stderr contém X literalmente.
 
 - **CA-01 (RV-01)** — Dado `--role ml-engineer` e o evento `{"tool_name":"NotebookEdit","tool_input":{"notebook_path":"<raiz>/api/src/evil.ipynb","file_path":"<raiz>/ml/x.ipynb"}}`, quando o hook roda, então o código de saída é 2 e o stderr contém `tool_input has both file_path and notebook_path`.
 - **CA-02** — Dado o hook, quando recebe cada evento abaixo, então sai com código 2 e o stderr contém `tool_input has both file_path and notebook_path`:
@@ -199,3 +201,4 @@ Mocks: nenhum. Os testes do hook alimentam o stdin com JSON e conferem o código
 |---|---|---|---|
 | 2026-10-12 | Criação, com o escopo definido no pedido: RV-01 do hook, Postgres de teste sem senha, commits do architect e nota de workspace trust. Decisões do architect: (a) a regra "dois campos" usa presença da chave (§4.1); (b) a porta local publicada só em `127.0.0.1`, por causa do `trust` (§4.2); (c) `reviews/README.md` entrou na exceção de caminhos da §4.5, porque o hook também nega `reviews/**` ao developer; (d) a SPEC-015 não muda (§7). Criada em `Draft`: o architect não muda status para `Ready`. O orquestrador informou que o humano já aprovou o conteúdo ao pedir a SPEC; a passagem para `Ready` fica com o humano (ou com o orquestrador, sob a confirmação dele), conferindo os pontos (b) e (c). | Pendências do PR #3 da SPEC-001 (review r1, CA-23) e alerta de scanner de segredos no repositório público | Humano (Carlos), via orquestrador |
 | 2026-10-12 | `Draft` → `Ready` → `In Dev` (r1). Aprovação humana explícita, com os pontos (b) e (c) e a tag `infra` confirmados. | Início do loop | Humano (Carlos) |
+| 2026-10-12 | Preâmbulo da §5: a leitura "stderr contém X" = `guard_paths: blocked: X` passa a valer só para os CA-01 a CA-04; no CA-06, X aparece literalmente, no formato inalterado da SPEC-001 §4.6 (sem `blocked:`). Nenhum CA, requisito ou comportamento mudou; nenhuma mudança de código. Na r2, basta reexecutar o teste do CA-06. SPEC marcada como "Aguardando reaprovação humana"; o Status fica com o orquestrador. | SPEC_ISSUE-01 de `reviews/SPEC-022/r1-test-report.md`: o preâmbulo contradizia o CA-06 e as §3.2/§4.1 | Orquestrador |
