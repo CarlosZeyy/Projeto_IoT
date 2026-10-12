@@ -108,8 +108,8 @@ def header_size(data: bytes) -> tuple[int, int]:
 
 
 def test_ca01_preprocess_version() -> None:
-    assert qc_preprocess.__version__ == "0.2.0"
-    assert importlib.metadata.version("qc-preprocess") == "0.2.0"
+    assert qc_preprocess.__version__ == "0.3.0"
+    assert importlib.metadata.version("qc-preprocess") == "0.3.0"
 
 
 def test_ca01_both_packages_version() -> None:

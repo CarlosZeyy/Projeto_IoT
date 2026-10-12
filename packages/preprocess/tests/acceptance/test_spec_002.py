@@ -1,4 +1,4 @@
-"""Acceptance tests for SPEC-002 (qc-preprocess 0.2.0).
+"""Acceptance tests for SPEC-002 (qc-preprocess 0.3.0).
 
 Written by the tester from the SPEC acceptance criteria (black box), before reading the
 implementation. Covers CA-01 (qc-preprocess part) and CA-19 to CA-26. Tests named
@@ -93,8 +93,8 @@ def _requirement_names(dist: str) -> set[str]:
 
 
 def test_ca01_preprocess_version() -> None:
-    assert qc_preprocess.__version__ == "0.2.0"
-    assert importlib.metadata.version("qc-preprocess") == "0.2.0"
+    assert qc_preprocess.__version__ == "0.3.0"
+    assert importlib.metadata.version("qc-preprocess") == "0.3.0"
 
 
 # --------------------------------------------------------------------------- CA-19
