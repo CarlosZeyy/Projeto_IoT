@@ -49,7 +49,7 @@ GRADE_LABELS_PT[Grade.UNUSABLE]             # "inutilizável"
 |---|---|
 | `qc_contracts.enums` | `ObjectType`, `Grade`, `Source`, `CaptureMode` (`StrEnum`), `GRADE_ORDER`, `grade_index`, `grade_from_index` |
 | `qc_contracts.defects` | `is_defective(grade)`: `True` só para `poor` e `unusable` |
-| `qc_contracts.schemas` | `InspectionCreate`, `InspectionRead`, `InspectionCreated`, `BatchCreate`, `BatchResult`, `Page[T]`, `MetricsSummary`, `TimeseriesPoint`, `SpcPoint`, `SpcExcludedLot`, `SpcResponse`, `LotSummary`, `HealthResponse`; regexes `DEVICE_ID_PATTERN`, `LOT_ID_PATTERN`, `MODEL_VERSION_PATTERN`, `SHA256_PATTERN` |
+| `qc_contracts.schemas` | `InspectionCreate`, `InspectionRead`, `InspectionCreated`, `BatchCreate`, `BatchResult`, `Page[T]`, `MetricsSummary`, `TimeseriesPoint`, `SpcPoint`, `SpcExcludedLot`, `SpcResponse`, `LotSummary`, `HealthResponse`; regexes `DEVICE_ID_PATTERN`, `LOT_ID_PATTERN`, `MODEL_VERSION_PATTERN`, `SHA256_PATTERN`; limites `MAX_LATENCY_MS`, `MAX_BATCH_SIZE`, `MAX_FUTURE_SKEW` |
 | `qc_contracts.labels` | `GRADE_LABELS_PT`, `OBJECT_TYPE_LABELS_PT`, `SOURCE_LABELS_PT`, `CAPTURE_MODE_LABELS_PT` (mapeamentos imutáveis) |
 
 Tudo é reexportado na raiz (`from qc_contracts import ...`).
@@ -60,10 +60,13 @@ Regras principais:
 
 - modelos de entrada (`InspectionCreate`, `BatchCreate`) rejeitam campos extras (`extra="forbid"`); modelos de resposta ignoram campos extras (`extra="ignore"`), para tolerar uma versão minor posterior;
 - datas exigem fuso e são normalizadas para UTC; uma data que sai da faixa de `datetime` ao ser convertida para UTC (ex.: `0001-01-01T00:00:00+05:00`) é rejeitada com `ValidationError`; `InspectionCreate.inspected_at` não pode estar mais de 5 min no futuro;
-- `grade` é nulo se e somente se `object_type == "unknown"`; `grade_score` e `grade_confidence` são nulos se e somente se `grade` é nulo.
+- `grade` é nulo se e somente se `object_type == "unknown"`; `grade_score` e `grade_confidence` são nulos se e somente se `grade` é nulo;
+- `latency_ms` é inteiro de `0` a `MAX_LATENCY_MS` (2 147 483 647, o limite da coluna `integer` do banco); acima disso, `ValidationError` (`less_than_equal`), e não erro no `insert`;
+- os modelos usam o modo padrão (lax) do Pydantic, sem `strict` (decisão da SPEC-023 §4.4).
 
 ## Histórico de versões
 
 | Versão | Data | Mudança |
 |---|---|---|
 | 0.1.0 | 2026-10 | versão inicial (SPEC-002) |
+| 0.2.0 | 2026-10 | teto de latency_ms (MAX_LATENCY_MS = 2³¹ − 1, coluna integer do banco) (SPEC-023) |

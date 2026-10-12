@@ -8,7 +8,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
 
 def test_import_and_version() -> None:
-    assert qc_contracts.__version__ == "0.1.0"
+    assert qc_contracts.__version__ == "0.2.0"
     assert version("qc-contracts") == qc_contracts.__version__
 
 
@@ -26,6 +26,8 @@ def test_readme_has_version_history_row() -> None:
     readme = (PACKAGE_DIR / "README.md").read_text(encoding="utf-8")
     assert "## Histórico de versões" in readme
     assert "| 0.1.0 |" in readme
+    assert "| 0.2.0 |" in readme
+    assert "MAX_LATENCY_MS" in readme
 
 
 def test_public_api_is_exported() -> None:

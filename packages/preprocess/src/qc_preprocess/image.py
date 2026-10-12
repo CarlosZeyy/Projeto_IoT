@@ -4,25 +4,39 @@ import io
 import warnings
 from pathlib import Path
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageFile, ImageOps, UnidentifiedImageError
 
 from qc_preprocess.errors import InvalidImageError
 
 ACCEPTED_FORMATS: tuple[str, ...] = ("JPEG", "PNG")
 MAX_PIXELS = 40_000_000
+# Longest side at most MAX_ASPECT_RATIO times the shortest. ``preprocess`` resizes before it
+# crops, so an extreme strip (e.g. 100x400000) would blow up memory during the resize.
+MAX_ASPECT_RATIO: int = 10
 
 
 def load_image(data: bytes | Path) -> Image.Image:
     """Decode JPEG/PNG bytes or file into an RGB image with EXIF orientation applied.
 
-    The format is detected from the content, not from the file extension.
+    The format is detected from the content, not from the file extension. The pixel limit and
+    the aspect ratio are checked from the header, before any pixel data is decoded.
 
     Raises:
+        RuntimeError: ``PIL.ImageFile.LOAD_TRUNCATED_IMAGES`` is enabled in this process
+            (checked first, on every call). This is a process configuration error, not an image
+            defect, so it is not an ``InvalidImageError``; the flag is left untouched.
         FileNotFoundError: ``data`` is a ``Path`` that does not exist.
         InvalidImageError: empty data, not an image, a format other than JPEG/PNG, a truncated
-            file, more than ``MAX_PIXELS`` pixels, or a decompression bomb.
+            file, more than ``MAX_PIXELS`` pixels, a zero-sized image or an aspect ratio above
+            ``MAX_ASPECT_RATIO``:1 (longest side over shortest side), or a decompression bomb.
         MemoryError: propagated as is; running out of memory is not an image defect.
     """
+    # Read on every call: the flag is a module global that any code in the process may change.
+    if ImageFile.LOAD_TRUNCATED_IMAGES:
+        raise RuntimeError(
+            "PIL.ImageFile.LOAD_TRUNCATED_IMAGES is enabled; refusing to load images because "
+            "truncated files would be accepted"
+        )
     if isinstance(data, Path):
         if not data.is_file():
             raise FileNotFoundError(f"image file not found: {data}")
@@ -47,6 +61,12 @@ def load_image(data: bytes | Path) -> Image.Image:
         if width * height > MAX_PIXELS:
             raise InvalidImageError(
                 f"image has {width}x{height} pixels, more than the limit of {MAX_PIXELS}"
+            )
+        # Integer arithmetic: exact at the 10:1 boundary, no float rounding.
+        shortest, longest = min(width, height), max(width, height)
+        if shortest == 0 or longest > MAX_ASPECT_RATIO * shortest:
+            raise InvalidImageError(
+                f"image is {width}x{height} pixels; aspect ratio above {MAX_ASPECT_RATIO}:1"
             )
 
         try:

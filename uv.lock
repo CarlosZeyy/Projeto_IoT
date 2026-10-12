@@ -1160,7 +1160,7 @@ requires-dist = [
 
 [[package]]
 name = "qc-contracts"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/contracts" }
 dependencies = [
     { name = "pydantic" },
@@ -1259,7 +1259,7 @@ provides-extras = ["train"]
 
 [[package]]
 name = "qc-preprocess"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/preprocess" }
 dependencies = [
     { name = "numpy" },

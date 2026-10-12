@@ -10,7 +10,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
 
 def test_import_and_version() -> None:
-    assert qc_preprocess.__version__ == "0.1.0"
+    assert qc_preprocess.__version__ == "0.2.0"
     assert version("qc-preprocess") == qc_preprocess.__version__
 
 

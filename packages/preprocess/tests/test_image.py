@@ -5,9 +5,16 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageFile
 
-from qc_preprocess import MAX_PIXELS, InvalidImageError, load_image
+from qc_preprocess import (
+    MAX_ASPECT_RATIO,
+    MAX_PIXELS,
+    InvalidImageError,
+    load_image,
+    preprocess,
+)
+from qc_preprocess import image as image_module
 
 
 def encode(img: Image.Image, fmt: str, **kwargs: object) -> bytes:
@@ -176,3 +183,139 @@ def test_other_normalization_failure_is_invalid_image(monkeypatch: pytest.Monkey
     monkeypatch.setattr("qc_preprocess.image.ImageOps.exif_transpose", broken_exif)
     with pytest.raises(InvalidImageError):
         load_image(encode(pattern_image(), "PNG"))
+
+
+# --- aspect ratio, checked from the header (SPEC-023 section 4.2) ------------------------------
+
+
+def _png_strip(width: int, height: int) -> bytes:
+    """A real (decodable) single-channel PNG; the zero pixels compress to a few KB."""
+    return encode(Image.new("L", (width, height)), "PNG")
+
+
+def test_max_aspect_ratio_constant() -> None:
+    assert MAX_ASPECT_RATIO == image_module.MAX_ASPECT_RATIO == 10
+    assert isinstance(MAX_ASPECT_RATIO, int)
+    assert MAX_PIXELS == 40_000_000
+
+
+@pytest.mark.parametrize("size", [(100, 1000), (1000, 100), (1, 10), (10, 1), (64, 48)])
+def test_aspect_ratio_at_limit_accepted(size: tuple[int, int]) -> None:
+    img = load_image(encode(pattern_image(*size), "PNG"))
+    assert img.mode == "RGB"
+    assert img.size == size
+
+
+def test_jpeg_at_aspect_ratio_limit_accepted() -> None:
+    img = load_image(encode(pattern_image(40, 400), "JPEG"))
+    assert (img.mode, img.size) == ("RGB", (40, 400))
+
+
+def test_preprocess_of_accepted_strip() -> None:
+    out = preprocess(load_image(encode(pattern_image(100, 1000), "PNG")))
+    assert out.shape == (1, 3, 224, 224)
+    assert out.dtype == np.float32
+
+
+@pytest.mark.parametrize(
+    "size", [(100, 1001), (1001, 100), (100, 400_000), (20, 2_000_000), (1, 11), (11, 1)]
+)
+def test_aspect_ratio_above_limit_rejected(size: tuple[int, int]) -> None:
+    width, height = size
+    assert width * height <= MAX_PIXELS  # the pixel limit alone would accept these
+    with pytest.raises(InvalidImageError, match="aspect ratio") as exc:
+        load_image(_png_strip(width, height))
+    assert f"{width}x{height}" in str(exc.value)
+
+
+def test_aspect_ratio_checked_from_header_only() -> None:
+    # No IDAT: decoding would fail, so an "aspect ratio" error proves the check runs first.
+    with pytest.raises(InvalidImageError, match="aspect ratio"):
+        load_image(png_header_only(100, 1001))
+    with pytest.raises(InvalidImageError) as exc:
+        load_image(png_header_only(100, 1000))
+    assert "aspect ratio" not in str(exc.value)
+    assert "cannot decode" in str(exc.value)
+
+
+def test_pixel_limit_checked_before_aspect_ratio() -> None:
+    with pytest.raises(InvalidImageError, match="more than the limit") as exc:
+        load_image(png_header_only(MAX_PIXELS + 1, 1))
+    assert "aspect ratio" not in str(exc.value)
+
+
+def test_rejected_aspect_ratio_is_never_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[int, int]] = []
+    real_load = ImageFile.ImageFile.load
+
+    def spy_load(self: ImageFile.ImageFile) -> object:
+        calls.append(self.size)
+        return real_load(self)
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", spy_load)
+    with pytest.raises(InvalidImageError, match="aspect ratio"):
+        load_image(_png_strip(100, 400_000))
+    assert calls == []
+    load_image(_png_strip(100, 1000))
+    assert calls and calls[0] == (100, 1000)  # the spy does see accepted images
+
+
+@pytest.mark.parametrize("size", [(0, 100), (100, 0)])
+def test_zero_sized_image_rejected(monkeypatch: pytest.MonkeyPatch, size: tuple[int, int]) -> None:
+    # Pillow itself refuses a zero-sized PNG header; force the size to reach the defensive branch.
+    real_open = Image.open
+
+    def open_with_zero_side(*args: object, **kwargs: object) -> Image.Image:
+        img = real_open(*args, **kwargs)
+        img._size = size
+        return img
+
+    monkeypatch.setattr(image_module.Image, "open", open_with_zero_side)
+    with pytest.raises(InvalidImageError, match="aspect ratio"):
+        load_image(encode(pattern_image(), "PNG"))
+
+
+def _jpeg_rotated(width: int, height: int) -> bytes:
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    return encode(pattern_image(width, height), "JPEG", exif=exif.tobytes())
+
+
+def test_aspect_ratio_with_exif_rotation() -> None:
+    assert load_image(_jpeg_rotated(400, 40)).size == (40, 400)
+    with pytest.raises(InvalidImageError, match="aspect ratio"):
+        load_image(_jpeg_rotated(401, 40))
+
+
+# --- LOAD_TRUNCATED_IMAGES guard (SPEC-023 section 4.2, item 1) -------------------------------
+
+
+@pytest.mark.parametrize(
+    "data_factory",
+    [
+        lambda: encode(pattern_image(), "JPEG"),
+        _truncated_jpeg,
+        lambda: Path("nao_existe.jpg"),
+        lambda: "photo.jpg",  # even the type check comes after the flag check
+        lambda: b"",
+    ],
+    ids=["valid-jpeg", "truncated-jpeg", "missing-path", "wrong-type", "empty"],
+)
+def test_truncated_images_flag_refused(monkeypatch: pytest.MonkeyPatch, data_factory) -> None:
+    monkeypatch.setattr(ImageFile, "LOAD_TRUNCATED_IMAGES", True)
+    with pytest.raises(RuntimeError, match="LOAD_TRUNCATED_IMAGES") as exc:
+        load_image(data_factory())
+    assert not isinstance(exc.value, ValueError)
+    assert ImageFile.LOAD_TRUNCATED_IMAGES is True  # load_image does not reset the flag
+
+
+def test_truncated_images_flag_read_on_every_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    valid = encode(pattern_image(), "JPEG")
+    assert load_image(valid).size == (64, 48)
+    monkeypatch.setattr(ImageFile, "LOAD_TRUNCATED_IMAGES", True)
+    with pytest.raises(RuntimeError):
+        load_image(valid)
+    monkeypatch.setattr(ImageFile, "LOAD_TRUNCATED_IMAGES", False)
+    assert load_image(valid).size == (64, 48)
+    with pytest.raises(InvalidImageError):
+        load_image(_truncated_jpeg())

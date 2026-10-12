@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from qc_contracts import (
     DEVICE_ID_PATTERN,
     LOT_ID_PATTERN,
+    MAX_LATENCY_MS,
     MODEL_VERSION_PATTERN,
     SHA256_PATTERN,
     BatchCreate,
@@ -682,3 +683,60 @@ def test_extreme_datetimes_inside_utc_range_accepted(value: str, expected: datet
     m = TimeseriesPoint.model_validate(TIMESERIES_POINT | {"bucket_start": value})
     assert m.bucket_start == expected
     assert m.bucket_start.tzinfo is UTC
+
+
+# --- latency_ms upper bound (SPEC-023 section 4.1) ---------------------------------------------
+
+ABOVE_LATENCY = [MAX_LATENCY_MS + 1, 2**63]
+
+
+def _assert_less_than_equal_at(
+    exc: pytest.ExceptionInfo[ValidationError], loc: tuple[Any, ...]
+) -> None:
+    errors = exc.value.errors()
+    assert [e["loc"] for e in errors] == [loc]
+    assert errors[0]["type"] == "less_than_equal"
+
+
+def test_max_latency_is_integer_column_max() -> None:
+    assert MAX_LATENCY_MS == 2**31 - 1 == 2_147_483_647
+    assert isinstance(MAX_LATENCY_MS, int)
+
+
+def test_latency_at_max_accepted() -> None:
+    payload = base_payload(latency_ms=MAX_LATENCY_MS)
+    assert InspectionCreate.model_validate(payload).latency_ms == MAX_LATENCY_MS
+    m = InspectionCreate.model_validate_json(json.dumps(payload))
+    assert m.latency_ms == MAX_LATENCY_MS
+    assert InspectionCreate.model_validate_json(m.model_dump_json()) == m
+
+
+@pytest.mark.parametrize("value", ABOVE_LATENCY)
+def test_latency_above_max_rejected(value: int) -> None:
+    payload = base_payload(latency_ms=value)
+    with pytest.raises(ValidationError) as exc:
+        InspectionCreate.model_validate(payload)
+    _assert_less_than_equal_at(exc, ("latency_ms",))
+    with pytest.raises(ValidationError) as exc:
+        InspectionCreate.model_validate_json(json.dumps(payload))
+    _assert_less_than_equal_at(exc, ("latency_ms",))
+
+
+@pytest.mark.parametrize("value", ABOVE_LATENCY)
+def test_read_latency_above_max_rejected(value: int) -> None:
+    with pytest.raises(ValidationError) as exc:
+        InspectionRead.model_validate(read_payload(latency_ms=value))
+    _assert_less_than_equal_at(exc, ("latency_ms",))
+
+
+def test_read_latency_at_max_accepted() -> None:
+    m = InspectionRead.model_validate(read_payload(latency_ms=MAX_LATENCY_MS))
+    assert m.latency_ms == MAX_LATENCY_MS
+
+
+def test_batch_latency_above_max_points_to_item() -> None:
+    items = _items(3)
+    items[1]["latency_ms"] = MAX_LATENCY_MS + 1
+    with pytest.raises(ValidationError) as exc:
+        BatchCreate.model_validate({"items": items})
+    _assert_less_than_equal_at(exc, ("items", 1, "latency_ms"))

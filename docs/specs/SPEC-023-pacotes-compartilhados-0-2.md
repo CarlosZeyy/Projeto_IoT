@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Security |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | contrato, security |
 | Depende de | SPEC-002 (mergeada no PR #5) |

@@ -24,6 +24,7 @@ from qc_contracts.schemas import (
     LOT_ID_PATTERN,
     MAX_BATCH_SIZE,
     MAX_FUTURE_SKEW,
+    MAX_LATENCY_MS,
     MODEL_VERSION_PATTERN,
     SHA256_PATTERN,
     BatchCreate,
@@ -41,7 +42,7 @@ from qc_contracts.schemas import (
     TimeseriesPoint,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "CAPTURE_MODE_LABELS_PT",
@@ -51,6 +52,7 @@ __all__ = [
     "LOT_ID_PATTERN",
     "MAX_BATCH_SIZE",
     "MAX_FUTURE_SKEW",
+    "MAX_LATENCY_MS",
     "MODEL_VERSION_PATTERN",
     "OBJECT_TYPE_LABELS_PT",
     "SHA256_PATTERN",
