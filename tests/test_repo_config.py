@@ -91,3 +91,21 @@ def test_env_example_has_no_secret_values() -> None:
         name, value = line.split("=", 1)
         if secret_like.search(name):
             assert value == "", f"{name} must be empty in .env.example"
+
+
+def test_architect_commits_section_names_the_orchestrator() -> None:
+    """SPEC-022 §4.3: the architect has no shell, so the orchestrator commits its files."""
+    text = (ROOT / ".claude/agents/architect.md").read_text(encoding="utf-8")
+    section = text.split("\n## Commits\n", 1)[1].split("\n## ", 1)[0].strip()
+    assert section.startswith("Você não tem shell (`Bash`), então não faz commits.")
+    assert "**orquestrador**" in section
+    assert "`Agent: architect`" in section
+    assert "Todo commit seu" not in section
+
+
+def test_reviews_readme_documents_architect_commits() -> None:
+    text = (ROOT / "reviews/README.md").read_text(encoding="utf-8")
+    paragraphs = text.split("\n\n")
+    tracking = next(i for i, p in enumerate(paragraphs) if p.startswith("**Rastreio de papéis:**"))
+    assert paragraphs[tracking + 1].startswith("**Commits do architect:**")
+    assert "`Agent: orchestrator`" in paragraphs[tracking + 1]
