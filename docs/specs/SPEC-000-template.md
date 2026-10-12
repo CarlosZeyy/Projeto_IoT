@@ -48,6 +48,8 @@ Cada critério deve ser **testável e independente**. O tester escreve um teste 
 | Aceite (tester) | Um por CA | `<comp>/tests/acceptance/test_spec_NNN.py` |
 | Manual (dupla), se houver | | descrito aqui |
 
+Não crie CA de "suíte inteira" (`ruff` + `pytest -q` = 0) como teste automatizado: o CI e o test-report já verificam isso (`docs/architecture.md` §10).
+
 ## 7. Riscos e notas para o implementador
 
 ## 8. Definição de pronto

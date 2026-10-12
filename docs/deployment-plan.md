@@ -30,7 +30,8 @@ Nenhum valor real vai para o Git (R-03). Os nomes ficam em `.env.example`.
 
 | Variável | Onde é definida | Quem lê |
 |---|---|---|
-| `DATABASE_URL` (connection string do pooler do Supabase) | Render → Environment | `qc-api` |
+| `DATABASE_URL` (connection string do pooler do Supabase, modo transaction) | Render → Environment | `qc-api` |
+| `DATABASE_URL` (pooler em modo session, porta 5432) | `.env.migrate` local do humano, nunca no Git nem no Actions | `infra/migrate.py` |
 | `READ_API_KEY` | Render → Environment **e** Streamlit → Secrets | `qc-api` (valida) e `qc-dashboard` (envia) |
 | `API_BASE_URL` | Streamlit → Secrets | `qc-dashboard` |
 | `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL` | `.env` do notebook da borda | `qc-edge` |
@@ -45,9 +46,9 @@ Chaves de dispositivo:
 
 1. **Supabase:**
    1. Usar o projeto Supabase já existente (criado em 2026-10-12). Anotar a região.
-   2. Aplicar as migrações: `DATABASE_URL=... uv run --package qc-api python infra/migrate.py`. Alternativa: colar `infra/migrations/*.sql`, em ordem, no SQL Editor.
-   3. Conferir que o RLS está ligado nas duas tabelas.
-   4. Copiar a connection string do **pooler** (modo transaction). A API conecta com `prepare_threshold=None` (ADR-006).
+   2. Aplicar as migrações pelo pooler em **modo session** (porta 5432) ou pela conexão direta, **nunca** pela porta 6543 (o advisory lock do executor é de sessão; SPEC-015 §4.7 e CA-19): criar `.env.migrate` (ignorado pelo Git) com `DATABASE_URL=<URL do modo session>` e rodar `uv run --env-file .env.migrate --package qc-api python infra/migrate.py`. Antes, conferir `select current_schema();` → `public`. Alternativa: colar `infra/migrations/*.sql`, em ordem, no SQL Editor. O passo a passo final é escrito pela SPEC-015.
+   3. Conferir que o RLS está ligado em `devices`, `inspections` e `schema_migrations` e que `anon`/`authenticated` não têm grants nessas tabelas (SPEC-015 CA-14).
+   4. Copiar a connection string do **pooler** (modo transaction, porta 6543) para a `DATABASE_URL` da API. A API conecta com `prepare_threshold=None` (ADR-006).
 2. **Render:**
    1. Criar o Web Service a partir do repositório público `CarlosZeyy/Projeto_IoT`, usando o blueprint `infra/render.yaml`.
    2. Build: `pip install uv && uv sync --package qc-api --frozen --no-dev`.
