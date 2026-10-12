@@ -29,6 +29,10 @@ Um sistema de inspeção visual em três camadas:
 | Cloud | API REST, Postgres gerenciado e dashboard hospedados em free tier, acessíveis de qualquer lugar |
 | Indústria 4.0 | Inspeção automatizada com visão computacional, rastreabilidade por lote, indicadores em tempo quase real e controle estatístico de processo |
 
+### Metodologia de desenvolvimento
+
+O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autorização prévia do professor: toda entrega nasce de uma especificação (SPEC) com critérios de aceite testáveis, é implementada por um agente e verificada por outros agentes independentes (teste, revisão e segurança) antes do merge humano. Isso também é conteúdo da disciplina: mostra como IA e ML estão sendo usados hoje no desenvolvimento de software (ADR-011, `reviews/README.md`).
+
 ## 3. Personas
 
 | Persona | Objetivo | Usa |
@@ -126,7 +130,7 @@ As metas são **iniciais** e serão revisadas depois do primeiro treino (S3). N�
 
 | Risco | Impacto | Mitigação |
 |---|---|---|
-| O Wi-Fi do campus isola os clientes e o celular não alcança o notebook | Demo inviável | Hotspot do celular (plano B) ou ancoragem USB (plano C), sem túnel público (R-02); testar no campus na S1 |
+| O Wi-Fi do campus isola os clientes e o celular não alcança o notebook | Demo inviável | Na apresentação, usar por padrão a **rede própria** (hotspot do celular), que independe do campus; ancoragem USB como plano C; sem túnel público (R-02). Ensaiar essa topologia em casa |
 | A corrosão demora ou não aparece (peça zincada ou inox) | Falta de dados nos graus intermediários | Comprar aço comum; lotes escalonados a partir da S1; ver `dataset-protocol.md` |
 | Graus subjetivos, com rotuladores discordando | Modelo instável | Rubrica com % de área e regra de precedência; dupla rotulagem com kappa |
 | Pouco dado nos extremos (`perfect`, `unusable`) | Recall ruim | Meta por grau; peças novas para `perfect`; dano mecânico controlado para `unusable` |

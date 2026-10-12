@@ -6,11 +6,11 @@ Este documento é de responsabilidade do agente `security-devops` (SPEC-015). Os
 
 | Ambiente | Onde | Para quê |
 |---|---|---|
-| `local` | Notebook da equipe | Desenvolvimento: a API local aponta para um Postgres local **ou** para o projeto Supabase de dev |
+| `local` | Notebook da equipe | Desenvolvimento e testes: a API local aponta para um **Postgres local em Docker** (o mesmo dos testes, `TEST_DATABASE_URL`) |
 | `edge` | Notebook da demo | Gateway de borda na LAN (`qc-edge`) |
 | `cloud` | Render, Supabase e Streamlit CC | API, banco e dashboard públicos (dados protegidos por chave) |
 
-Para não misturar dados de dev e de demo, usem **dois projetos Supabase** (o plano gratuito permite 2 ativos): `partqc-dev` e `partqc-prod`.
+**Um único projeto Supabase** (o que a dupla já criou para este trabalho) é o banco de produção (`cloud`). O desenvolvimento e os testes usam o Postgres local em Docker, então os dados de teste nunca chegam ao Supabase. Confirme que o projeto está numa conta **pessoal** (R-13).
 
 ## 2. Serviços e limites
 
@@ -44,7 +44,7 @@ Chaves de dispositivo:
 ## 4. Passo a passo (primeira publicação)
 
 1. **Supabase:**
-   1. Criar o projeto `partqc-prod` (região São Paulo, se disponível).
+   1. Usar o projeto Supabase já existente (criado em 2026-10-12). Anotar a região.
    2. Aplicar as migrações: `DATABASE_URL=... uv run --package qc-api python infra/migrate.py`. Alternativa: colar `infra/migrations/*.sql`, em ordem, no SQL Editor.
    3. Conferir que o RLS está ligado nas duas tabelas.
    4. Copiar a connection string do **pooler** (modo transaction). A API conecta com `prepare_threshold=None` (ADR-006).
@@ -76,7 +76,7 @@ Chaves de dispositivo:
 **30 min antes:**
 - [ ] Chamar `/api/v1/health` para acordar o Render (cerca de 1 min) e abrir o dashboard para acordar o Streamlit.
 - [ ] Ligar a borda (`uv run --package qc-edge qc-edge`), abrir o console e ler o QR com o celular.
-- [ ] Testar a rede: se o celular não abrir `/capture`, ligar o hotspot do celular e conectar o notebook nele (plano B). Se ainda assim falhar, usar a ancoragem USB (plano C). Túnel público é proibido (R-02). Último recurso: o vídeo de backup.
+- [ ] Rede: usar por padrão a **rede própria** (notebook conectado ao hotspot do celular), ensaiada em casa; o Wi-Fi do campus só se já tiver sido testado. Se o celular não abrir `/capture`, conferir o IP do notebook na rede do hotspot e o firewall. Se ainda assim falhar, usar a ancoragem USB (plano C). Túnel público é proibido (R-02). Último recurso: o vídeo de backup.
 - [ ] Liberar a porta 8000 no firewall do notebook.
 - [ ] Fundo A4, luminária e peças separadas por lote (incluindo uma `unusable` e um objeto `other` para mostrar o "desconhecido").
 

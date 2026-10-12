@@ -70,6 +70,13 @@ Atualize o status da SPEC para `In Dev`, com "Rodada atual: r1", no arquivo da S
      - checklist R-09;
      - a linha de atribuição exigida pelo sistema.
   4. Informe ao humano o link do PR e o que testar manualmente, se houver.
+  5. **Diário de entregas (local, nunca commitado):** se existir `notas-locais/diario-de-entregas.md`, acrescente uma entrada no formato do modelo do próprio arquivo:
+     - nome da feature (SPEC e título), data e PR;
+     - o que entrega e como funciona, em linguagem simples, para quem não programa;
+     - os arquivos principais e o papel de cada um;
+     - como ver funcionando e os termos novos.
+
+     Escreva a partir do dev-report, do diff e dos relatórios. Não copie código longo; explique-o. A pasta `notas-locais/` está no `.git/info/exclude`: **nunca** a adicione ao Git.
 - **Depois do merge** (quando o humano avisar):
   1. Nada é commitado direto na `main`. A marcação de `Done` (no arquivo da SPEC e em `docs/plan.md`) vai no commit `chore: start` da **próxima** SPEC.
   2. Se não houver próxima SPEC, abra um PR curto `docs: mark <SPEC-ID> done`.

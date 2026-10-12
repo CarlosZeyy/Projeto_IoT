@@ -73,6 +73,7 @@ As pastas de código são criadas pelas SPECs indicadas. Até a SPEC-001 estar `
 - **Datas:** UTC com fuso explícito.
 - **Testes:** `<componente>/tests/` (autor) e `<componente>/tests/acceptance/` (tester).
 - **Dados e modelos:** `ml/data/` e `ml/models/**/*.onnx` não vão para o Git.
+- **Notas locais:** `notas-locais/` (resumo de mudanças e diário de entregas) é só da dupla e é ignorada via `.git/info/exclude`. Nunca a adicione ao Git. O orquestrador atualiza o diário a cada SPEC entregue (skill `features`).
 
 ## Comandos úteis
 

@@ -36,6 +36,15 @@ A SPEC-016 finaliza esta parte.
 
 ## 2. Geração das peças (corrosão controlada)
 
+**Peças que a dupla já tem (2026-10-12):** parafusos e porcas novos, parafusos e pregos velhos e enferrujados, e ferramentas manuais.
+- Os **novos** cobrem `perfect` (e `good`, se tiverem pontos de oxidação).
+- Os **velhos e enferrujados** tendem a cair em `poor`/`unusable`. O grau vem **sempre da rubrica** (§1), nunca da idade da peça.
+- A corrosão induzida abaixo serve principalmente para **completar `good` e `fair`**, que costumam faltar.
+- **Pregos** entram como **negativos difíceis da classe `other`** (`item_id` `O-xxx`): parecem parafusos e ensinam o modelo a separar os dois. Se a dupla quiser inspecionar pregos como um tipo próprio, isso vira uma SPEC com a tag `contrato` (novo valor de enum).
+- **Ferramentas** são catalogadas (`T-xxx`) e fotografadas desde já para a Fase 2 (SPEC-016), mas ficam fora do treino do MVP.
+- Pode ser que uma parte das peças velhas seja zincada (prateada); ainda assim valem para `perfect`/`good`, se estiverem conservadas.
+
+
 **Material:**
 - Parafusos e porcas de **aço carbono comum ou oxidado preto**, M6–M10, cerca de 40 parafusos e 40 porcas.
 - **Evite zincado (prateado/amarelado) e inox:** praticamente não enferrujam em vinagre. Se só houver zincado, retire a camada antes com lixa ou com um banho prolongado de vinagre puro.
@@ -117,3 +126,4 @@ Uma linha por imagem. As correções de rótulo **não** reescrevem a linha orig
 | Data | Mudança | Por quê |
 |---|---|---|
 | 2026-10-12 | Rubrica v0 | Versão inicial |
+| 2026-10-12 | Uso das peças existentes; pregos como `other` | A dupla já tem peças novas e enferrujadas, pregos e ferramentas |

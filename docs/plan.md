@@ -6,23 +6,24 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 
 | Semana | Período | Entregas | Marco |
 |---|---|---|---|
-| S1 | 12–18/out | Documentação aprovada. Peças compradas e **corrosão iniciada**. Piloto da rubrica (30 fotos, QWK). Teste de rede no campus com os dois celulares (incluindo hotspot). Perguntas enviadas ao professor. SPEC-001 e SPEC-002, **depois** de resolvida a pergunta 4 (uso de agentes de IA; ver `professor-questions.md`) | **M1** |
+| S1 | 12–18/out | Documentação aprovada. Peças catalogadas (as que a dupla já tem) e **corrosão iniciada** só para completar os graus intermediários. Piloto da rubrica (30 fotos, QWK). Teste de rede em casa com os dois celulares (Wi-Fi e hotspot). SPEC-001 e SPEC-002 (pergunta 4 já resolvida: uso de IA autorizado) | **M1** |
 | S2 | 19–25/out | SPEC-003, 004, 007, 010. API rodando localmente (Postgres local/Supabase dev). Cerca de 500 imagens coletadas | |
 | S3 | 26/out–01/nov | SPEC-008, 009, 011, 012 (baseline v1). Cerca de 1.200 imagens. Dupla rotulagem e QWK. Teste final congelado | |
 | S4 | 02–08/nov | SPEC-005, 006, 013, 014, 015. API publicada no Render. **MVP de ponta a ponta** com demo interna | **M2** |
 | S5 | 09–15/nov | Melhorias do modelo (ablação CORN, `unusable_threshold`, classe `other`); relatório de métricas; endurecimento (RNF-04, cobertura) | |
 | S6 | 16–22/nov | SPEC-016 (ferramentas manuais: identificação); SPEC-017/018 se der tempo. **Congelamento do modelo** | **M3** |
-| S7 | 23–29/nov | Testes finais, documentação final, vídeo de backup da demo, ensaio completo na rede do campus | **M4** |
+| S7 | 23–29/nov | Testes finais, documentação final, vídeo de backup da demo, ensaio completo em casa com a topologia da apresentação (hotspot do celular) | **M4** |
 | S8 | 30/nov–04/dez | Folga, relatório e slides, apresentação. Fase 3 só se a S6 fechou no prazo | **M5** |
 
 ### Tarefas humanas (fora do loop de agentes)
 
 | Quando | Tarefa | Responsável |
 |---|---|---|
-| S1 | Comprar parafusos e porcas de aço comum; montar os lotes de corrosão | Dupla |
-| S1 | Enviar `docs/professor-questions.md` ao professor | Dupla |
-| S1 | Criar contas: Supabase, Render, Streamlit Community Cloud (todas sem cartão) | Dupla |
-| S1 | Testar `<input capture>` nos dois celulares e a conexão celular → notebook no campus | Dupla |
+| S1 | Catalogar as peças que a dupla já tem (parafusos/porcas novos e enferrujados, pregos, ferramentas) com `item_id`; montar lotes de corrosão só se faltarem graus intermediários (`good`, `fair`) | Dupla |
+| S1 | Confirmar com o professor as perguntas ainda abertas (1, 2, 3, 5, 6, 7) quando houver oportunidade; nenhuma bloqueia o início do código | Dupla |
+| S1 | ~~Criar contas: Supabase, Render, Streamlit Community Cloud~~ **Feito em 2026-10-12** (projeto Supabase já criado). Configuração dos serviços só na SPEC-015 | Dupla |
+| S1 | Instalar o `uv` no notebook (`sudo pacman -S uv`) antes da SPEC-001 | Dupla |
+| S2 | Testar `<input capture>` nos dois celulares e a conexão celular → notebook, em casa, pelo Wi-Fi e pelo hotspot (CA manual da SPEC-007) | Dupla |
 | S1–S3 | Fotografar no modo coleta (assim que a SPEC-010 estiver pronta; antes disso, com a câmera normal, seguindo o protocolo e anotando o `item_id`) | Dupla |
 | S3 | Rotulagem dupla (20%) | Dupla |
 | Contínuo | Aprovar SPECs (`Draft` → `Ready`) e fazer o merge dos PRs | Dupla |

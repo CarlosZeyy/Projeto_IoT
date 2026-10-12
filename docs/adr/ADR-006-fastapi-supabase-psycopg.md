@@ -45,7 +45,7 @@ A API é **FastAPI** com endpoints **síncronos** (`def`), usando um `psycopg_po
   - conexões com `prepare_threshold=None` (prepared statements desligados) no modo transaction;
   - migrações aditivas em `infra/migrations/NNN_descricao.sql`, com RLS conferido após aplicar (SPEC-003);
   - a lógica de SPC é uma função pura em `qc_api.services.spc` (SPEC-006); o endpoint só consulta e serializa;
-  - dois projetos Supabase (`partqc-dev` e `partqc-prod`), para não misturar dados (`docs/deployment-plan.md` §1).
+  - um único projeto Supabase (produção); desenvolvimento e testes usam Postgres local em Docker, para não misturar dados (`docs/deployment-plan.md` §1).
 
 ## Quando revisitar
 
