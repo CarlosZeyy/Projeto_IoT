@@ -63,7 +63,10 @@ testpaths = [
     "edge/tests",
     "dashboard/tests",
     "ml/tests",
+    "infra/tests",
 ]
+# infra/migrate.py is a script, not a package: `import migrate` in tests and fixtures (SPEC-003).
+pythonpath = ["infra"]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [
     "acceptance: acceptance test written by the tester (tests/acceptance/)",

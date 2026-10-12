@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Security |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-002 |
@@ -17,7 +17,7 @@
 
 ## 2. Objetivo
 
-`infra/migrate.py` aplica `infra/migrations/001_init.sql` a um Postgres 16 vazio, registra a aplicação, é idempotente, e o schema resultante rejeita dados fora do contrato `qc_contracts` 0.1.0, com RLS ligado e sem políticas.
+`infra/migrate.py` aplica `infra/migrations/001_init.sql` a um Postgres 16 vazio, registra a aplicação, é idempotente, e o schema resultante rejeita dados fora do contrato `qc_contracts` (0.1.0; o teto de `latency_ms` da 0.2.0, SPEC-023, coincide com o limite do tipo `integer`), com RLS ligado e sem políticas.
 
 ## 3. Escopo
 
@@ -57,6 +57,7 @@
   | `inspections_formats_check` | `lot_id ~ '^[A-Za-z0-9_-]{1,40}$'` e `model_sha256 ~ '^[0-9a-f]{64}$'` |
 
   As cinco últimas são **complementares** a §5 (defesa em profundidade, espelhando os validadores do contrato); não mudam o contrato.
+- **Teto de `latency_ms`:** a coluna continua `integer` (§5), com `latency_ms >= 0` em `inspections_ranges_check` e **sem** limite superior no `check`. O próprio tipo já rejeita valores acima de 2 147 483 647 (SQLSTATE `22003`, `numeric_value_out_of_range`, antes de qualquer `check`), e esse é exatamente o teto do contrato 0.2.0 (`qc_contracts.MAX_LATENCY_MS`, SPEC-023). Um `check` com o mesmo limite seria inalcançável. O CA-23 fixa o limite por teste, e a SPEC-004 garante que a API responde 422 antes de chegar ao banco.
 - Índices: `inspections_inspected_at_idx (inspected_at)`, `inspections_lot_id_idx (lot_id)`, `inspections_source_inspected_at_idx (source, inspected_at)`, `inspections_device_id_idx (device_id)`.
 - `alter table devices enable row level security;` e o mesmo em `inspections`. **Nenhuma** política. **Sem** `force row level security`: o dono das tabelas (usuário da `DATABASE_URL` da API) continua lendo e escrevendo.
 
@@ -112,6 +113,7 @@ Todos os CAs abaixo são testes marcados `db`, contra o Postgres 16 de teste. "L
 - **CA-20** — Dado `--database-url postgresql://u:s3cr3t-pw@127.0.0.1:1/x` (porta fechada), quando se roda o CLI, então o código de saída é `1` e nem o stdout nem o stderr contêm `s3cr3t-pw` (R-03).
 - **CA-21** — Dado o banco do CA-01, quando se roda o CLI com `--status`, então o código de saída é `0`, a saída lista `001` como aplicada e `pending_migrations` retorna `[]`.
 - **CA-22** — Dado `TEST_DATABASE_URL` apontando para um banco chamado `partqc_prod`, quando um teste usa `db_conninfo`, então o teste falha com a mensagem da trava de segurança e nenhum comando é executado no banco.
+- **CA-23** — Dado o banco migrado, quando se insere uma linha válida com `latency_ms=2147483647`, então o `insert` funciona e o valor lido é `2147483647`; e quando se insere uma linha válida com `latency_ms=2147483648` (passado como parâmetro do psycopg), então o `insert` falha com `NumericValueOutOfRange` (SQLSTATE `22003`) e a tabela não ganha a linha. (O teste usa os literais; a igualdade com `qc_contracts.MAX_LATENCY_MS` é verificada na API pela SPEC-004.)
 
 ## 6. Plano de testes
 
@@ -135,3 +137,10 @@ Banco: Postgres 16 local (Docker, SPEC-001) ou o serviço do CI. Sem mocks de ba
 - [ ] CI verde (com os testes `db` executados, não pulados); `ruff` limpo
 - [ ] `README.md` ("Como rodar") com o comando de migração local
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | Acrescentados a nota "Teto de `latency_ms`" em §4.1 e o CA-23 (2 147 483 647 aceito; 2 147 483 648 → SQLSTATE `22003`). O texto do Objetivo agora cita a versão 0.2.0 do contrato. O `check` não muda, nenhum outro CA muda, e a SPEC não passa a depender da SPEC-023, porque o CA-23 usa literais. SPEC marcada como "Aguardando reaprovação humana"; o Status fica com o humano/orquestrador. | SPEC_ISSUE-02 (RV-03) de `reviews/SPEC-002/r1-review-report.md`: lacuna entre o contrato (`latency_ms` sem teto) e a coluna `integer`; resolvida no contrato pela SPEC-023 | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

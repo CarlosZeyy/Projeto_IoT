@@ -6,7 +6,7 @@
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
-| Depende de | SPEC-002, SPEC-003 |
+| Depende de | SPEC-002, SPEC-003, SPEC-023 (`qc-contracts` 0.2.0) |
 | Semana alvo | S2 |
 | Requisitos cobertos | RF-06, RF-15, RNF-04 (lado da API), RNF-06, R-02, R-03, R-05 |
 | ADRs relevantes | ADR-006 (FastAPI + Supabase + psycopg), ADR-009 (publisher HTTP), ADR-008 (Render/Supabase free), ADR-012 (idioma) |
@@ -85,11 +85,12 @@ Um dispositivo registrado grava inspeções via `POST /api/v1/inspections` e `/i
 - Banco indisponível (`psycopg.OperationalError`, `PoolTimeout`) → 503 `{"detail": "Database unavailable"}`.
 - Exceção inesperada → 500 `{"detail": "Internal server error"}`; o traceback vai só para o log do servidor.
 - Erros de validação usam o 422 padrão do FastAPI (`{"detail": [...]}`).
+- `latency_ms` acima de `qc_contracts.MAX_LATENCY_MS` (2 147 483 647, contrato 0.2.0, SPEC-023) é barrado pelo próprio `InspectionCreate` e vira 422. Ele nunca chega ao `insert`, que responderia 500 (a coluna é `integer`, SPEC-003 CA-23).
 
 ### 4.6 `scripts/register_device.py`
 
 - Uso: `uv run --package qc-api python scripts/register_device.py --device-id edge-01 [--rotate] [--database-url URL]` (padrão: `DATABASE_URL`).
-- Valida `--device-id` com `qc_contracts.DEVICE_ID_PATTERN`.
+- Valida `--device-id` com `re.fullmatch(qc_contracts.DEVICE_ID_PATTERN, valor)`. **Nunca** com `re.match` ou `re.search`, que aceitam um `\n` final (`architecture.md` §3.2).
 - Gera a chave com `secrets.token_urlsafe(32)`, grava **só** `hash_api_key(chave)` e escreve no stdout uma única linha `DEVICE_API_KEY=<chave>` (via `sys.stdout.write`; a chave nunca vai para log). Mensagens de status vão para o stderr via `logging`, sem a chave.
 - Sem `--rotate`, dispositivo já existente → erro. Com `--rotate`, dispositivo inexistente → erro; existente → troca o hash (a chave antiga deixa de valer na hora).
 - Códigos de saída: `0` sucesso; `1` dispositivo existente/inexistente ou falha de banco; `2` uso inválido (`device_id` fora da regex, sem URL).
@@ -98,14 +99,14 @@ Um dispositivo registrado grava inspeções via `POST /api/v1/inspections` e `/i
 
 Contexto comum: banco de teste migrado (fixtures `migrated_db`/`clean_db` da SPEC-003); dispositivos `edge-01` (chave `KE`) e `sim-01` (chave `KS`) registrados pelo hash; app criada com `create_app(Settings(DATABASE_URL=<teste>, READ_API_KEY="r"*32))` e usada com `TestClient` (lifespan ativo). `P(id)` = payload válido de `InspectionCreate` com `device_id="edge-01"` e `grade="fair"`. "App sem banco" = app com `DATABASE_URL=postgresql://u:pw@127.0.0.1:1/x`.
 
-- **CA-01** — Dado o banco acessível, quando `GET /api/v1/health`, então 200 com `{"status": "ok", "db": "ok", "api_version": "0.1.0", "contract_version": "0.1.0"}`.
+- **CA-01** — Dado o banco acessível, quando `GET /api/v1/health`, então 200 com `{"status": "ok", "db": "ok", "api_version": "0.1.0", "contract_version": qc_contracts.__version__}` (`"0.2.0"` depois da SPEC-023; o teste compara com o atributo, não com um literal).
 - **CA-02** — Dado a app sem banco, quando ela inicia e recebe `GET /api/v1/health`, então a inicialização não falha e a resposta é 503 com `status="degraded"` e `db="error"`, em menos de 10 s.
 - **CA-03** — Dado `P(X)` com `inspected_at="2026-10-01T12:00:00-03:00"` (no passado) e a chave `KE`, quando `POST /api/v1/inspections`, então 201 com `{"inspection_id": "X", "status": "created"}`; a tabela tem 1 linha com `inspected_at = 2026-10-01T15:00:00Z`, `received_at` preenchido e `is_defective = false`.
 - **CA-04** — Dado `P(X)` já gravado, quando o mesmo `X` é reenviado 3 vezes (a última com `lot_id="L-999"`), então cada resposta é 200 com `status="duplicate"`, a tabela tem 1 linha e `lot_id` continua o original (R-05).
 - **CA-05** — Dado `P(X)`, quando `POST /api/v1/inspections` sem `X-API-Key`, com `X-API-Key: errada`, com a chave de leitura (`"r"*32`) ou com uma chave de 300 caracteres, então cada resposta é 401 com o corpo exato `{"detail": "Missing or invalid API key"}` e nada é gravado.
 - **CA-06** — Dado um JSON bem formado mas inválido (sem `lot_id`) e nenhuma chave, quando `POST /api/v1/inspections`, então 401 (autenticação antes da validação).
 - **CA-07** — Dado `P(X)` com `device_id="sim-01"` e a chave `KE`, quando `POST /api/v1/inspections`, então 403 com `{"detail": "device_id does not match API key"}`, nada é gravado e `last_seen_at` de `edge-01` e `sim-01` não muda.
-- **CA-08** — Dado a chave `KE`, quando o corpo é: `P(X)` + `"image": "AAAA"`; `P(X)` com `object_type="unknown"` e `grade="fair"`; `P(X)` com `inspected_at` sem fuso; `P(X)` sem `lot_id`; ou o texto `not json`, então cada resposta é 422, nada é gravado e nenhum corpo contém `Traceback`.
+- **CA-08** — Dado a chave `KE`, quando o corpo é: `P(X)` + `"image": "AAAA"`; `P(X)` com `object_type="unknown"` e `grade="fair"`; `P(X)` com `inspected_at` sem fuso; `P(X)` sem `lot_id`; `P(X)` com `latency_ms=2147483648`; ou o texto `not json`, então cada resposta é 422, nada é gravado e nenhum corpo contém `Traceback`.
 - **CA-09** — Dado a chave `KE`, quando o corpo tem exatamente 262 144 bytes, então a resposta **não** é 413; com 262 145 bytes, é 413 com `{"detail": "Request body too large"}`; com `Content-Length: 300000` declarado, é 413; e com corpo chunked (sem `Content-Length`) de 300 000 bytes, é 413. Nada é gravado.
 - **CA-10** — Dado `edge-01` com `last_seen_at` nulo, quando um `POST` válido retorna 201, então `last_seen_at` fica entre o instante antes e o depois da requisição; quando o mesmo `X` é reenviado (200), `last_seen_at` é atualizado de novo (≥ o anterior); e respostas 401, 403 e 422 não o alteram.
 - **CA-11** — Dado a chave `KE`, quando `POST /api/v1/inspections/batch` com `P(A)`, `P(B)`, `P(C)`, então 200 com `results` = `[A created, B created, C created]` nessa ordem e 3 linhas na tabela.
@@ -120,7 +121,8 @@ Contexto comum: banco de teste migrado (fixtures `migrated_db`/`clean_db` da SPE
 - **CA-20** — Dado `Settings` com `READ_API_KEY` de 31 caracteres, ou sem `DATABASE_URL`, quando é instanciada, então levanta `ValidationError`, e a mensagem não contém o valor fornecido.
 - **CA-21** — Dado o banco migrado sem `lab-02`, quando `register_device.py --device-id lab-02` roda com `DATABASE_URL` de teste, então sai com 0, o stdout é exatamente uma linha `DEVICE_API_KEY=<k>` com `len(k) >= 43`, a linha de `devices` tem `api_key_hash == sha256(k)`, o texto de `k` não aparece em nenhuma coluna e um `POST` com `X-API-Key: k` e `device_id="lab-02"` retorna 201.
 - **CA-22** — Dado `lab-02` registrado, quando `register_device.py --device-id lab-02` roda sem `--rotate`, então sai com 1 e o hash não muda; quando roda com `--rotate`, sai com 0 e imprime uma chave nova `k2`; então a chave antiga recebe 401 e `k2` recebe 201.
-- **CA-23** — Dado o banco migrado, quando `register_device.py --rotate --device-id ghost-01` roda, então sai com 1; com `--device-id Edge_01`, sai com 2; sem `DATABASE_URL` e sem `--database-url`, sai com 2. Em nenhum caso o stdout contém `DEVICE_API_KEY=`.
+- **CA-23** — Dado o banco migrado, quando `register_device.py --rotate --device-id ghost-01` roda, então sai com 1; com `--device-id Edge_01`, sai com 2; com `--device-id` igual a `"edge-01\n"` (quebra de linha final, passada como elemento de `argv` no `subprocess`), sai com 2; sem `DATABASE_URL` e sem `--database-url`, sai com 2. Em nenhum caso o stdout contém `DEVICE_API_KEY=`, e `devices` não ganha linha.
+- **CA-24** — Dado `P(X)` com `latency_ms=2147483647` (igual a `qc_contracts.MAX_LATENCY_MS`) e a chave `KE`, quando `POST /api/v1/inspections`, então 201 e a linha gravada tem `latency_ms = 2147483647`; e um lote `[P(A), P(B)]` em que `P(B)` tem `latency_ms=2147483648` responde 422, sem `Traceback` no corpo, e a tabela não ganha nenhuma linha de `A` nem de `B`.
 
 ## 6. Plano de testes
 
@@ -146,3 +148,10 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 - [ ] CI verde; `ruff` limpo; R-12 continua verde
 - [ ] `.env.example` e `README.md` atualizados
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-contracts` 0.2.0); (b) nota em §4.5 sobre o teto de `latency_ms` (422, nunca 500); (c) §4.6 exige `re.fullmatch` para `--device-id`; (d) o CA-01 compara `contract_version` com `qc_contracts.__version__`; (e) o CA-08 ganhou o caso `latency_ms=2147483648`; (f) o CA-23 ganhou o caso `"edge-01\n"`; (g) CA-24 novo, com os limites de `latency_ms` na rota única e no lote. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-02 (RV-03) e RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

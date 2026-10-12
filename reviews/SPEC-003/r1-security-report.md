@@ -1,0 +1,73 @@
+# SPEC-003 — r1 — Security report
+
+| Campo | Valor |
+|---|---|
+| SPEC | [SPEC-003](../../docs/specs/SPEC-003-schema-banco.md) |
+| Rodada | r1 |
+| Revisor de segurança | security-devops |
+| Diff revisado | `main...afa0728`. Código da SPEC: `31d984c..871307e` (developer) e `ebbdd02` (tester). |
+| **Veredicto** | **PASS** |
+
+Motivo do veredicto: não há achado bloqueante nem alto. O RLS está ligado, sem políticas e sem `force` nas três tabelas, e nega leitura e escrita a papéis no estilo `anon`/`authenticated`. Todo o SQL do executor é constante ou parametrizado. A URL e a senha não aparecem na saída da CLI nem nas exceções. A trava do `db_conninfo` resiste às variações de conninfo que testei. O único achado médio (SEC-01, o mesmo RV-01/SPEC_ISSUE-01 do reviewer) é um risco de disponibilidade **na aplicação em produção**, que está fora do escopo desta SPEC (§3.2). Ele precisa ser resolvido pelo architect antes da SPEC-015.
+
+## Superfície analisada
+
+- `infra/migrations/001_init.sql`: tabelas, restrições, coluna gerada, índices e RLS.
+- `infra/migrate.py`: conexão, advisory lock, tabela de controle, execução das migrações, tratamento de erros, logging e CLI.
+- `conftest.py` da raiz: trava do `db_conninfo` e as fixtures destrutivas (`migrated_db` faz `drop schema public cascade`).
+- Fixtures destrutivas dos testes: `empty_schema` (autor) e `scratch_conninfo`/`empty_db` (tester, com `drop database ... with (force)`). Todas dependem de `db_conninfo`, então passam pela trava.
+- `.env.example`, `README.md` (comando de migração) e, como contexto, `docs/deployment-plan.md` §4 (passo 1.2) e o ADR-006.
+- Rotas, CORS, autenticação e imagens: não há nenhum desses itens nesta SPEC.
+
+Reprodução e sondagens (somente leitura no repositório; bancos e papéis temporários criados e removidos):
+
+- `TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q infra/tests`: **221 passed**.
+- **RLS com papéis no estilo Supabase.** Usei o banco temporário `partqc_sec003_test` e os papéis `partqc_sec_anon` e `partqc_sec_authenticated` (`NOLOGIN NOBYPASSRLS`), com `USAGE` no `public` e `alter default privileges ... grant all on tables` (o padrão antigo do Supabase). Depois rodei `apply_migrations` e gravei 1 linha em cada tabela como dono. Como cada um dos dois papéis, em `devices`, `inspections` e `schema_migrations`, o `select count(*)` deu `0`, `update` e `delete` afetaram 0 linhas e o `insert` falhou com `42501`. O dono continuou com 1/1/1 linhas. Resultado: `relrowsecurity = true`, `relforcerowsecurity = false` e nenhuma função, view ou sequência no `public`. O `TRUNCATE` **passa** para esses papéis, porque o RLS não cobre `TRUNCATE` (ver SEC-02).
+- **Trava do `db_conninfo`** (`_database_name` do `conftest.py`). Foram aceitas `.../partqc_test` e `.../?dbname=partqc_test`. Foram recusadas `.../postgres`, `.../partqc_test?dbname=postgres` (vale o `dbname` efetivo), `.../partqc_TEST` (diferencia maiúsculas), `?service=prod` e uma URL sem nome. Também tentei `dbname='dbname=postgres application_name=test'`: a trava aceita esse nome porque ele contém `test`, mas o libpq **não** expande o valor como conninfo, e a conexão falha (banco inexistente), sem chegar ao `postgres`. Os bancos do Supabase se chamam sempre `postgres`, então a trava os recusa.
+- **Lock preso (simulação do pooler em modo transaction).** A sessão A pegou `pg_advisory_lock(0x5051434D4947)` e ficou aberta, como um backend devolvido ao pool. Na sessão B, `pg_advisory_unlock` retornou `false` com o aviso `you don't own a lock of type ExclusiveLock`. Em seguida, `python infra/migrate.py --database-url <banco temporário>` ficou **bloqueado** até ser morto depois de 8 s, porque não há `lock_timeout`.
+- **Mensagens de erro de migração.** Uma `002` com `api_key_hash` repetido levou a CLI a mostrar `UniqueViolation ...` seguido de `DETAIL:  Key (api_key_hash)=(aaaa…) already exists.`. Uma `003` com erro de sintaxe mostrou o trecho `LINE 1: create role x login passwrd 'TopSecretPw123';`. Ou seja, a mensagem do servidor inclui o DETAIL (com valores de dados) e o contexto da linha do SQL (ver SEC-03).
+- No fim, o servidor ficou só com `postgres`, `partqc_test` e os templates, sem nenhum papel `partqc%`. O contêiner `partqc-pg` não foi tocado.
+
+## Achados
+
+| ID | Severidade | Categoria | Arquivo:linha | Descrição | Correção exigida | Destino |
+|---|---|---|---|---|---|---|
+| SEC-01 | média | deploy | `infra/migrate.py:240`, `:248-250`; `docs/deployment-plan.md:48`; `.env.example:24-26`; SPEC-003 §4.2 | Confirma o RV-01/SPEC_ISSUE-01. O lock é `pg_advisory_lock` **de sessão**, pego em autocommit, e não há `lock_timeout` nem `statement_timeout`. A documentação oficial do Supabase (Connecting to Postgres) diz que, no modo transaction (porta 6543), "session-level advisory locks" não persistem entre transações, e recomenda rodar migrações pela **conexão direta** ou, em rede só IPv4, pelo **pooler em modo session** (porta 5432 do host `pooler.supabase.com`). O `deployment-plan.md` (passo 1.2) e o comentário do `.env.example` mandam usar a `DATABASE_URL`, que é a URL da 6543. Pela simulação: o lock fica preso num backend do pool, o unlock cai em outro backend e falha, e a próxima execução trava sem prazo. O impacto é de **disponibilidade e operação** (uma publicação travada), sem perda de confidencialidade nem de integridade, porque cada migração continua numa transação atômica. | **Não bloqueia a SPEC-003**: a aplicação em produção está fora do escopo (§3.2), e local e CI usam conexão direta. **Antes da SPEC-015**, o architect decide entre (a) migrar sempre pela conexão direta ou pelo pooler em modo **session** (5432), por exemplo com uma variável própria (`MIGRATION_DATABASE_URL`) ou um aviso explícito, e nunca pela 6543; ou (b) trocar por `pg_advisory_xact_lock` dentro da transação de cada migração e refazer o plano depois de pegar o lock. Nos dois casos, o executor precisa de um prazo: `set lock_timeout` (transação-local, se for pelo pooler) ou `pg_try_advisory_lock` com tentativas, para que um lock preso vire código 1 e não um travamento. A SPEC-015 corrige o passo 1.2 do `deployment-plan.md`. | architect (SPEC_ISSUE-01) → SPEC-015 |
+| SEC-02 | baixa | deploy | `infra/migrations/001_init.sql:75-76`; SPEC-003 §7 | O RLS sem políticas bloqueia `SELECT`/`INSERT`/`UPDATE`/`DELETE`, mas não `TRUNCATE`, `REFERENCES` e `TRIGGER`. Se o projeto Supabase der privilégios padrão ao `anon`/`authenticated`, esses papéis passam a ter permissões que o RLS não cobre. Pela chave anon, o acesso é só pelo PostgREST e pelo GraphQL, que não executam `TRUNCATE` nem DDL, então **não há caminho de exploração hoje**. Além disso, o changelog do Supabase (mudança 45329) informa que tabelas novas no `public` deixaram de receber grants automáticos: o novo comportamento vale como padrão em projetos novos desde 30/05/2026 e chega aos projetos existentes em 30/10/2026. O projeto da dupla foi criado em 12/10/2026, então provavelmente já não recebe esses grants, mas isso depende da caixa "Automatically expose new tables" na criação. A nota da §7 da SPEC ("recebem `GRANT` ... por padrão") está desatualizada. | Não bloqueia. Na SPEC-015, como passo de verificação feito pelo humano no SQL Editor: `select grantee, table_name, privilege_type from information_schema.role_table_grants where table_schema = 'public' and grantee in ('anon','authenticated');`. Se houver linhas, rodar `revoke all on devices, inspections, schema_migrations from anon, authenticated;` (defesa em profundidade; não afeta a API, que conecta como dono). Não convém pôr esse `revoke` numa migração, porque os papéis `anon`/`authenticated` não existem no Postgres local nem no do CI. O architect atualiza a nota da §7. | SPEC-015 + architect (texto da §7) |
+| SEC-03 | baixa | secrets (logs) | `infra/migrate.py:221-226` | O `MigrationError` repassa `str(exc)` do psycopg, que traz o `DETAIL` (valores de linhas, ex.: `Key (api_key_hash)=(…)`) e o contexto `LINE n:` com um trecho do SQL. Não há vazamento de URL nem de senha de conexão (o CA-20 e as sondagens confirmam), e a §4.3 já proíbe credenciais nos arquivos de migração. O risco só existe se o `migrate.py` um dia rodar num log público (o repositório é público, e um job do Actions teria logs visíveis). Hoje isso não acontece, e os dados do projeto (hashes, IDs de dispositivo) não são sensíveis. | Não bloqueia. Se a SPEC-015 rodar migrações no Actions, mostrar só `sqlstate` e `diag.message_primary`, sem DETAIL nem LINE. Se não rodar, nada a fazer. | SPEC-015 (só se houver migração em CI) |
+| SEC-04 | baixa (informativo) | deploy | `infra/migrate.py:57-66`; `001_init.sql` (nomes sem schema) — decisão 9 do dev-report | **`search_path` não fixado: aceito.** Os nomes sem schema vão para o primeiro schema gravável do `search_path`. As funções e os operadores usados (`now()`, `coalesce`, `~`, `to_regclass`) vêm do `pg_catalog`, que é sempre pesquisado primeiro, então não podem ser sombreados. Sobra só o risco de o objeto ir parar em outro schema, ou de `to_regclass('schema_migrations')` resolver para uma tabela de outro schema, e isso exige um ator que já tenha `CREATE` num schema anterior ao `public`. No Supabase, o `search_path` padrão do `postgres` é `"$user", public, extensions`, sem schema `postgres`, e a chave anon não executa DDL. Detalhe para o futuro: um `SET search_path` de sessão **não** persiste no pooler em modo transaction. | Não bloqueia. Na SPEC-015, antes de aplicar, o humano confere `show search_path; select current_schema();` (deve dar `public`). Se o architect quiser fixar o `search_path` no executor, que use `select set_config('search_path', 'public', true)` dentro da transação de cada migração (transação-local, funciona com o pooler) ou qualifique os nomes (`public.`) nas próximas migrações. | architect (opcional) / SPEC-015 |
+| SEC-05 | informativo | deploy | ADR-006; `docs/deployment-plan.md` §3 | A API e as migrações usam o mesmo papel (`postgres`, dono das tabelas, com privilégio de DDL). O desenho "RLS sem `force`" depende disso: o dono ignora o RLS. Um papel só de DML para a API reduziria o raio de um comprometimento do servidor, mas exigiria políticas ou `BYPASSRLS`, o que muda o ADR-006. Esse ponto não é um defeito desta SPEC. | Nenhuma nesta SPEC. Fica registrado para o architect, caso o ADR-006 seja revisitado. | architect (opcional) |
+
+Os achados RV-02 (`commit;` dentro de um arquivo), RV-03 (dígitos Unicode no nome do arquivo) e RV-04 (arquivo lido duas vezes) do reviewer não têm impacto de segurança. Os arquivos de migração vêm do repositório, e só quem já tem escrita no repositório ou no diretório local consegue explorá-los. Concordo que fiquem como baixa para uma SPEC futura.
+
+## Checklist (seção 6 de [reviews/checklist.md](../checklist.md))
+
+| Item | Resultado |
+|---|---|
+| Autenticação em toda rota; comparação em tempo constante | N/A: nenhuma rota nesta SPEC. O schema guarda só `api_key_hash` (SHA-256 em hexadecimal, `check` `^[0-9a-f]{64}$`, `unique`), o que é compatível com a §4 da arquitetura. |
+| Entradas validadas | ✅ como defesa em profundidade no banco: `check` de enums, faixas, `lot_id`, `model_sha256`, `device_id` e `api_key_hash`; NaN e `\n` final rejeitados (test-report); `latency_ms` limitado pelo `int4`. Imagens e `extra="forbid"`: N/A. Na CLI, uma URL malformada sai com código 2 sem eco. |
+| SQL sempre parametrizado, sem f-string em query | ✅ As consultas do executor são constantes (`_CREATE_CONTROL_TABLE`, `_SELECT_APPLIED`, `_CONTROL_TABLE_EXISTS`) ou parametrizadas (`_INSERT_APPLIED`, lock e unlock com `%s`). O único SQL não parametrizado é o conteúdo do arquivo de migração, por definição (§4.3), executado sem interpolação (o tester confirmou que `%s` no arquivo é gravado literalmente). As f-strings só montam mensagens de erro. Nos testes, os identificadores dinâmicos usam `sql.Identifier`, ou constantes no código do autor. |
+| RLS ligado; `DATABASE_URL` e `service_role` nunca fora da API | ✅ RLS ligado sem políticas e sem `force` em `devices`, `inspections` e `schema_migrations`. O `_ensure_control_table` religa o RLS a cada execução, de forma idempotente. Leitura e escrita negadas a papéis `NOBYPASSRLS` (CA-15 e a sonda acima). A `DATABASE_URL` só é lida pelo `migrate.py` (ferramenta do operador) e pela API. A `service_role` não aparece no diff. Ver SEC-02 (`TRUNCATE`). |
+| CORS | N/A |
+| Logs sem segredos e sem imagens | ✅ Os erros de conexão usam `from None` e mostram só `host:porta` e o tipo da exceção. A URL malformada é tratada como "not shown", e outros `psycopg.Error` só pelo tipo. Nenhum `print`, e o logger é próprio (`partqc.migrate`, `propagate=False`). Ressalva baixa: SEC-03 (DETAIL e LINE do servidor). |
+| Dependências novas | ✅ Nenhuma. O `uv.lock` não mudou. O `psycopg` 3.3.6 (LGPL-3.0) já estava no workspace. |
+| Deploy | N/A nesta SPEC (SPEC-015). Pendências registradas: SEC-01 (obrigatória antes da SPEC-015), SEC-02 e SEC-04 (passos de verificação). Nenhum recurso pago nem exigência de cartão. |
+| R-03 (segredos no Git) | ✅ A busca no diff só encontrou a senha fictícia `s3cr3t-pw` dos testes (contra a porta 1 ou um banco com `trust`) e o marcador `<user>:<password>` do `.env.example`. O `.gitignore` cobre `.env` e `.env.*` (exceto `.example`). |
+| R-13 | ✅ Todos os commits são `Carlos Moises <…CarlosZeyy@users.noreply.github.com>`, com o trailer `Agent:`. Nenhuma ferramenta ou serviço corporativo foi usado nesta revisão. |
+| Trava contra banco que não é de teste | ✅ A trava decide antes de qualquer conexão, pelo `dbname` efetivo do parser do libpq, e falha fechada (nome ausente, `service=` ou `PGDATABASE` não contam). As operações destrutivas dos testes (`drop schema public cascade`, `drop database ... with (force)`, `create`/`drop role`) dependem todas de `db_conninfo`. |
+
+## Dependências novas
+
+| Pacote | Versão | Licença | Observação (CVE, manutenção) |
+|---|---|---|---|
+| — | — | — | Nenhuma dependência nova; `uv.lock` inalterado. |
+
+## Fontes consultadas
+
+- Supabase, "Connecting to Postgres" (modos direct, session e transaction; limitações do modo transaction; recomendação para migrações): <https://supabase.com/docs/guides/database/connecting-to-postgres>. Verificado em 2026-10-12.
+- Supabase changelog 45329, "Breaking change: tables not exposed to Data and GraphQL API automatically": <https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically>. Verificado em 2026-10-12.
+
+## Declaração
+
+- [x] Não editei código, testes, SPECs nem ADRs. Só escrevi este relatório.
+- [x] Não sou autor de nenhum commit de implementação ou de teste desta SPEC.
