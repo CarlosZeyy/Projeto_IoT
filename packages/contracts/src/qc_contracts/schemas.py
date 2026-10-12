@@ -35,7 +35,13 @@ MAX_BATCH_SIZE = 100
 
 
 def _to_utc(value: datetime) -> datetime:
-    return value.astimezone(UTC)
+    # Pydantic only turns ValueError/AssertionError into a ValidationError. A datetime near
+    # year 1 or 9999 can leave the supported range when shifted to UTC, and ``astimezone``
+    # then raises OverflowError, which would escape validation (a 500 instead of a 422).
+    try:
+        return value.astimezone(UTC)
+    except OverflowError as exc:
+        raise ValueError("datetime out of range after UTC normalization") from exc
 
 
 UtcDatetime = Annotated[AwareDatetime, AfterValidator(_to_utc)]

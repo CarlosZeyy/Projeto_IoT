@@ -24,6 +24,7 @@ from qc_contracts import (
     MetricsSummary,
     ObjectType,
     Page,
+    SpcPoint,
     SpcResponse,
     TimeseriesPoint,
 )
@@ -569,3 +570,115 @@ def test_response_models_ignore_extra_fields() -> None:
     )
     assert point.bucket_start.tzinfo is UTC
     assert point.bucket_start.hour == 15
+
+
+# --- datetimes that overflow when normalized to UTC (r1 review RV-01 / test report T-01) -------
+
+YEAR1_PLUS5 = "0001-01-01T00:00:00+05:00"
+YEAR9999_MINUS5 = "9999-12-31T23:59:59-05:00"
+OVERFLOWING = [YEAR1_PLUS5, YEAR9999_MINUS5]
+
+
+def _assert_value_error_at(
+    exc: pytest.ExceptionInfo[ValidationError], loc: tuple[Any, ...]
+) -> None:
+    errors = exc.value.errors()
+    assert [e["loc"] for e in errors] == [loc]
+    assert errors[0]["type"] == "value_error"
+    assert "out of range" in errors[0]["msg"]
+
+
+@pytest.mark.parametrize("value", OVERFLOWING)
+def test_create_overflowing_datetime_is_validation_error(value: str) -> None:
+    with pytest.raises(ValidationError) as exc:
+        InspectionCreate.model_validate(base_payload(inspected_at=value))
+    _assert_value_error_at(exc, ("inspected_at",))
+    with pytest.raises(ValidationError) as exc:
+        InspectionCreate.model_validate_json(json.dumps(base_payload(inspected_at=value)))
+    _assert_value_error_at(exc, ("inspected_at",))
+
+
+def test_create_overflowing_datetime_object_is_validation_error() -> None:
+    value = datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=5)))
+    with pytest.raises(ValidationError) as exc:
+        InspectionCreate.model_validate(base_payload(inspected_at=value))
+    _assert_value_error_at(exc, ("inspected_at",))
+
+
+def test_batch_with_overflowing_datetime_points_to_item() -> None:
+    items = _items(3)
+    items[1]["inspected_at"] = YEAR1_PLUS5
+    with pytest.raises(ValidationError) as exc:
+        BatchCreate.model_validate_json(json.dumps({"items": items}))
+    _assert_value_error_at(exc, ("items", 1, "inspected_at"))
+
+
+@pytest.mark.parametrize("field", ["received_at", "inspected_at"])
+@pytest.mark.parametrize("value", OVERFLOWING)
+def test_read_overflowing_datetime_is_validation_error(field: str, value: str) -> None:
+    with pytest.raises(ValidationError) as exc:
+        InspectionRead.model_validate_json(json.dumps(read_payload(**{field: value})))
+    _assert_value_error_at(exc, (field,))
+
+
+SPC_POINT = {
+    "lot_id": "L-1",
+    "started_at": "2026-10-01T15:00:00Z",
+    "ended_at": "2026-10-01T16:00:00Z",
+    "n": 50,
+    "defects": 2,
+    "p": 0.04,
+    "cl": 0.05,
+    "ucl": 0.14,
+    "lcl": 0.0,
+    "out_of_control": False,
+}
+LOT_SUMMARY = {
+    "lot_id": "L-1",
+    "n": 1,
+    "defects": 0,
+    "unknown_count": 0,
+    "started_at": "2026-10-01T15:00:00Z",
+    "ended_at": "2026-10-01T15:00:00Z",
+    "sources": ["live"],
+}
+TIMESERIES_POINT = {
+    "bucket_start": "2026-10-01T15:00:00Z",
+    "total": 0,
+    "defective": 0,
+    "defect_rate": None,
+}
+
+
+@pytest.mark.parametrize(
+    ("model", "data", "field"),
+    [
+        (TimeseriesPoint, TIMESERIES_POINT, "bucket_start"),
+        (SpcPoint, SPC_POINT, "started_at"),
+        (SpcPoint, SPC_POINT, "ended_at"),
+        (LotSummary, LOT_SUMMARY, "started_at"),
+        (LotSummary, LOT_SUMMARY, "ended_at"),
+    ],
+)
+@pytest.mark.parametrize("value", OVERFLOWING)
+def test_response_overflowing_datetime_is_validation_error(
+    model: Any, data: dict[str, Any], field: str, value: str
+) -> None:
+    with pytest.raises(ValidationError) as exc:
+        model.model_validate(data | {field: value})
+    _assert_value_error_at(exc, (field,))
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0001-01-01T00:00:00Z", datetime(1, 1, 1, tzinfo=UTC)),
+        ("0001-01-01T05:00:00+05:00", datetime(1, 1, 1, tzinfo=UTC)),
+        ("9999-12-31T23:59:59Z", datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)),
+        ("9999-12-31T18:59:59-05:00", datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)),
+    ],
+)
+def test_extreme_datetimes_inside_utc_range_accepted(value: str, expected: datetime) -> None:
+    m = TimeseriesPoint.model_validate(TIMESERIES_POINT | {"bucket_start": value})
+    assert m.bucket_start == expected
+    assert m.bucket_start.tzinfo is UTC
