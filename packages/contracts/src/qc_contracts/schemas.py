@@ -33,6 +33,10 @@ MAX_FUTURE_SKEW = timedelta(minutes=5)
 
 MAX_BATCH_SIZE = 100
 
+# Upper bound of ``latency_ms``: 2**31 - 1, the maximum of the ``integer`` column (section 5).
+# A larger value would fail the insert with SQLSTATE 22003 instead of a validation error.
+MAX_LATENCY_MS: int = 2_147_483_647
+
 
 def _to_utc(value: datetime) -> datetime:
     # Pydantic only turns ValueError/AssertionError into a ValidationError. A datetime near
@@ -70,7 +74,7 @@ class _InspectionBase(BaseModel):
     needs_review: bool
     model_version: ModelVersion
     model_sha256: Sha256Hex
-    latency_ms: Annotated[int, Field(ge=0)]
+    latency_ms: Annotated[int, Field(ge=0, le=MAX_LATENCY_MS)]
     source: Source
 
     @model_validator(mode="after")
