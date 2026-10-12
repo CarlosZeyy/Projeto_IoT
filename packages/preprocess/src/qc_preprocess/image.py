@@ -13,22 +13,34 @@ MAX_PIXELS = 40_000_000
 # Longest side at most MAX_ASPECT_RATIO times the shortest. ``preprocess`` resizes before it
 # crops, so an extreme strip (e.g. 100x400000) would blow up memory during the resize.
 MAX_ASPECT_RATIO: int = 10
+# Upper bound on SOS markers (``FF DA``) in JPEG content (SEC-01 of the SPEC-023 security
+# report): a progressive JPEG with repeated scans costs CPU proportional to scans x pixels.
+# The count covers the whole file without parsing segments, so it never counts fewer scans
+# than the decoder processes; it may count a few more (APPn/COM payloads, EXIF thumbnails,
+# MPO or gain-map images after EOI). Standard scripts use at most 18 scans (CMYK progressive).
+MAX_JPEG_SCANS: int = 64
+# Signature Pillow uses to recognise JPEG content (JpegImagePlugin._accept).
+_JPEG_SIGNATURE = b"\xff\xd8\xff"
+_JPEG_SOS_MARKER = b"\xff\xda"
 
 
 def load_image(data: bytes | Path) -> Image.Image:
     """Decode JPEG/PNG bytes or file into an RGB image with EXIF orientation applied.
 
-    The format is detected from the content, not from the file extension. The pixel limit and
-    the aspect ratio are checked from the header, before any pixel data is decoded.
+    The format is detected from the content, not from the file extension. The JPEG scan limit is
+    checked on the raw bytes, before the image is opened; the pixel limit and the aspect ratio are
+    checked from the header, before any pixel data is decoded.
 
     Raises:
         RuntimeError: ``PIL.ImageFile.LOAD_TRUNCATED_IMAGES`` is enabled in this process
             (checked first, on every call). This is a process configuration error, not an image
             defect, so it is not an ``InvalidImageError``; the flag is left untouched.
         FileNotFoundError: ``data`` is a ``Path`` that does not exist.
-        InvalidImageError: empty data, not an image, a format other than JPEG/PNG, a truncated
-            file, more than ``MAX_PIXELS`` pixels, a zero-sized image or an aspect ratio above
-            ``MAX_ASPECT_RATIO``:1 (longest side over shortest side), or a decompression bomb.
+        InvalidImageError: empty data, JPEG content (``FF D8 FF`` signature) with more than
+            ``MAX_JPEG_SCANS`` scan markers (``FF DA`` pairs anywhere in the file), not an image,
+            a format other than JPEG/PNG, a truncated file, more than ``MAX_PIXELS`` pixels, a
+            zero-sized image or an aspect ratio above ``MAX_ASPECT_RATIO``:1 (longest side over
+            shortest side), or a decompression bomb.
         MemoryError: propagated as is; running out of memory is not an image defect.
     """
     # Read on every call: the flag is a module global that any code in the process may change.
@@ -45,6 +57,14 @@ def load_image(data: bytes | Path) -> Image.Image:
         raise TypeError(f"data must be bytes or Path, got {type(data).__name__}")
     if not data:
         raise InvalidImageError("empty image data")
+    if data.startswith(_JPEG_SIGNATURE):
+        # Naive count over the whole file on purpose: no segment parsing, so a malformed segment
+        # cannot make it undercount (libjpeg skips junk and keeps decoding).
+        scans = data.count(_JPEG_SOS_MARKER)
+        if scans > MAX_JPEG_SCANS:
+            raise InvalidImageError(
+                f"too many JPEG scans: {scans} scan markers, limit {MAX_JPEG_SCANS}"
+            )
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
