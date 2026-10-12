@@ -1,0 +1,50 @@
+# --- Python / uv ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# --- Segredos (R-03) ---
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.pem
+*.key
+
+# --- Dados e imagens (R-02, R-14) ---
+ml/data/
+edge/data/
+data/
+*.jpg
+*.jpeg
+*.png
+!docs/**/*.png
+!ml/reports/**/*.png
+
+# --- Modelos (pesos vão em GitHub Releases) ---
+ml/models/**/*.onnx
+ml/models/**/*.pt
+ml/models/**/*.pth
+ml/checkpoints/
+
+# --- Borda ---
+*.sqlite
+*.sqlite3
+*.db
+
+# --- Notebooks / IDE / SO ---
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
+
+# --- Claude Code (local) ---
+.claude/settings.local.json

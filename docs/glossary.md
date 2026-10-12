@@ -1,0 +1,29 @@
+# Glossário
+
+| Termo | Significado no projeto |
+|---|---|
+| **ADR** | Architecture Decision Record. Registro curto de uma decisão (contexto, decisão, consequências). Fica em `docs/adr/` |
+| **Borda / edge / gateway** | O notebook que recebe as fotos do celular, roda o modelo e envia os resultados à nuvem |
+| **Carta p** | Gráfico de controle da proporção de itens defeituosos por subgrupo (lote), com linha central p̄ e limites de ±3σ |
+| **Cold start** | Demora da primeira requisição depois que um serviço free tier "dormiu" |
+| **Contrato** | Schemas Pydantic do pacote `qc-contracts` que borda, API e dashboard compartilham |
+| **CORN / CORAL** | Técnicas de regressão ordinal para redes neurais (respeitam a ordem dos graus) |
+| **Defeituoso** | Inspeção com grau `poor` ou `unusable` (ADR-013) |
+| **Grau** | Estado da peça em 5 níveis: perfeito, bom, mediano, ruim, inutilizável |
+| **Idempotência** | Enviar a mesma inspeção várias vezes produz um único registro |
+| **`item_id`** | Identificador da **peça física** (ex.: `S-012`). Várias fotos podem ter o mesmo `item_id` |
+| **Lote (`lot_id`)** | Grupo de peças inspecionadas juntas, informado pelo operador. É o subgrupo do SPC |
+| **Loop** | Ciclo developer → tester → reviewer (→ security) de uma SPEC, com no máximo 3 rodadas |
+| **Manifest** | CSV que lista cada imagem do dataset com seus rótulos |
+| **`needs_review`** | Sinalização de que o modelo ficou em dúvida e um humano deveria conferir |
+| **ONNX / onnxruntime** | Formato portátil de modelo e o motor leve que executa esse formato na CPU |
+| **Orquestrador** | A sessão principal do Claude Code, que conduz o loop chamando os subagentes |
+| **Outbox** | Fila local (SQLite) onde cada inspeção é gravada antes do envio; garante que nada se perca |
+| **Paridade** | Teste que garante que o modelo exportado em ONNX produz as mesmas saídas do modelo PyTorch |
+| **QWK** | Quadratic Weighted Kappa. Concordância entre duas classificações ordinais, penalizando mais os erros distantes |
+| **Rodada (r1, r2, r3)** | Cada passagem de uma SPEC pelo loop |
+| **RLS** | Row Level Security do Postgres. Ligado sem políticas, impede o acesso pelas chaves públicas do Supabase |
+| **SPC** | Statistical Process Control (controle estatístico de processo) |
+| **SPEC** | Especificação de uma entrega, com critérios de aceite testáveis. Fica em `docs/specs/` |
+| **Split agrupado** | Divisão treino/validação/teste em que todas as fotos de uma mesma peça ficam no mesmo conjunto |
+| **`unknown` / `other`** | `other` é a classe do modelo para "não é parafuso nem porca"; `unknown` é como isso (ou a confiança baixa) aparece no contrato |

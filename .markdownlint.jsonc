@@ -1,0 +1,7 @@
+{
+  // Tabelas compactas (|---|) e linhas longas são o padrão da documentação do projeto.
+  "MD013": false,
+  "MD060": false,
+  "MD033": false,
+  "MD024": { "siblings_only": true }
+}
