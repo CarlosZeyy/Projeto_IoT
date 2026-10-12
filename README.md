@@ -79,6 +79,21 @@ A porta é publicada só em `127.0.0.1`: com `trust`, quem alcança a porta entr
 
 **Contêiner antigo:** um contêiner `partqc-pg` criado antes da SPEC-022 (com senha) não aceita a URL acima. Recrie-o com `docker rm -f partqc-pg` seguido do `docker run` acima.
 
+### Migrações do banco (SPEC-003)
+
+As migrações SQL ficam em `infra/migrations/NNN_slug.sql` e são aplicadas por `infra/migrate.py`, que registra cada uma em `schema_migrations` com o SHA-256 do arquivo. Rodar de novo não aplica nada; um arquivo já aplicado que foi alterado gera `checksum mismatch` e nada é aplicado. A URL vem de `DATABASE_URL` (ou `--database-url`) e nunca aparece nos logs.
+
+```bash
+# banco local de teste (Docker acima)
+export DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test
+uv run --package qc-api python infra/migrate.py --status   # lista aplicadas e pendentes, sem aplicar
+uv run --package qc-api python infra/migrate.py            # aplica as pendentes, em ordem
+```
+
+Códigos de saída: `0` sucesso; `1` falha de banco, de migração ou de checksum; `2` uso inválido (sem URL, argumento inválido). O SQL também pode ser colado no SQL Editor do Supabase ou rodado com `psql`, porque o DDL usa `if not exists` (a aplicação em produção é da SPEC-015).
+
+Nos testes, as fixtures `db_conninfo`, `migrated_db` e `clean_db` do `conftest.py` da raiz recriam o schema `public`, aplicam as migrações e limpam as tabelas. Por segurança, recusam um banco cujo nome não contenha `test`.
+
 ### CI
 
 O workflow `ci` (`.github/workflows/ci.yml`) roda em todo PR e em push na `main`: `uv sync --all-packages --frozen`, `ruff check`, `ruff format --check` e `pytest -q` com um serviço `postgres:16`. O teste `tests/test_dependency_isolation.py` garante, pelo `uv.lock`, que `qc-api` e `qc-dashboard` não dependem de torch, torchvision, timm nem onnxruntime (R-12).
