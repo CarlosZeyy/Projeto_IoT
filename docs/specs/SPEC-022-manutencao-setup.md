@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
+| Status | In Test |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | infra |
@@ -10,8 +10,6 @@
 | Semana alvo | S1 |
 | Requisitos cobertos | R-07 (hook de guarda e rastreio de papéis), R-03 e RNF-06 (nenhuma credencial no Git), RNF-09 (ruff + pytest no CI) |
 | ADRs relevantes | ADR-010 (Python 3.12 + uv; exceção do `python3` do sistema para o hook), ADR-011 (loop de agentes, trailers `Agent:`), ADR-015 (git/GitHub e PRs) |
-
-**Aguardando reaprovação humana** (correção do SPEC_ISSUE-01 da r1; ver Histórico).
 
 ## 1. Contexto
 
@@ -202,3 +200,4 @@ Mocks: nenhum. Os testes do hook alimentam o stdin com JSON e conferem o código
 | 2026-10-12 | Criação, com o escopo definido no pedido: RV-01 do hook, Postgres de teste sem senha, commits do architect e nota de workspace trust. Decisões do architect: (a) a regra "dois campos" usa presença da chave (§4.1); (b) a porta local publicada só em `127.0.0.1`, por causa do `trust` (§4.2); (c) `reviews/README.md` entrou na exceção de caminhos da §4.5, porque o hook também nega `reviews/**` ao developer; (d) a SPEC-015 não muda (§7). Criada em `Draft`: o architect não muda status para `Ready`. O orquestrador informou que o humano já aprovou o conteúdo ao pedir a SPEC; a passagem para `Ready` fica com o humano (ou com o orquestrador, sob a confirmação dele), conferindo os pontos (b) e (c). | Pendências do PR #3 da SPEC-001 (review r1, CA-23) e alerta de scanner de segredos no repositório público | Humano (Carlos), via orquestrador |
 | 2026-10-12 | `Draft` → `Ready` → `In Dev` (r1). Aprovação humana explícita, com os pontos (b) e (c) e a tag `infra` confirmados. | Início do loop | Humano (Carlos) |
 | 2026-10-12 | Preâmbulo da §5: a leitura "stderr contém X" = `guard_paths: blocked: X` passa a valer só para os CA-01 a CA-04; no CA-06, X aparece literalmente, no formato inalterado da SPEC-001 §4.6 (sem `blocked:`). Nenhum CA, requisito ou comportamento mudou; nenhuma mudança de código. Na r2, basta reexecutar o teste do CA-06. SPEC marcada como "Aguardando reaprovação humana"; o Status fica com o orquestrador. | SPEC_ISSUE-01 de `reviews/SPEC-022/r1-test-report.md`: o preâmbulo contradizia o CA-06 e as §3.2/§4.1 | Orquestrador |
+| 2026-10-12 | Correção do SPEC_ISSUE-01 reaprovada; `Blocked` → `In Test`, retomando a r1 (o tester reemite o r1-test-report). | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
