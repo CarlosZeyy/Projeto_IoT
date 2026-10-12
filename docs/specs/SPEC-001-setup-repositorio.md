@@ -74,6 +74,7 @@ Em um clone limpo no notebook (Arch Linux) e no CI, `uv sync --all-packages --fr
 ### 4.2 Ruff e pytest (na raiz)
 
 - `[tool.ruff]`: `line-length = 100`, `target-version = "py312"`; `[tool.ruff.lint] select = ["E", "F", "I", "B", "UP", "SIM"]`; `known-first-party` com os seis módulos; formatação padrão do `ruff format`.
+- `[tool.ruff] extend-exclude = ["*.md"]`: os arquivos Markdown ficam fora do ruff. A partir do ruff 0.17, o `ruff format` também formata os blocos de código em Markdown, e a documentação (`docs/`, `README.md`, `CLAUDE.md`, `.claude/agents/*.md`) não é código do projeto: os trechos nela são ilustrativos. Se um dia houver Markdown com Python que deva ser formatado, trocar por uma exclusão mais estreita (ex.: `docs/**`).
 - `[tool.pytest.ini_options]`:
   - `testpaths = ["tests", "packages/contracts/tests", "packages/preprocess/tests", "api/tests", "edge/tests", "dashboard/tests", "ml/tests"]` (SPECs futuras acrescentam, ex.: `infra/tests`);
   - `addopts = "-ra --strict-markers --import-mode=importlib"` (o `importlib` é obrigatório: vários componentes terão `tests/acceptance/test_spec_NNN.py` com o mesmo nome);
@@ -91,7 +92,8 @@ Em um clone limpo no notebook (Arch Linux) e no CI, `uv sync --all-packages --fr
 
 - Gatilhos: `pull_request` e `push` na `main`. Um job em `ubuntu-latest`.
 - Serviço `postgres:16` (usuário/senha/banco `postgres`/`postgres`/`partqc_test`, porta 5432, health check `pg_isready`). `env` do job: `TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/partqc_test` (credencial de um contêiner efêmero, não é segredo — registrar isso em comentário no YAML para a busca do reviewer, R-03) e `UV_FROZEN: "1"`.
-- Passos: `actions/checkout` → `astral-sh/setup-uv` (versão major fixada, com cache) → `uv python install 3.12` → `uv sync --all-packages --frozen` → `uv run ruff check .` → `uv run ruff format --check .` → `uv run pytest -q`.
+- Passos: `actions/checkout` → `astral-sh/setup-uv` (tag de release completa, ex.: `v10.3.0`, ou SHA do commit; com cache) → `uv python install 3.12` → `uv sync --all-packages --frozen` → `uv run ruff check .` → `uv run ruff format --check .` → `uv run pytest -q`.
+- As actions são fixadas por tag de release completa ou SHA, e não por major, porque o `astral-sh/setup-uv` não publica mais tags major flutuantes (ver §7).
 - Nenhum segredo do repositório é usado.
 
 ### 4.5 Verificação da R-12 (`tests/test_dependency_isolation.py`)
@@ -204,7 +206,7 @@ Mocks: nenhum. Os testes do hook alimentam o stdin com JSON e conferem código d
 - O hook não cobre o `Bash` (limitação aceita). Mudanças em `uv.lock` acontecem pelo comando `uv`, não pelo `Write`, então não conflitam com as listas acima.
 - `uv sync` sem `--all-packages` remove os membros do ambiente (sincronização exata); use sempre `--all-packages` ou `--package`.
 - O `torch` do PyPI é pesado; o índice de wheels CPU, se desejado, é decidido na SPEC-012.
-- Fixe a versão major das actions (`actions/checkout`, `astral-sh/setup-uv`) verificando a atual no momento da implementação.
+- Fixe as actions (`actions/checkout`, `astral-sh/setup-uv`) por tag de release completa (ex.: `v10.3.0`) ou pelo SHA do commit, verificando a mais recente no momento da implementação. O `astral-sh/setup-uv` não publica mais tags major flutuantes (não existe `v10`, só `v10.0.0`…`v10.3.0`), então `@v10` quebraria o CI (verificado pelo reviewer em 2026-10-12 e conferido em <https://github.com/astral-sh/setup-uv/tags> na mesma data).
 
 ## 8. Definição de pronto
 
@@ -213,3 +215,9 @@ Mocks: nenhum. Os testes do hook alimentam o stdin com JSON e conferem código d
 - [ ] CI verde; `ruff` limpo
 - [ ] `README.md` ("Como rodar"), `CLAUDE.md` ("Comandos úteis", se mudou) e `.env.example` atualizados
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | §4.4 e §7: "versão major fixada" das actions trocada por "tag de release completa (ex.: `v10.3.0`) ou SHA do commit". §4.2: registrado `[tool.ruff] extend-exclude = ["*.md"]`. Nenhum CA, status ou escopo mudou. | Alinhar o texto aos desvios aceitos no review r1 (`reviews/SPEC-001/r1-review-report.md`, RV-02/SPEC_ISSUE-1 e RV-03/SPEC_ISSUE-2): o `astral-sh/setup-uv` não publica mais tags major flutuantes, e o ruff ≥ 0.17 formata blocos de código em Markdown, que não é código do projeto. | Orquestrador (SPEC_ISSUE informativos do reviewer) |
