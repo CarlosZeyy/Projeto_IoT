@@ -36,7 +36,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 |---|---|---|---|---|---|---|
 | [001](specs/SPEC-001-setup-repositorio.md) | Setup do repositório e ferramentas | developer | infra | — | S1 | Done |
 | [002](specs/SPEC-002-pacotes-compartilhados.md) | Pacotes compartilhados v0 (`qc-contracts` e `qc-preprocess`) | developer | contrato | 001 | S1 | Done |
-| [003](specs/SPEC-003-schema-banco.md) | Schema Supabase, migrações e RLS | developer | security | 002 | S2 | In Dev (r1) |
+| [003](specs/SPEC-003-schema-banco.md) | Schema Supabase, migrações e RLS | developer | security | 002 | S2 | In Test (r1) |
 | [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023 | S2 | Ready |
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Ready |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Ready |
