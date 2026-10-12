@@ -1,5 +1,7 @@
 # SPEC-010: Modo coleta de dataset
 
+> **Aguardando reaprovação humana** (alteração de 2026-10-12: `re.fullmatch` em `item_id` e validação exata dos campos que viram caminho; ver Histórico).
+
 | Campo | Valor |
 |---|---|
 | Status | Ready |
@@ -53,6 +55,8 @@ No modo coleta, cada foto vira um arquivo em `DATASET_DIR/raw/...` e uma linha v
 
 Coerência do prefixo: `S` → `screw`, `N` → `nut`, `O` → `other`; `T` ou prefixo que não bate com `object_type` → 422.
 
+Campos que viram nome de arquivo ou caminho (`item_id`, `object_type`, `grade`, `angle`, §4.2): `item_id` é validado com `re.fullmatch(r"[SNOT]-\d{3}", valor)` (ou o `pattern` do Pydantic), **nunca** com `re.match`/`re.search`, que aceitam um `\n` final (`architecture.md` §3.2); `angle` é validado com `re.fullmatch(r"[0-4]", valor)` **antes** de `int()` (que aceitaria `"2\n"` e `" 2"`); `object_type`, `grade` e `labeler`, por igualdade exata com os valores permitidos, sem `strip()`. Qualquer falha → 422, antes de tocar o disco.
+
 ### 4.2 Gravação
 
 1. Sob um lock de processo (`threading.Lock`) **e** um lock de arquivo (`fcntl.flock` em `DATASET_DIR/manifest.csv.lock`):
@@ -88,7 +92,7 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 - **CA-02** — *Dado* `item_id=O-004`, `object_type=other` e `grade` vazio, *então* 200, arquivo em `raw/other/_/O-004__0__<ts>.jpg` e coluna `grade` vazia no manifest.
 - **CA-03** — *Dado* `object_type=other` com `grade=good`, ou `object_type=screw` sem `grade`, ou `grade=excellent`, *então* 422 e nada gravado.
 - **CA-04** — *Dado* `item_id=N-001` com `object_type=screw`, ou `item_id=T-001` com qualquer tipo, ou `object_type=unknown`, *então* 422.
-- **CA-05** — *Dado* `item_id` igual a `S-12`, `s-012`, `S-0123` ou `../S-001`, ou `angle` igual a 5, -1 ou `x`, ou `labeler=c`, ou `notes` com 201 caracteres ou com `\n`, *então* 422 e nenhum arquivo criado fora de `DATASET_DIR`.
+- **CA-05** — *Dado* `item_id` igual a `S-12`, `s-012`, `S-0123` ou `../S-001`, ou `angle` igual a 5, -1 ou `x`, ou `labeler=c`, ou `notes` com 201 caracteres ou com `\n`, ou `item_id="S-012\n"`, `angle="2\n"` ou `object_type="screw\n"` (com os demais campos do CA-01), *então* 422 e nenhum arquivo criado fora de `DATASET_DIR`; nos três últimos casos, com `DATASET_DIR` vazio, ele continua vazio (nem imagem, nem `manifest.csv`).
 - **CA-06** — *Dado* um manifest com uma linha (inserida direto no arquivo) de `O-007` com `object_type=screw`, *quando* envio `O-007` como `other`, *então* recebo 409 com o detalhe de §4.2, nenhuma imagem é gravada e o manifest não muda. (Com o prefixo amarrado ao tipo, o conflito só surge em manifest editado à mão; a regra existe para proteger a SPEC-011.)
 - **CA-07** — *Dado* `S-012` já com uma foto `fair`, *quando* envio `S-012` como `poor`, *então* 200 e `item_images=2` (mudança de estágio é permitida).
 - **CA-08** — *Dado* duas requisições idênticas no mesmo segundo do relógio (mesmo item e ângulo), *então* a primeira recebe 200 e a segunda 409, com 1 linha no manifest.
@@ -123,3 +127,9 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 - [ ] CI verde; `ruff` limpo
 - [ ] `edge/README.md` e `.env.example` atualizados
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | §4.1 exige `re.fullmatch` em `item_id`, `re.fullmatch` em `angle` antes de `int()` e igualdade exata (sem `strip()`) em `object_type`, `grade` e `labeler`, por virarem nome de arquivo ou caminho. O CA-05 ganhou os casos `item_id="S-012\n"`, `angle="2\n"` e `object_type="screw\n"` (422, `DATASET_DIR` intacto). Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` (regra geral em `architecture.md` §3.2) | Humano, via orquestrador |
