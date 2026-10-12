@@ -20,6 +20,7 @@ A fonte de verdade descritiva é `docs/architecture.md` §3. O código em `qc_co
 |---|---|---|
 | Novo campo **opcional** com default | minor (0.x → 0.x+1) | SPEC com a tag `contrato` |
 | Novo valor de enum (ex.: ferramentas da Fase 2) | minor | SPEC com a tag `contrato` + migração do `check` no banco + rótulo PT-BR |
+| Estreitar a validação de um campo (faixa, teto), quando os valores rejeitados já não podiam ser gravados ou processados | minor | SPEC com a tag `contrato`, com a justificativa na SPEC (precedente: SPEC-023, teto de `latency_ms`) |
 | Remover ou renomear campo, mudar tipo, tornar obrigatório | **major** | ADR + SPEC + plano de migração de borda, API e dashboard **no mesmo PR** |
 | Mudar a regra `is_defective` | **major** | ADR (altera ADR-013) |
 
