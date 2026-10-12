@@ -224,8 +224,8 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
 ## 8. Rede e operação
 
 - A borda escuta em `0.0.0.0:8000`. No Arch, libere a porta 8000/tcp no firewall ativo (ufw, firewalld ou nftables).
-- **Topologia preferida:** celular e notebook na mesma rede Wi-Fi.
-- **Plano B** (Wi-Fi do campus com isolamento de clientes): o notebook se conecta ao **hotspot do celular** e o celular acessa o IP do notebook nessa rede.
+- **Em casa (desenvolvimento e testes):** celular e notebook na mesma rede Wi-Fi.
+- **Na apresentação (padrão):** o notebook se conecta ao **hotspot do celular** e o celular acessa o IP do notebook nessa rede. A rede fica sob controle da dupla, independente do Wi-Fi do campus (que pode isolar os clientes), e o notebook chega à nuvem pelos dados móveis.
 - **Plano C:** **ancoragem USB** (USB tethering): o celular ligado ao notebook pelo cabo cria uma rede local entre os dois, e o celular acessa o IP do notebook nessa interface.
 - **Túneis públicos (ex.: Cloudflare quick tunnel) são proibidos** para a captura, porque o tráfego, com as fotos, passaria pela infraestrutura do provedor e violaria a R-02.
 - **Nuvem fora do ar:** a borda continua inspecionando e o outbox acumula. O console mostra `offline` e o número de pendentes.

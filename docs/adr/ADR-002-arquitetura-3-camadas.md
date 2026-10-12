@@ -48,7 +48,7 @@ O sistema tem três camadas:
   - nenhum endpoint de `qc-api` aceita imagem nem multipart (R-02); o security-devops revisa o tráfego da borda;
   - o outbox grava antes de responder ao celular, e o reenvio é idempotente por `inspection_id` (R-05, SPEC-009);
   - o pré-processamento da borda é o mesmo pacote usado no treino (`qc-preprocess`, SPEC-002);
-  - o teste de rede no campus com os dois celulares, incluindo o hotspot, é feito na S1 (`docs/plan.md`).
+  - o teste de rede com os dois celulares (Wi-Fi e hotspot) é feito em casa, e a apresentação usa por padrão o hotspot do celular (`docs/architecture.md` §8).
 
 ## Quando revisitar
 

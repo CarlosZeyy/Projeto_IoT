@@ -9,6 +9,9 @@
 
 ## Contexto
 
+O uso de agentes de IA no desenvolvimento, seguindo práticas atuais como o SDD (Spec-Driven Development), foi **autorizado previamente pelo professor** (registrado em `docs/professor-questions.md`, pergunta 4, em 2026-10-12) e faz parte do conteúdo apresentado.
+
+
 A dupla vai usar agentes de IA (Claude Code) para escrever boa parte do código, num prazo curto (MVP em 08/11). O risco é ter código que ninguém revisou, testes escritos por quem implementou e decisões tomadas em silêncio.
 
 Por padrão, um subagente do Claude Code pode criar outros subagentes, até um limite de profundidade. Fonte: <https://code.claude.com/docs/en/sub-agents> (verificado em 2026-10-12). Sem restrição, um agente poderia delegar a própria revisão.

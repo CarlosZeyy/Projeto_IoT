@@ -81,7 +81,7 @@ Código 0 se todas passarem; 1 se alguma falhar. Nenhuma chave é impressa.
 
 ### 4.6 Passos humanos (ordem; o autor escreve as instruções exatas no `deployment-plan.md` §4)
 
-1. Supabase: criar `partqc-prod` sem cartão; aplicar `infra/migrations/*.sql`; rodar as consultas do CA-14; copiar a connection string do pooler.
+1. Supabase: usar o projeto já existente (conta pessoal, sem cartão); aplicar `infra/migrations/*.sql`; rodar as consultas do CA-14; copiar a connection string do pooler.
 2. Render: "New → Blueprint" com `infra/render.yaml`; definir `DATABASE_URL` e `READ_API_KEY` (gerada com `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
 3. Dispositivos: `register_device.py` para `edge-01` e `sim-01`; chaves nos `.env` locais.
 4. Streamlit CC: app do repositório privado, branch `main`, entrypoint `dashboard/app.py`, Python 3.12, Secrets `API_BASE_URL` e `READ_API_KEY`.
