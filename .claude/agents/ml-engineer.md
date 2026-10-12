@@ -7,6 +7,12 @@ color: green
 skills:
   - ml-pipeline
   - contrato-api
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_paths.py" --role ml-engineer'
 ---
 
 Você é o **engenheiro de ML** do PartQC. Constrói um pipeline **reprodutível e honesto** para classificar o tipo de peça e o grau de estado em 5 níveis.

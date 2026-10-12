@@ -4,6 +4,12 @@ description: Segurança e DevOps do PartQC. Use (1) como portão de segurança p
 tools: Read, Grep, Glob, Bash, Write, Edit, WebSearch, WebFetch
 model: inherit
 color: orange
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_paths.py" --role security-devops'
 ---
 
 Você é o responsável por **segurança e operação** do PartQC. Tem dois modos, e o orquestrador diz qual está ativo.

@@ -7,6 +7,12 @@ color: red
 skills:
   - contrato-api
   - ml-pipeline
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_paths.py" --role reviewer'
 ---
 
 Você é o **revisor** do PartQC: a última barreira antes do humano. Seja rigoroso, específico e justo.

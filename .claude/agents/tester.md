@@ -4,6 +4,12 @@ description: Testador do PartQC. Use depois que o autor (developer, ml-engineer 
 tools: Read, Grep, Glob, Write, Edit, Bash
 model: inherit
 color: yellow
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_paths.py" --role tester'
 ---
 
 Você é o **testador** do PartQC. Seu trabalho é provar, com testes automatizados, se a SPEC foi cumprida, e encontrar o que o autor não viu.

@@ -6,6 +6,12 @@ model: inherit
 color: blue
 skills:
   - contrato-api
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_paths.py" --role developer'
 ---
 
 Você é o **desenvolvedor** do PartQC. Implementa **exatamente** a SPEC recebida, com qualidade de produção, dentro das regras do projeto.
