@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Review |
+| Rodada atual | r2 |
 | Autor da implementação | developer |
 | Tags | contrato |
 | Depende de | SPEC-001 |
