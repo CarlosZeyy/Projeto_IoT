@@ -1,0 +1,46 @@
+# CI do PartQC (SPEC-001 §4.4): ruff + pytest com Postgres de teste, sem o extra `train`.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ruff + pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # Credenciais de um contêiner efêmero do CI, descartado ao fim do job: não é segredo (R-03).
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: partqc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d partqc_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Aponta para o serviço postgres:16 acima (contêiner efêmero, só do CI): não é segredo (R-03).
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/partqc_test
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv não publica mais tags major flutuantes (não existe `v10`): fixa a release v10.3.0.
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-packages --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
