@@ -94,6 +94,30 @@ Códigos de saída: `0` sucesso; `1` falha de banco, de migração ou de checksu
 
 Nos testes, as fixtures `db_conninfo`, `migrated_db` e `clean_db` do `conftest.py` da raiz recriam o schema `public`, aplicam as migrações e limpam as tabelas. Por segurança, recusam um banco cujo nome não contenha `test`.
 
+### API local e registro de dispositivo (SPEC-004)
+
+A API (`qc-api`) lê a configuração só do ambiente: `DATABASE_URL` e `READ_API_KEY` (mínimo de 32 caracteres) são obrigatórias; `MAX_BODY_BYTES` (padrão 262144) e `LOG_LEVEL` (padrão `INFO`) são opcionais. Ela não lê o `.env` sozinha: use `uv run --env-file .env ...` ou exporte as variáveis. Localmente, aponte para o Postgres de teste em Docker (seção anterior), já migrado.
+
+```bash
+export DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test
+export READ_API_KEY="$(uv run python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+uv run --package qc-api python infra/migrate.py
+uv run --package qc-api uvicorn qc_api.main:app --reload --port 8001
+# em outro terminal
+curl -s http://localhost:8001/api/v1/health   # {"status":"ok","db":"ok",...}; 503 com o banco fora do ar
+```
+
+A documentação interativa fica em <http://localhost:8001/docs>.
+
+Cada dispositivo (borda ou simulador) precisa de uma chave própria, enviada no header `X-API-Key`. O banco guarda só o SHA-256 dela. O script imprime a chave **uma única vez**, numa linha `DEVICE_API_KEY=<chave>`, que vai para o `.env` do dispositivo:
+
+```bash
+uv run --package qc-api python scripts/register_device.py --device-id edge-01            # registra
+uv run --package qc-api python scripts/register_device.py --device-id edge-01 --rotate   # troca a chave (a antiga deixa de valer na hora)
+```
+
+A URL vem de `DATABASE_URL` (ou `--database-url`). Códigos de saída: `0` sucesso; `1` dispositivo já existente (sem `--rotate`), inexistente (com `--rotate`) ou falha de banco; `2` uso inválido (`--device-id` fora de `^[a-z0-9-]{3,32}$`, sem URL).
+
 ### CI
 
 O workflow `ci` (`.github/workflows/ci.yml`) roda em todo PR e em push na `main`: `uv sync --all-packages --frozen`, `ruff check`, `ruff format --check` e `pytest -q` com um serviço `postgres:16`. O teste `tests/test_dependency_isolation.py` garante, pelo `uv.lock`, que `qc-api` e `qc-dashboard` não dependem de torch, torchvision, timm nem onnxruntime (R-12).
