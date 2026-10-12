@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | infra |
 | Depende de | SPEC-001 (mergeada no PR #3) |
@@ -198,3 +198,4 @@ Mocks: nenhum. Os testes do hook alimentam o stdin com JSON e conferem o código
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | Criação, com o escopo definido no pedido: RV-01 do hook, Postgres de teste sem senha, commits do architect e nota de workspace trust. Decisões do architect: (a) a regra "dois campos" usa presença da chave (§4.1); (b) a porta local publicada só em `127.0.0.1`, por causa do `trust` (§4.2); (c) `reviews/README.md` entrou na exceção de caminhos da §4.5, porque o hook também nega `reviews/**` ao developer; (d) a SPEC-015 não muda (§7). Criada em `Draft`: o architect não muda status para `Ready`. O orquestrador informou que o humano já aprovou o conteúdo ao pedir a SPEC; a passagem para `Ready` fica com o humano (ou com o orquestrador, sob a confirmação dele), conferindo os pontos (b) e (c). | Pendências do PR #3 da SPEC-001 (review r1, CA-23) e alerta de scanner de segredos no repositório público | Humano (Carlos), via orquestrador |
+| 2026-10-12 | `Draft` → `Ready` → `In Dev` (r1). Aprovação humana explícita, com os pontos (b) e (c) e a tag `infra` confirmados. | Início do loop | Humano (Carlos) |
