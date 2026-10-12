@@ -5,8 +5,8 @@
 | SPEC | [SPEC-022](../../docs/specs/SPEC-022-manutencao-setup.md) |
 | Rodada | r1 |
 | Tester | tester |
-| Commit testado | `417107d` (implementação + dev report); testes de aceite em `2a6bdc5` e `f90438c` |
-| **Veredicto** | **FAIL** (só por `SPEC_ISSUE` no CA-06; nenhum bug de implementação) |
+| Commit testado | `417107d` (implementação + dev report); testes de aceite em `2a6bdc5` e `f90438c`; reexecução sobre `820f8bb` (SPEC corrigida em `afa4173`) |
+| **Veredicto** | **PASS** (final, após a reexecução; a primeira emissão foi FAIL só pelo SPEC_ISSUE-01, já resolvido; ver "Reexecução após SPEC_ISSUE-01") |
 
 Os testes foram escritos a partir da SPEC (caixa-preta) antes da leitura do código do hook. O código só foi lido depois, para o CA-18 e para entender a divergência do CA-06.
 
@@ -22,7 +22,7 @@ Arquivo: `tests/acceptance/test_spec_022.py` (marcador `acceptance`), com 39 tes
 | CA-03 | `test_ca03_tool_name_not_a_string` (ausente, `42`, `null`) e `test_ca03_unknown_tool_name` (`Bash`, `write`, `""`) | ✅ 6/6 |
 | CA-04 | `test_ca04_expected_field_missing_or_empty` (os 6 casos da tabela) | ✅ 6/6 |
 | CA-05 | `test_ca05_well_formed_events_allowed` (os 8 casos, inclusive o relativo com `cwd`; o processo do hook roda em `.claude/hooks/`, então só o `cwd` do evento resolve o caminho) | ✅ 8/8 |
-| CA-06 | `test_ca06_role_denial_unchanged` | ⚠️ passa no formato da SPEC-001; **SPEC_ISSUE-01** (ver abaixo) |
+| CA-06 | `test_ca06_role_denial_unchanged` | ✅ (na primeira emissão: SPEC_ISSUE-01, resolvido em `afa4173`) |
 | CA-07 | `test_ca07_hook_imports_only_stdlib` e `test_ca07_spec001_hook_tests_still_pass` (roda `pytest -q tests/acceptance/test_spec_001.py -k "ca11 or … or ca17"` em subprocesso) | ✅ |
 | CA-08 | `test_ca08_ci_postgres_trust_without_password` | ✅ |
 | CA-09 | `test_ca09_env_example` | ✅ |
@@ -113,6 +113,8 @@ Outras observações (fora dos CAs, sem impacto no veredicto):
 
 ## SPEC_ISSUE
 
+**SPEC_ISSUE-01 — RESOLVIDO em `afa4173`** (ver "Reexecução após SPEC_ISSUE-01"). Texto original:
+
 **SPEC_ISSUE-01 (CA-06 contradiz a §4.1/§3.2).** O preâmbulo da §5 define que "'stderr contém X' significa que o stderr contém `guard_paths: blocked: X`". Aplicado ao CA-06, isso exige `guard_paths: blocked: role 'developer' may not write 'ml/notebooks/train.ipynb'`. Só que a §4.1 ("Todo o resto da §4.6 da SPEC-001 permanece: … mensagem `role '<papel>' may not write '<caminho>'` na negação por papel"), a §3.2 (as mensagens de negação por papel ficam fora do escopo) e o próprio CA-06 ("a negação por papel não mudou") mantêm o formato da SPEC-001 §4.6, **sem** `blocked:`: `guard_paths: role '<papel>' may not write '<caminho relativo>' (SPEC-001, R-07)`.
 
 - Obtido: `guard_paths: role 'developer' may not write 'ml/notebooks/train.ipynb' (SPEC-001, R-07)`, código 2.
@@ -120,7 +122,36 @@ Outras observações (fora dos CAs, sem impacto no veredicto):
 - O teste de aceite verifica o formato inalterado da SPEC-001 (código 2 e a linha completa acima) e passa. A divergência fica explicada na docstring do teste. O teste não foi ajustado a um comportamento errado: ele segue o formato que a SPEC manda preservar.
 - Correção sugerida (architect): restringir o preâmbulo da §5 aos CAs com mensagens de `GuardError` (CA-01…CA-04), ou reescrever o CA-06 como "o stderr contém `guard_paths: role 'developer' may not write 'ml/notebooks/train.ipynb'`". Nenhuma mudança de código é necessária. Na r2, basta reexecutar este teste.
 
-Pela regra do papel (CA impossível de testar como está escrito → `SPEC_ISSUE` → FAIL), o veredicto é **FAIL**, apesar de todos os testes passarem.
+Pela regra do papel (CA impossível de testar como está escrito → `SPEC_ISSUE` → FAIL), o veredicto da primeira emissão foi **FAIL**, apesar de todos os testes passarem. Ele foi substituído pelo veredicto da reexecução abaixo.
+
+## Reexecução após SPEC_ISSUE-01
+
+O architect corrigiu a SPEC no commit `afa4173` (`Agent: architect`), e o humano reaprovou a correção (`820f8bb`, `Agent: orchestrator`, `Blocked` → `In Test`, ainda na r1). O preâmbulo da §5 ficou assim: a leitura "stderr contém X" = `guard_paths: blocked: X` vale só para os CA-01 a CA-04; no CA-06, X aparece literalmente, no formato inalterado da SPEC-001 §4.6, sem `blocked:`. Nenhum CA, requisito ou comportamento mudou.
+
+- **Coerência dos testes com o texto atual:**
+  - Reli a §5. Os CA-01 a CA-04 continuam conferindo `guard_paths: blocked: <mensagem>`.
+  - O CA-06 confere o código 2 e o texto literal `role 'developer' may not write 'ml/notebooks/train.ipynb'`, além da linha completa no formato da SPEC-001 §4.6 (`guard_paths: role … (SPEC-001, R-07)`).
+  - As citações `>` da §4.3/§4.4 não mudaram, então `test_texts_match_spec_quotes` segue válido sem ajuste.
+  - A única alteração em `tests/acceptance/test_spec_022.py` foi a docstring do CA-06, que deixou de citar o SPEC_ISSUE como aberto. As asserções não mudaram.
+- **Código:** `git diff --stat 4f9f9ab 820f8bb` mostra só `docs/specs/SPEC-022-manutencao-setup.md`. Nenhum arquivo de produção, CI, README ou `.env.example` mudou, então não refiz o CA-16 com contêiner. O resultado anterior (`1 passed`, nenhum skip, na porta temporária 55436) continua valendo, e a verificação na porta 55432 segue como pendência manual do humano.
+- **Suíte, sem `CI` e sem `TEST_DATABASE_URL`, sobre `820f8bb` + docstring:**
+
+```text
+uv run ruff check .            -> All checks passed!          (rc=0)
+uv run ruff format --check .   -> 24 files already formatted  (rc=0)
+uv run pytest -q -rs           -> 268 passed, 3 skipped in 19.65s (rc=0)
+  SKIPPED tests/acceptance/test_spec_001.py:174  TEST_DATABASE_URL not set   (db)
+  SKIPPED tests/acceptance/test_spec_022.py:574  TEST_DATABASE_URL not set   (CA-16, db)
+  SKIPPED tests/test_db_smoke.py:11              TEST_DATABASE_URL not set   (db)
+uv run pytest -q tests/acceptance/test_spec_022.py -> 38 passed, 1 skipped (CA-16, db)
+```
+
+**Veredicto final da r1: PASS.**
+- Todos os CAs automatizáveis (CA-01 a CA-16) têm teste e passam; o CA-16 passou contra o Postgres em `trust` temporário.
+- A suíte inteira passa e o ruff está limpo.
+- O CA-18 foi conferido.
+- Não há bugs nem SPEC_ISSUE abertos.
+- Pendências manuais: o CA-17, no PR, e o CA-16 na porta 55432, depois que o humano recriar o `partqc-pg`.
 
 ## Pendências manuais
 

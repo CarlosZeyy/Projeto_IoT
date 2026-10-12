@@ -345,10 +345,9 @@ def test_ca05_well_formed_events_allowed(
 
 
 def test_ca06_role_denial_unchanged() -> None:
-    """SPEC_ISSUE (see r1-test-report): the CA preamble defines "stderr contém X" as
-    `guard_paths: blocked: X`, but §4.1 and §3.2 keep the SPEC-001 §4.6 role-denial format
-    `guard_paths: role '<papel>' may not write '<caminho>' (SPEC-001, R-07)` (no "blocked:").
-    This test asserts the unchanged SPEC-001 format, which is what CA-06 says it checks.
+    """CA-06: the role-denial message appears literally, in the unchanged SPEC-001 §4.6 format
+    `guard_paths: role '<papel>' may not write '<caminho>' (SPEC-001, R-07)`, without "blocked:"
+    (§5 preamble as fixed in afa4173, after SPEC_ISSUE-01).
     """
     event = {
         "tool_name": "NotebookEdit",
