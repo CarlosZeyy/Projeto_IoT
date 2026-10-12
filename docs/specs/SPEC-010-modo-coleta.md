@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -133,3 +133,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 | 2026-10-12 | §4.1 exige `re.fullmatch` em `item_id`, `re.fullmatch` em `angle` antes de `int()` e igualdade exata (sem `strip()`) em `object_type`, `grade` e `labeler`, por virarem nome de arquivo ou caminho. O CA-05 ganhou os casos `item_id="S-012\n"`, `angle="2\n"` e `object_type="screw\n"` (422, `DATASET_DIR` intacto). Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` (regra geral em `architecture.md` §3.2) | Humano, via orquestrador |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | §4.1: o campo `image` segue os limites próprios da rota da SPEC-007 §4.7 (3 MiB e 4 M pixels, via `load_capture_image`), dentro do limitador de decodificações. O CA-14 trocou 10 485 761 por 3 145 729 bytes e ganhou o JPEG de 2001×2000 (415) e a verificação de `DATASET_DIR` intacto. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-24-02 de `reviews/SPEC-024/r1-security-report.md` (decisão registrada na SPEC-007) | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

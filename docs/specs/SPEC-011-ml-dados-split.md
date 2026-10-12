@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | ml-engineer |
 | Tags | — |
@@ -175,3 +175,4 @@ Nada é mockado além do sistema de arquivos temporário. O CA-25 usa `pytest.im
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | §4.1: problema novo `too_many_jpeg_scans` (a mensagem do `load_image` contém `JPEG scans`), separado de `unreadable_image`, e linhas de resumo `count <code>: <n>` no `validate`. CA-28 novo. §7: não cortar no `FF D9`, não recontar e não usar `verify_images=False` para contornar. Nenhum CA existente muda (o CA-07 continua imprimindo as 3 linhas de problema; o resumo vem depois delas). SPEC marcada como "Aguardando reaprovação humana". | SEC-24-03 de `reviews/SPEC-024/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -190,3 +190,4 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 | 2026-10-12 | Mudanças: (a) §4.5: `psycopg.DataError` (SQLSTATE `22`) na escrita → `rollback` e 422 `{"detail": "Value cannot be stored"}`, com a precedência atualizada; (b) §4.5: inteiro JSON com mais de 4 300 dígitos → 4xx, nunca 500; (c) §3.1: o tester remove os dois testes que rodam a suíte inteira em subprocesso (CA-15 da SPEC-022 e CA-13 da SPEC-023), conforme a regra nova de `architecture.md` §10; (d) CAs novos: CA-25 (underflow de `float4` → 422), CA-26 (inteiro de 5 000 dígitos → 4xx) e CA-27 (remoção dos meta-testes); (e) §7 com as alternativas não adotadas. Nenhum CA existente mudou. SPEC marcada como "Aguardando reaprovação humana". | SEC-03 e "Notas para a SPEC-004" de `reviews/SPEC-023/r1-security-report.md`; RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | Mudanças: (a) §3.1: o tester faz a migração única das expectativas de versão dos testes de aceite dos pacotes compartilhados (regra nova de `architecture.md` §10), em 5 arquivos, incluindo a correção do RV-02 da SPEC-024 no `test_spec_024.py`; (b) dependência da SPEC-024 (já mergeada), só por essa migração; (c) CA-28 novo; (d) §6 e §7 atualizadas. Nenhum requisito da API muda, e nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | RV-04 (e RV-02) de `reviews/SPEC-024/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

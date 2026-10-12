@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -243,3 +243,4 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-024 (`qc-preprocess` 0.3.0, limite de 64 marcadores de scan no JPEG), com o caso novo no CA-08; (b) §4.6 nova: limitador de decodificações (`BoundedSemaphore`, padrão 2, espera de 10 s, 503 `server busy`), com os parâmetros `max_concurrent_decodes` e `decode_wait_s` em `create_app` e a ordem do §4.5 atualizada; (c) checagem de `LOAD_TRUNCATED_IMAGES` na subida, no `lifespan` e na CLI (código 1); (d) CAs novos: CA-22 e CA-23 (limitador), CA-24 (flag na subida) e CA-25 (nenhum código fora de `tests/` altera a flag); (e) §7 com a regra sobre filtros de `warnings`. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-01, SEC-02, SEC-04 e SEC-05 de `reviews/SPEC-023/r1-security-report.md`, e a nota sobre a janela da flag de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | Mudanças: (a) §4.6: dimensionamento do limitador com o custo medido (~2,5 s e ~360 MB por decodificação só com os limites do `load_image`; ~1,4 s e ~110 MB estimados com os da rota), mantendo os padrões 2 e 10 s; (b) §4.7 nova, adotada pelo architect: limites próprios da rota em `qc_edge/limits.py` (corpo de 3 MiB, `Content-Length` de 3,5 MiB e 4 M pixels checados pelo cabeçalho antes de decodificar), com `load_capture_image`; a §4.5 (passos 1 e 3) passa a usá-la; (c) §4.4: o `capture.js` nunca envia o arquivo original; (d) o CA-07 trocou o limite de 10 MiB pelo de 3 MiB e ganhou os casos do `Content-Length` e da fronteira exata; o CA-08 ganhou o JPEG de 2001×2000; o CA-20 ganhou o passo 6 (tamanho real das fotos); CAs novos: CA-26 e CA-27 (`load_capture_image`); (e) §7: notas sobre a sondagem e sobre a recusa do JPEG aritmético ao subir o Pillow. SPEC marcada como "Aguardando reaprovação humana". | SEC-24-02 de `reviews/SPEC-024/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
