@@ -1,7 +1,5 @@
 # SPEC-010: Modo coleta de dataset
 
-> **Aguardando reaprovação humana** (alteração de 2026-10-12: `re.fullmatch` em `item_id` e validação exata dos campos que viram caminho; ver Histórico).
-
 | Campo | Valor |
 |---|---|
 | Status | Ready |
@@ -133,3 +131,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | §4.1 exige `re.fullmatch` em `item_id`, `re.fullmatch` em `angle` antes de `int()` e igualdade exata (sem `strip()`) em `object_type`, `grade` e `labeler`, por virarem nome de arquivo ou caminho. O CA-05 ganhou os casos `item_id="S-012\n"`, `angle="2\n"` e `object_type="screw\n"` (422, `DATASET_DIR` intacto). Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` (regra geral em `architecture.md` §3.2) | Humano, via orquestrador |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

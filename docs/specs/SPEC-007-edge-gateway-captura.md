@@ -1,7 +1,5 @@
 # SPEC-007: Gateway de borda, página de captura e pareamento
 
-> **Aguardando reaprovação humana** (alteração de 2026-10-12: dependência da SPEC-023, proporção da imagem, `re.fullmatch` e flag de JPEG truncado; ver Histórico).
-
 | Campo | Valor |
 |---|---|
 | Status | Ready |
@@ -177,3 +175,4 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-preprocess` 0.2.0); (b) §4.1 e §4.5, passo 2: `DEVICE_ID` e `lot_id` validados com as constantes de `qc_contracts` e `re.fullmatch` (ou `pattern` do Pydantic); (c) §4.5, passo 3: proporção máxima de 10:1 (415) e `RuntimeError` da flag `LOAD_TRUNCATED_IMAGES` → 500, com nenhum módulo da borda ligando a flag; (d) o CA-01 ganhou `DEVICE_ID="edge-01\n"`; (e) o CA-08 ganhou o PNG 100×1001 e as verificações "0 chamadas ao stub" e "nada salvo", que já decorriam da ordem do §4.5; (f) o CA-09 ganhou `lot_id="L-001\n"`. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 (RV-02), RV-04 e RV-06 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

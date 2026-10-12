@@ -1,7 +1,5 @@
 # SPEC-014: Simulador de lotes
 
-> **Aguardando reaprovação humana** (alteração de 2026-10-12: `re.fullmatch` em `--device-id` e `--model-version`; ver Histórico).
-
 | Campo | Valor |
 |---|---|
 | Status | Ready |
@@ -131,3 +129,4 @@ Os testes importam o script com `importlib.util.spec_from_file_location` (não h
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | §4.1 exige `re.fullmatch` com `DEVICE_ID_PATTERN` e `MODEL_VERSION_PATTERN` de `qc_contracts`. O CA-08 ganhou os casos `"sim-01\n"` e `"sim-v0\n"`. Nenhum outro requisito muda; o `latency_ms` gerado (40 a 180) já respeita o teto do contrato 0.2.0 (SPEC-023). SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

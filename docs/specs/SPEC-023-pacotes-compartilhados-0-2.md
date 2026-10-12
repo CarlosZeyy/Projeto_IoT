@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | contrato, security |
@@ -151,3 +151,4 @@ Sem mocks: o CA-11 só liga uma flag global do Pillow com `monkeypatch` (configu
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | Criação em `Draft`. Decisões do architect: (a) teto de `latency_ms` = 2³¹ − 1, igual ao tipo `integer`, em vez de um teto "realista" (por exemplo, 10 min), para não criar um modo de falha novo na borda; (b) proporção máxima 10:1 no `load_image`, pelo cabeçalho, sem mudar `preprocess`; (c) `load_image` recusa rodar com `LOAD_TRUNCATED_IMAGES` ligada (`RuntimeError`); (d) modo lax mantido como risco aceito; (e) versão minor 0.2.0 nos dois pacotes, sem ADR (§4.1). | SPEC_ISSUE-01, SPEC_ISSUE-02, RV-04, RV-05 e RV-06 de `reviews/SPEC-002/r1-review-report.md` e `r2-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | `Draft` → `Ready`. Aprovação humana com teto 2³¹−1 e tag `security`. | Aprovação humana | Humano (Carlos) |

@@ -1,7 +1,5 @@
 # SPEC-003: Schema Supabase, migrações e RLS
 
-> **Aguardando reaprovação humana** (alteração de 2026-10-12: CA-23 e nota sobre o teto de `latency_ms`; ver Histórico).
-
 | Campo | Valor |
 |---|---|
 | Status | Ready |
@@ -145,3 +143,4 @@ Banco: Postgres 16 local (Docker, SPEC-001) ou o serviço do CI. Sem mocks de ba
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | Acrescentados a nota "Teto de `latency_ms`" em §4.1 e o CA-23 (2 147 483 647 aceito; 2 147 483 648 → SQLSTATE `22003`). O texto do Objetivo agora cita a versão 0.2.0 do contrato. O `check` não muda, nenhum outro CA muda, e a SPEC não passa a depender da SPEC-023, porque o CA-23 usa literais. SPEC marcada como "Aguardando reaprovação humana"; o Status fica com o humano/orquestrador. | SPEC_ISSUE-02 (RV-03) de `reviews/SPEC-002/r1-review-report.md`: lacuna entre o contrato (`latency_ms` sem teto) e a coluna `integer`; resolvida no contrato pela SPEC-023 | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

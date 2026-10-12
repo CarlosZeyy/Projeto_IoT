@@ -1,7 +1,5 @@
 # SPEC-004: API de ingestão e autenticação de dispositivos
 
-> **Aguardando reaprovação humana** (alteração de 2026-10-12: dependência da SPEC-023, teto de `latency_ms`, `re.fullmatch` e `contract_version`; ver Histórico).
-
 | Campo | Valor |
 |---|---|
 | Status | Ready |
@@ -156,3 +154,4 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-contracts` 0.2.0); (b) nota em §4.5 sobre o teto de `latency_ms` (422, nunca 500); (c) §4.6 exige `re.fullmatch` para `--device-id`; (d) o CA-01 compara `contract_version` com `qc_contracts.__version__`; (e) o CA-08 ganhou o caso `latency_ms=2147483648`; (f) o CA-23 ganhou o caso `"edge-01\n"`; (g) CA-24 novo, com os limites de `latency_ms` na rota única e no lote. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-02 (RV-03) e RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
