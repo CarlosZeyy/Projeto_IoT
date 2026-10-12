@@ -533,7 +533,7 @@ SECRET_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
 
 def test_ca20_env_example() -> None:
     lines = (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
-    assert "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/partqc_test" in lines
+    assert "TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test" in lines
 
     values: dict[str, str] = {}
     for line in lines:
