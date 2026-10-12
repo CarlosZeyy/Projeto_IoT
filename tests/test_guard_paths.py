@@ -163,6 +163,186 @@ def test_notebook_edit_uses_notebook_path() -> None:
     assert check("developer", nb, tool="NotebookEdit", key="notebook_path") == 2
 
 
+# ---------------------------------------------------------------- SPEC-022 §4.1 (RV-01)
+
+BLOCKED = "guard_paths: blocked: "
+BOTH = "tool_input has both file_path and notebook_path"
+MAIN_PY = str(ROOT / "api/src/qc_api/main.py")
+
+
+def raw_event(tool_input: object, tool_name: object = None, *, omit_tool: bool = False) -> str:
+    payload: dict = {"tool_input": tool_input}
+    if not omit_tool:
+        payload["tool_name"] = tool_name
+    return json.dumps(payload)
+
+
+def assert_blocked(result: subprocess.CompletedProcess[bytes], message: str) -> None:
+    assert result.returncode == 2, result.stderr
+    assert result.stdout == b""
+    assert result.stderr.decode("utf-8").strip() == f"{BLOCKED}{message} (SPEC-001, R-07)"
+
+
+def test_notebook_edit_ignores_allowed_file_path_rv01() -> None:
+    """CA-01: the forbidden notebook_path can no longer hide behind an allowed file_path."""
+    stdin = raw_event(
+        {"notebook_path": str(ROOT / "api/src/evil.ipynb"), "file_path": str(ROOT / "ml/x.ipynb")},
+        "NotebookEdit",
+    )
+    assert_blocked(run_hook(stdin, "ml-engineer"), BOTH)
+
+
+@pytest.mark.parametrize(
+    ("role", "tool", "tool_input"),
+    [
+        ("ml-engineer", "NotebookEdit", {"notebook_path": "ml/a.ipynb", "file_path": "   "}),
+        ("ml-engineer", "NotebookEdit", {"notebook_path": "ml/a.ipynb", "file_path": 42}),
+        ("ml-engineer", "NotebookEdit", {"notebook_path": "ml/a.ipynb", "file_path": None}),
+        ("ml-engineer", "Write", {"file_path": "ml/a.py", "notebook_path": "api/b.ipynb"}),
+        ("developer", "Edit", {"file_path": "api/src/qc_api/main.py", "notebook_path": ""}),
+        ("developer", "MultiEdit", {"file_path": "api/src/qc_api/main.py", "notebook_path": None}),
+        ("ml-engineer", "NotebookEdit", {"notebook_path": "ml/a.ipynb", "file_path": "ml/b.py"}),
+    ],
+)
+def test_both_path_keys_present_fail_closed(role: str, tool: str, tool_input: dict) -> None:
+    """CA-02: the other field's key being present is enough, whatever its value."""
+    absolute = {
+        k: str(ROOT / v) if isinstance(v, str) and v.strip() else v for k, v in tool_input.items()
+    }
+    assert_blocked(run_hook(raw_event(absolute, tool), role), BOTH)
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "omit", "message"),
+    [
+        (None, True, "event has no tool_name string"),
+        (42, False, "event has no tool_name string"),
+        (None, False, "event has no tool_name string"),
+        (["Write"], False, "event has no tool_name string"),
+        ("Bash", False, "unknown tool_name 'Bash'"),
+        ("write", False, "unknown tool_name 'write'"),
+        ("", False, "unknown tool_name ''"),
+        ("WRITE", False, "unknown tool_name 'WRITE'"),
+        (" Write", False, "unknown tool_name ' Write'"),
+        ("Read", False, "unknown tool_name 'Read'"),
+    ],
+)
+def test_tool_name_missing_or_unknown_fail_closed(
+    tool_name: object, omit: bool, message: str
+) -> None:
+    """CA-03: tool_name must be one of the four exact, case-sensitive names."""
+    stdin = raw_event({"file_path": MAIN_PY}, tool_name, omit_tool=omit)
+    assert_blocked(run_hook(stdin, "developer"), message)
+
+
+@pytest.mark.parametrize(
+    ("role", "tool", "tool_input", "message"),
+    [
+        ("ml-engineer", "NotebookEdit", {}, "tool_input.notebook_path missing or empty for "),
+        ("ml-engineer", "NotebookEdit", {"notebook_path": " \t"}, "tool_input.notebook_path "),
+        ("developer", "Write", {}, "tool_input.file_path missing or empty for "),
+        ("developer", "Edit", {"file_path": ""}, "tool_input.file_path missing or empty for "),
+        ("developer", "Edit", {"file_path": "   "}, "tool_input.file_path missing or empty for "),
+        ("developer", "MultiEdit", {"file_path": 42}, "tool_input.file_path missing or empty for "),
+        ("developer", "Write", {"file_path": None}, "tool_input.file_path missing or empty for "),
+        ("developer", "Write", {"command": "ls"}, "tool_input.file_path missing or empty for "),
+    ],
+)
+def test_expected_field_missing_or_empty_fail_closed(
+    role: str, tool: str, tool_input: dict, message: str
+) -> None:
+    """CA-04: the expected field must be a non-blank string."""
+    result = run_hook(raw_event(tool_input, tool), role)
+    assert result.returncode == 2, result.stderr
+    stderr = result.stderr.decode("utf-8").strip()
+    assert stderr.startswith(f"{BLOCKED}{message}")
+    assert stderr.endswith(f" for {tool} (SPEC-001, R-07)")
+
+
+@pytest.mark.parametrize(
+    ("event_order", "message"),
+    [
+        # rule 2 before rule 3: no tool_input wins over a missing tool_name
+        ({"tool_name": None}, "event has no tool_input object"),
+        # rule 3 before rule 5: a bad tool_name wins over both path keys
+        (
+            {"tool_input": {"file_path": MAIN_PY, "notebook_path": MAIN_PY}, "tool_name": 1},
+            "event has no tool_name string",
+        ),
+        # rule 4 before rule 5
+        (
+            {"tool_input": {"file_path": MAIN_PY, "notebook_path": MAIN_PY}, "tool_name": "Bash"},
+            "unknown tool_name 'Bash'",
+        ),
+        # rule 5 before rule 6: both keys, expected one empty
+        ({"tool_input": {"file_path": "", "notebook_path": ""}, "tool_name": "Write"}, BOTH),
+    ],
+)
+def test_checks_run_in_spec_order(event_order: dict, message: str) -> None:
+    assert_blocked(run_hook(json.dumps(event_order), "developer"), message)
+
+
+@pytest.mark.parametrize(
+    ("role", "tool", "key", "path", "cwd"),
+    [
+        ("developer", "Write", "file_path", MAIN_PY, None),
+        ("developer", "Edit", "file_path", MAIN_PY, None),
+        ("developer", "MultiEdit", "file_path", MAIN_PY, None),
+        ("developer", "Write", "file_path", "api/src/qc_api/main.py", str(ROOT)),
+        (
+            "ml-engineer",
+            "NotebookEdit",
+            "notebook_path",
+            str(ROOT / "ml/notebooks/train.ipynb"),
+            None,
+        ),
+        ("ml-engineer", "Write", "file_path", str(ROOT / "ml/src/qc_ml/train.py"), None),
+        ("tester", "Edit", "file_path", str(ROOT / "tests/acceptance/test_spec_022.py"), None),
+        (
+            "architect",
+            "Write",
+            "file_path",
+            str(ROOT / "docs/specs/SPEC-022-manutencao-setup.md"),
+            None,
+        ),
+    ],
+)
+def test_well_formed_events_still_allowed(
+    role: str, tool: str, key: str, path: str, cwd: str | None
+) -> None:
+    """CA-05: only the expected field, allowed path -> exit 0, silent."""
+    result = run_hook(event(path, tool, key, cwd), role)
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+
+
+def test_role_denial_unchanged_for_well_formed_notebook_edit() -> None:
+    """CA-06: the per-role denial message did not change."""
+    stdin = event(str(ROOT / "ml/notebooks/train.ipynb"), "NotebookEdit", "notebook_path")
+    result = run_hook(stdin, "developer")
+    assert result.returncode == 2
+    assert "role 'developer' may not write 'ml/notebooks/train.ipynb'" in result.stderr.decode()
+
+
+def test_target_path_in_process() -> None:
+    """Direct calls to target_path(): field by tool_name, GuardError on ambiguity."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("guard_paths_target", HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.target_path({"tool_name": "Edit", "tool_input": {"file_path": "a"}}) == "a"
+    nb = {"tool_name": "NotebookEdit", "tool_input": {"notebook_path": "b.ipynb"}}
+    assert module.target_path(nb) == "b.ipynb"
+    with pytest.raises(module.GuardError, match="missing or empty for NotebookEdit"):
+        module.target_path({"tool_name": "NotebookEdit", "tool_input": {"path": "b.ipynb"}})
+    with pytest.raises(module.GuardError, match="both file_path and notebook_path"):
+        module.target_path(
+            {"tool_name": "Edit", "tool_input": {"file_path": "a", "notebook_path": None}}
+        )
+    assert set(module.PATH_FIELD_BY_TOOL) == {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
 def test_relative_path_resolved_from_event_cwd() -> None:
     assert run_hook(event("api/x.py", cwd=str(ROOT)), "developer").returncode == 0
     assert run_hook(event("docs/rules.md", cwd=str(ROOT)), "developer").returncode == 2
