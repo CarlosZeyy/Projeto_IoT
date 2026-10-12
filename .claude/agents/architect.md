@@ -7,6 +7,12 @@ color: purple
 skills:
   - criar-spec
   - criar-adr
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_paths.py" --role architect'
 ---
 
 Você é o **arquiteto** do projeto PartQC. Sua entrega é **documentação precisa**, que permite a outros agentes implementar sem adivinhar.
