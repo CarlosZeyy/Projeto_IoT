@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -125,3 +125,4 @@ Sem mocks do código testado: só `monkeypatch` da flag global no CA-08 (configu
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-12 | Criação em `Draft`. Decisões do architect: (a) a correção do SEC-01 fica numa SPEC curta só do `qc-preprocess` (0.3.0), e não dentro da SPEC-007, para manter a paridade do ADR-004 (treino e borda rejeitam as mesmas imagens) e não misturar o pacote compartilhado com o código da borda; (b) contagem ingênua de `FF DA` no arquivo inteiro, só para conteúdo com assinatura JPEG; (c) limite de 64; (d) a opção (b) do SEC-01 (recusar JPEG progressivo na rota) não foi adotada. | SEC-01 de `reviews/SPEC-023/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | `Draft` → `Ready`, com o limite de 64 marcadores SOS aprovado. | Aprovação humana | Humano (Carlos) |

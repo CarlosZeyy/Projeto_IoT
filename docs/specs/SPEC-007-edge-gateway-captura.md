@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -199,3 +199,4 @@ Sem rede real nos testes. Mock só de fronteiras: socket, relógio e o inferenci
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-preprocess` 0.2.0); (b) §4.1 e §4.5, passo 2: `DEVICE_ID` e `lot_id` validados com as constantes de `qc_contracts` e `re.fullmatch` (ou `pattern` do Pydantic); (c) §4.5, passo 3: proporção máxima de 10:1 (415) e `RuntimeError` da flag `LOAD_TRUNCATED_IMAGES` → 500, com nenhum módulo da borda ligando a flag; (d) o CA-01 ganhou `DEVICE_ID="edge-01\n"`; (e) o CA-08 ganhou o PNG 100×1001 e as verificações "0 chamadas ao stub" e "nada salvo", que já decorriam da ordem do §4.5; (f) o CA-09 ganhou `lot_id="L-001\n"`. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 (RV-02), RV-04 e RV-06 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-024 (`qc-preprocess` 0.3.0, limite de 64 marcadores de scan no JPEG), com o caso novo no CA-08; (b) §4.6 nova: limitador de decodificações (`BoundedSemaphore`, padrão 2, espera de 10 s, 503 `server busy`), com os parâmetros `max_concurrent_decodes` e `decode_wait_s` em `create_app` e a ordem do §4.5 atualizada; (c) checagem de `LOAD_TRUNCATED_IMAGES` na subida, no `lifespan` e na CLI (código 1); (d) CAs novos: CA-22 e CA-23 (limitador), CA-24 (flag na subida) e CA-25 (nenhum código fora de `tests/` altera a flag); (e) §7 com a regra sobre filtros de `warnings`. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-01, SEC-02, SEC-04 e SEC-05 de `reviews/SPEC-023/r1-security-report.md`, e a nota sobre a janela da flag de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

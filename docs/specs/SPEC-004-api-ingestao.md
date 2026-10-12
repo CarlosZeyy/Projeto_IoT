@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -169,3 +169,4 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-contracts` 0.2.0); (b) nota em §4.5 sobre o teto de `latency_ms` (422, nunca 500); (c) §4.6 exige `re.fullmatch` para `--device-id`; (d) o CA-01 compara `contract_version` com `qc_contracts.__version__`; (e) o CA-08 ganhou o caso `latency_ms=2147483648`; (f) o CA-23 ganhou o caso `"edge-01\n"`; (g) CA-24 novo, com os limites de `latency_ms` na rota única e no lote. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-02 (RV-03) e RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | Mudanças: (a) §4.5: `psycopg.DataError` (SQLSTATE `22`) na escrita → `rollback` e 422 `{"detail": "Value cannot be stored"}`, com a precedência atualizada; (b) §4.5: inteiro JSON com mais de 4 300 dígitos → 4xx, nunca 500; (c) §3.1: o tester remove os dois testes que rodam a suíte inteira em subprocesso (CA-15 da SPEC-022 e CA-13 da SPEC-023), conforme a regra nova de `architecture.md` §10; (d) CAs novos: CA-25 (underflow de `float4` → 422), CA-26 (inteiro de 5 000 dígitos → 4xx) e CA-27 (remoção dos meta-testes); (e) §7 com as alternativas não adotadas. Nenhum CA existente mudou. SPEC marcada como "Aguardando reaprovação humana". | SEC-03 e "Notas para a SPEC-004" de `reviews/SPEC-023/r1-security-report.md`; RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

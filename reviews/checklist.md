@@ -36,6 +36,8 @@ Marque cada item como ✅ ok, ❌ achado (com severidade) ou N/A no `review-repo
 - [ ] Os testes falhariam se a funcionalidade quebrasse (não são tautológicos e não fazem mock do que está sendo testado).
 - [ ] Sem dependência de rede externa nos testes (usar `httpx.MockTransport`, um banco de teste ou fixtures).
 - [ ] Cobertura mínima nos módulos exigidos pela RNF-09.
+- [ ] Nenhum teste roda a suíte inteira em subprocesso (`docs/architecture.md` §10). Testes que chamam o pytest em subprocesso passam caminhos explícitos e não usam o `migrated_db` da sessão.
+- [ ] Nenhuma credencial fictícia aparece como literal em URL ou conninfo (`postgresql://u:senha@…`, `password=…`): o scanner de segredos do repositório público a marca como vazamento. Monte o valor em tempo de execução.
 
 ## 5. Qualidade
 
