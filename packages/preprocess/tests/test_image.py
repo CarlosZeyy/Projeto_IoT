@@ -149,3 +149,30 @@ def test_pixel_limit_is_inclusive() -> None:
     # Exactly MAX_PIXELS passes the header check (it then fails only because there is no data).
     with pytest.raises(InvalidImageError, match="cannot decode"):
         load_image(png_header_only(MAX_PIXELS // 8000, 8000))
+
+
+# --- MemoryError is not an invalid image (r1 review RV-07) -------------------------------------
+
+
+@pytest.mark.parametrize("target", ["exif_transpose", "convert"])
+def test_memory_error_during_normalization_propagates(
+    monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    def out_of_memory(*_args: object, **_kwargs: object) -> Image.Image:
+        raise MemoryError
+
+    if target == "exif_transpose":
+        monkeypatch.setattr("qc_preprocess.image.ImageOps.exif_transpose", out_of_memory)
+    else:
+        monkeypatch.setattr(Image.Image, "convert", out_of_memory)
+    with pytest.raises(MemoryError):
+        load_image(encode(pattern_image(), "PNG"))
+
+
+def test_other_normalization_failure_is_invalid_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_exif(*_args: object, **_kwargs: object) -> Image.Image:
+        raise KeyError("bad EXIF")
+
+    monkeypatch.setattr("qc_preprocess.image.ImageOps.exif_transpose", broken_exif)
+    with pytest.raises(InvalidImageError):
+        load_image(encode(pattern_image(), "PNG"))

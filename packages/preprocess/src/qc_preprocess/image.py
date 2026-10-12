@@ -21,6 +21,7 @@ def load_image(data: bytes | Path) -> Image.Image:
         FileNotFoundError: ``data`` is a ``Path`` that does not exist.
         InvalidImageError: empty data, not an image, a format other than JPEG/PNG, a truncated
             file, more than ``MAX_PIXELS`` pixels, or a decompression bomb.
+        MemoryError: propagated as is; running out of memory is not an image defect.
     """
     if isinstance(data, Path):
         if not data.is_file():
@@ -58,5 +59,7 @@ def load_image(data: bytes | Path) -> Image.Image:
     try:
         img = ImageOps.exif_transpose(img)
         return img.convert("RGB")
+    except MemoryError:
+        raise  # a server-side failure, not a property of the image
     except Exception as exc:  # malformed EXIF or unsupported mode conversion
         raise InvalidImageError(f"cannot normalize image: {exc}") from exc
