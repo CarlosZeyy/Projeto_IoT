@@ -121,6 +121,16 @@ Uma linha por imagem. As correções de rótulo **não** reescrevem a linha orig
 - `DATASET_DIR` (padrão `ml/data/`) **não** vai para o Git.
 - Backup no Google Drive pessoal de um dos membros, compactado por data, que também é a forma de levar os dados ao Colab.
 - Nunca suba imagens para a nuvem do projeto (R-02).
+- No notebook, o modo coleta cria os diretórios de `DATASET_DIR` com `0700` e os arquivos com `0600` (SPEC-010).
+
+## 9. Fotos de inspeção (`EDGE_DATA_DIR/captures/`)
+
+As fotos do modo inspeção são outra coisa: servem para conferir uma inspeção depois, e não para treinar.
+
+- **Não fazem parte do dataset.** Não têm rótulo humano nem `item_id`. Nunca são copiadas para `DATASET_DIR` nem para o backup do Drive (§8). O dataset só cresce pelo modo coleta (§3).
+- **Ficam só no notebook da borda** (R-02), com diretórios `0700` e arquivos `0600` (SPEC-025). O nome do arquivo é o `inspection_id`, o que permite achar a foto de uma inspeção mostrada no dashboard.
+- **Pessoa no quadro (R-14):** uma foto com pessoa identificável é apagada assim que for notada (`rm <EDGE_DATA_DIR>/captures/<AAAA-MM-DD>/<inspection_id>.jpg`). O registro na nuvem não muda, porque não contém imagem.
+- **Retenção:** as fotos ficam guardadas até a entrega do projeto (04/12/2026). Depois da apresentação, a dupla apaga a pasta inteira (`rm -rf <EDGE_DATA_DIR>/captures`). Entre as sessões, a pasta pode ser limpa a qualquer momento: nada na borda nem na nuvem depende dela.
 
 ## Histórico de alterações
 
@@ -129,3 +139,4 @@ Uma linha por imagem. As correções de rótulo **não** reescrevem a linha orig
 | 2026-10-12 | Rubrica v0 | Versão inicial |
 | 2026-10-12 | Uso das peças existentes; pregos como `other` | A dupla já tem peças novas e enferrujadas, pregos e ferramentas |
 | 2026-10-12 | §3: desligar a "foto com movimento" e recursos parecidos na câmera | O vídeo anexado ao JPEG faz o `load_image` recusar a foto pelo limite de marcadores de scan (SEC-24-03 de `reviews/SPEC-024/r1-security-report.md`) |
+| 2026-10-13 | §8: permissões do `DATASET_DIR`; §9 nova: fotos de inspeção fora do dataset, permissões, remoção de foto com pessoa e retenção até a entrega (04/12/2026) | SEC-06 de `reviews/SPEC-007/r1-security-report.md` (R-14) |

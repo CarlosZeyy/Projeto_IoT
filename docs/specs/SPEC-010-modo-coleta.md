@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
+| Status | Ready — **Aguardando reaprovação humana** |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -67,6 +67,11 @@ Campos que viram nome de arquivo ou caminho (`item_id`, `object_type`, `grade`, 
    - `image_path`: o caminho relativo acima, com `/`; `grade`: vazio para `other`; `captured_at`: `ts` em `%Y-%m-%dT%H:%M:%SZ` (mesmo instante do nome do arquivo); `capture_device`: os 60 primeiros caracteres do header `User-Agent` (vazio se ausente).
 3. Resposta 200: `{"mode": "collect", "image_path": "...", "item_id": "...", "angle": n, "item_images": <linhas do manifest com esse item_id>}`.
 4. Não chama `Inferencer` nem `InspectionSink`; funciona com `inferencer=None`.
+5. **Permissões (SEC-06 de `reviews/SPEC-007/r1-security-report.md`, R-14):** tudo o que o modo coleta **cria** sob `DATASET_DIR` fica legível só pelo dono, com modo exato, seja qual for o `umask` (`chmod`/`fchmod` explícito depois de criar):
+   - diretórios (`DATASET_DIR`, quando é a borda que o cria, `raw/` e os subdiretórios de tipo e grau): `0700`;
+   - imagens (o arquivo temporário já nasce com `0600`, e o `rename` preserva o modo), `manifest.csv` e `manifest.csv.lock`: `0600`.
+
+   `DATASET_DIR` e arquivos que já existiam antes não são alterados. Um `OSError` ao aplicar o modo gera um `WARNING` com o caminho e a coleta segue. As fotos de inspeção (`captures/`) são da SPEC-025.
 
 ### 4.3 Página de captura
 
@@ -103,6 +108,7 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 - **CA-15** — *Dado* um manifest com 130 linhas de `screw/perfect` em 9 itens, 40 de `nut/poor` em 3 itens e 10 de `other` em 10 itens, *quando* chamo `compute_coverage`, *então* as células têm `(130, 9)`, `(40, 3)` e `(10, 10)` com metas `(120, 12)`, `(120, 12)` e `(150, 30)`, e as outras 8 células de grau são `(0, 0)`; e o console (loopback) contém `<table id="coverage">` com "130/120".
 - **CA-16** — *Dado* `GET /capture?t=<válido>`, *então* o HTML contém os campos `item_id`, `object_type`, `grade`, `labeler`, `angle` e `notes`, e o seletor de modo com "coleta" habilitado.
 - **CA-17 (manual)** — 1. ligar `qc-edge` sem modelo; 2. no celular, ativar "coleta", preencher `S-001`, parafuso, perfeito, `a`, ângulo 0; 3. tirar 5 fotos: o ângulo avança 0→4 e aparece "Peça completa"; 4. recarregar a página: os campos continuam preenchidos; 5. trocar para "outro": o grau fica desabilitado; 6. conferir no notebook 5 arquivos em `raw/screw/perfect/` e 5 linhas no manifest, e a tabela de cobertura com `5/120` e `1/12`.
+- **CA-18 (security, SEC-06, R-14)** — *Dado* `os.umask(0o022)` (e, numa segunda execução, `os.umask(0o077)`), com o umask original restaurado no fim, e `DATASET_DIR` inexistente, *quando* uma coleta válida com JPEG (`S-012`, `screw`, `fair`) e outra com PNG (`O-004`, `other`) são feitas, *então* `stat.S_IMODE` dá `0o700` para `DATASET_DIR`, `raw/`, `raw/screw/`, `raw/screw/fair/`, `raw/other/` e `raw/other/_/`, e `0o600` para as 2 imagens, para `manifest.csv` e, se existir, para `manifest.csv.lock`.
 
 ## 6. Plano de testes
 
@@ -117,6 +123,9 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 - `fcntl.flock` é só POSIX; serve para o Arch Linux da equipe (RNF-08). O lock em thread cobre o caso de um único processo.
 - Ler o manifest inteiro a cada coleta é aceitável (≤ ~2 000 linhas); se pesar, mantenha um índice `item_id → object_type` em memória, recarregado quando o `mtime` mudar.
 - O manifest é consumido pelo pipeline (pandas), não por planilha; não altere o conteúdo de `notes` além do quoting CSV.
+- **Limitador:** o modo coleta usa o limitador único da borda (SPEC-007 §4.6). Se a SPEC-025 já estiver `Done`, a espera pelo slot acontece no event loop e os passos bloqueantes rodam numa única chamada `anyio.to_thread.run_sync` (SPEC-025 §4.2); siga essa forma também na gravação da coleta. Se a SPEC-025 vier depois, ela converte os dois modos.
+- **Console nos testes:** se a SPEC-025 já estiver `Done`, o CA-15 chama o console com a URL base `http://127.0.0.1:<EDGE_PORT>` (`Host` de loopback, SPEC-025 §4.1).
+- **`umask`:** o `mode` de `mkdir` e de `os.open` passa pelo `umask`; só o `chmod`/`fchmod` explícito torna o modo exato (§4.2, item 5). O teste do CA-18 restaura o `umask` num `finally`.
 
 ## 8. Definição de pronto
 
@@ -134,3 +143,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | §4.1: o campo `image` segue os limites próprios da rota da SPEC-007 §4.7 (3 MiB e 4 M pixels, via `load_capture_image`), dentro do limitador de decodificações. O CA-14 trocou 10 485 761 por 3 145 729 bytes e ganhou o JPEG de 2001×2000 (415) e a verificação de `DATASET_DIR` intacto. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-24-02 de `reviews/SPEC-024/r1-security-report.md` (decisão registrada na SPEC-007) | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-13 | Mudanças: (a) §4.2, item 5 novo: diretórios criados pelo modo coleta com `0700` e imagens, `manifest.csv` e `manifest.csv.lock` com `0600`, exatos, seja qual for o `umask`; (b) CA-18 novo; (c) §7: notas sobre o limitador e o console depois da SPEC-025 e sobre o `umask`. Nenhum CA existente muda. A espera do limitador fora do threadpool (SEC-03) e as permissões de `captures/` ficaram na SPEC-025, que mexe no código da SPEC-007 que esta reutiliza; a retenção das fotos de inspeção está em `docs/dataset-protocol.md` §9. SPEC marcada como "Aguardando reaprovação humana". | SEC-06 de `reviews/SPEC-007/r1-security-report.md` (parte de `DATASET_DIR`) | Orquestrador, a pedido do humano |

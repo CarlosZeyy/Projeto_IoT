@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
+| Status | Ready — **Aguardando reaprovação humana** |
 | Rodada atual | — |
 | Autor da implementação | security-devops |
 | Tags | deploy, security |
@@ -22,6 +22,12 @@ Esta SPEC também fecha as pendências de produção do executor de migrações,
 - **SEC-03:** as mensagens de erro do executor trazem o `DETAIL` e o `LINE` do servidor.
 - **SEC-04:** o `search_path` não é fixado pelo executor.
 - **RV-02, RV-03 e RV-04:** ajustes pequenos no mesmo arquivo (§4.7).
+
+E fecha três pendências de operação deixadas pela SPEC-004 (`reviews/SPEC-004/r2-security-report.md`), todas na documentação de deploy (§4.6 e §4.8):
+
+- **SEC-04-02:** toda requisição anônima com chave não vazia de até 256 caracteres, e todo `GET /health`, ocupa uma conexão do pool (máximo de 5, espera de 5 s). Uma rajada anônima pode esgotar o pool, e os dispositivos recebem 503 enquanto ela durar. A API não tem limitação de taxa.
+- **SEC-04-03:** `register_device.py --database-url URL` deixa a senha no `argv` (visível em `ps` e em `/proc/<pid>/cmdline`) e no histórico do shell.
+- **SEC-04-05:** com o banco fora do ar, o logger `psycopg.pool` registra em `WARNING` o host, a porta e, numa falha de autenticação, o usuário do pooler, sem a senha.
 
 ## 2. Objetivo
 
@@ -94,7 +100,7 @@ Código 0 se todas passarem; 1 se alguma falhar. Nenhuma chave é impressa.
 
 1. Supabase: usar o projeto já existente (conta pessoal, sem cartão); seguir o CA-19 (conferir o `search_path` e aplicar as migrações pelo pooler em **modo session**, nunca pela 6543); rodar as consultas do CA-14 (RLS e grants); copiar a connection string do pooler em **modo transaction** (6543) para a `DATABASE_URL` da API.
 2. Render: "New → Blueprint" com `infra/render.yaml`; definir `DATABASE_URL` e `READ_API_KEY` (gerada com `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
-3. Dispositivos: `register_device.py` para `edge-01` e `sim-01`; chaves nos `.env` locais.
+3. Dispositivos: `register_device.py` para `edge-01` e `sim-01`, com a URL lida do arquivo `.env.migrate` (pooler em modo session, já criado no passo 1): `uv run --env-file .env.migrate --package qc-api python scripts/register_device.py --device-id edge-01` (e o mesmo para `sim-01`). **Nunca** passar a URL de produção por `--database-url`, que a deixaria no `argv` e no histórico do shell (SEC-04-03). Chaves nos `.env` locais.
 4. Streamlit CC: app do repositório público, branch `main`, entrypoint `dashboard/app.py`, Python 3.12, Secrets `API_BASE_URL` e `READ_API_KEY`.
 5. GitHub: secret `KEEPALIVE_URL` = URL base da API; disparar o workflow manualmente.
 6. Rodar `scripts/smoke_test.py` e `scripts/simulate.py --lots 3` contra produção.
@@ -114,6 +120,15 @@ Mudanças mínimas, todas compatíveis com os CAs da SPEC-003 (os testes de acei
 6. **Mensagens de erro (SEC-03):** não mudam. Como as migrações de produção só rodam na máquina do humano (§7), o `DETAIL` e o `LINE` do servidor não chegam a nenhum log público.
 
 O `search_path` (SEC-04) não é fixado pelo executor: o humano o confere antes de migrar (CA-19).
+
+### 4.8 Riscos aceitos no `docs/deployment-plan.md` (pendências da SPEC-004)
+
+O autor acrescenta ao `docs/deployment-plan.md` uma seção `## 7. Riscos aceitos` com, no mínimo, estas duas linhas, cada uma com a fonte e a data de verificação:
+
+1. **Rajada anônima ocupando o pool (SEC-04-02).** Efeito: enquanto ela dura, os dispositivos recebem 503; não há perda de dados, porque o outbox da borda reenvia com backoff (SPEC-009). Mitigação no provedor: o Render aplica proteção contra DDoS automática (Cloudflare) em todo serviço web, sem configuração, mas não documenta limitação de taxa configurável pelo cliente; a limitação de taxa na aplicação é responsabilidade de quem publica (<https://render.com/docs/ddos-protection> e <https://render.com/articles/how-render-handles-ddos-attacks>, consultadas pelo architect em 2026-10-13; o autor confere de novo e atualiza a data). Decisão: **risco aceito** no MVP (projeto acadêmico, URL da API não divulgada). Uma limitação de taxa dentro da API só entra por SPEC nova, se o humano pedir.
+2. **Log do `psycopg.pool` no Render (SEC-04-05).** Com o banco fora do ar, o log do serviço mostra o host, a porta e, numa falha de autenticação, o usuário do pooler do Supabase. Não são segredos (R-03 continua cumprida, e a senha não aparece). No portão `deploy`, esse log não conta como vazamento. É a exceção prevista na regra "Erros de banco no log" de `docs/architecture.md` §4.
+
+E toda menção a `register_device.py` no `deployment-plan.md` (hoje, a §3 "Chaves de dispositivo" e o passo 3 da §4) segue o passo 3 da §4.6 desta SPEC: o comando completo com `--env-file .env.migrate`, nunca `--database-url` com a URL de produção.
 
 ## 5. Critérios de aceite
 
@@ -141,13 +156,16 @@ O `search_path` (SEC-04) não é fixado pelo executor: o humano o confere antes 
 - **CA-22 (RV-02)** — *Dado* um diretório temporário com a cópia de `001_init.sql` e `002_tx.sql` contendo `create table t_tx(id int); commit;`, *quando* `apply_migrations` roda num schema vazio, *então* levanta `MigrationError` cuja mensagem contém `ended the transaction` e `002`, e `schema_migrations` contém só `001`; e o mesmo vale para um `002_tx.sql` com `create table t_tx2(id int); commit; begin;`.
 - **CA-23 (RV-03)** — *Dado* um diretório temporário com a cópia de `001_init.sql` e um arquivo `١٢٣_x.sql` (dígitos arábico-índicos), *quando* `apply_migrations` roda, *então* levanta `MigrationError` de nome de arquivo inválido antes de aplicar qualquer migração (`schema_migrations` não existe ou está vazia).
 - **CA-24 (RV-04)** — *Dado* um diretório temporário com a cópia de `001_init.sql` e um espião em `pathlib.Path.read_bytes` que conta as chamadas por caminho, *quando* `apply_migrations` roda num schema vazio, *então* `001_init.sql` é lido exatamente 1 vez, e o `checksum` gravado em `schema_migrations` é o SHA-256 dos bytes devolvidos nessa leitura.
+- **CA-25 (SEC-04-02, SEC-04-03, SEC-04-05)** — *Dado* o texto de `docs/deployment-plan.md`, *então*:
+  - há uma seção de nível 2 cujo título contém `Riscos aceitos`; no trecho dela até o próximo título de nível 2, uma linha contém `pool` e `503`, outra contém `psycopg.pool`, e o trecho contém `render.com/docs/ddos-protection`;
+  - toda linha que contém `register_device.py` contém também `--env-file` e não contém `--database-url`.
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
 | Unitário (autor) | YAML/TOML, requirements, busca de segredos, smoke com `MockTransport`; ajustes do executor (§4.7) | `infra/tests/` |
-| Aceite (tester) | CA-01…CA-12 e CA-20…CA-24 (CA-21 a CA-24 marcados `db`) | `infra/tests/acceptance/test_spec_015.py` |
+| Aceite (tester) | CA-01…CA-12 e CA-20…CA-25 (CA-21 a CA-24 marcados `db`) | `infra/tests/acceptance/test_spec_015.py` |
 | Manual (dupla + autor) | CA-13…CA-19 | produção; resultado no dev-report e no `deployment-plan.md` |
 
 Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é importado por `importlib.util.spec_from_file_location`. Os testes do executor usam o Postgres de teste da SPEC-003 (fixtures de `conftest.py`, com banco temporário próprio quando precisam de schema vazio), sem mock de banco.
@@ -178,3 +196,4 @@ Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é i
 |---|---|---|---|
 | 2026-10-12 | Mudanças: (a) §1 com as pendências de produção da SPEC-003; (b) §3.1 inclui `infra/migrate.py` (só a §4.7) e corrige a nota de `testpaths`; §3.2 registra o papel só de DML como não adotado e proíbe migrações no Actions; (c) §4.6, passo 1: migração pelo pooler em modo session, com `.env.migrate`; (d) §4.7 nova: recusa da porta 6543, prazo do lock com `pg_try_advisory_lock` (`lock_wait_s`, padrão 30 s), detecção de controle de transação no arquivo, regex só com dígitos ASCII e leitura única do arquivo; (e) CA-06 ganhou `.env.migrate`; CA-14 ganhou `schema_migrations`, `relforcerowsecurity` e a verificação de grants de `anon`/`authenticated`; CAs novos: CA-19 (manual, `search_path` e migração) e CA-20 a CA-24 (executor). Nenhuma decisão de ADR muda: a API continua no modo transaction (ADR-006). SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 e RV-02 a RV-04 de `reviews/SPEC-003/r1-review-report.md`; SEC-01 a SEC-05 de `reviews/SPEC-003/r1-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-13 | Mudanças: (a) §1 com as três pendências de operação da SPEC-004; (b) §4.6, passo 3: registro de dispositivos com `--env-file .env.migrate`, nunca `--database-url` com a URL de produção; (c) §4.8 nova: seção "Riscos aceitos" no `deployment-plan.md` (rajada anônima no pool, com a verificação do Render, e o log do `psycopg.pool`); (d) CA-25 novo; (e) §6 atualizada. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-04-02, SEC-04-03 e SEC-04-05 de `reviews/SPEC-004/r2-security-report.md` | Orquestrador, a pedido do humano |

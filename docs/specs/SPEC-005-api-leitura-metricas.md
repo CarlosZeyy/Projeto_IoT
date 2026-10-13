@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
+| Status | Ready — **Aguardando reaprovação humana** |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -26,6 +26,7 @@ O dashboard obtém, com a chave de leitura, listagens e agregados corretos e fil
 - `api/src/qc_api/routers/inspections.py` (rota `GET`), `routers/metrics.py` (summary e timeseries), `routers/lots.py`.
 - `api/src/qc_api/filters.py`: dependência `InspectionFilters` compartilhada pelas rotas.
 - `api/src/qc_api/repositories/` (ou módulo equivalente) com as consultas SQL parametrizadas.
+- **Manutenção da SPEC-004** (§4.5): `api/src/qc_api/routers/inspections.py` (escrita: `psycopg.IntegrityError` → 422) e `api/src/qc_api/middleware.py` (500 genérico sem a mensagem de `psycopg.Error` no log).
 - Testes em `api/tests/`.
 
 ### 3.2 Fora
@@ -83,6 +84,18 @@ O dashboard obtém, com a chave de leitura, listagens e agregados corretos e fil
 
 - As consultas filtram por colunas com índice da SPEC-003 (`inspected_at`, `lot_id`, `(source, inspected_at)`, `device_id`). Agregações são feitas no SQL (`count(*) filter (...)`, `avg`), nunca carregando linhas para o Python.
 
+### 4.5 Erros de banco na escrita e no log (manutenção da SPEC-004)
+
+Pendência SEC-04-01 (= RV-01) de `reviews/SPEC-004/r2-security-report.md` e `r2-review-report.md`. A mensagem de uma `IntegrityError` contém os valores da linha (`DETAIL: Failing row contains (...)`, confirmado em sonda). Se ela escapasse da rota, o `logger.exception` do `UnhandledErrorMiddleware` registraria parte do corpo. Hoje o caminho é inalcançável, porque as `check` do `001_init.sql` espelham o contrato, mas uma migração futura que diverja do contrato o reabriria, e o problema só apareceria em produção. Regra geral em `docs/architecture.md` §4 ("Erros de banco no log").
+
+1. **Escrita** (`POST /api/v1/inspections` e `/inspections/batch`, função `_write`): `psycopg.IntegrityError` (SQLSTATE classe `23`), levantada no `insert` ou no `update devices`, recebe o mesmo tratamento do `psycopg.DataError` (classe `22`) da SPEC-004 §4.5:
+   - `rollback` da transação inteira (nada gravado e `last_seen_at` inalterado);
+   - 422 com o corpo exato `{"detail": "Value cannot be stored"}`, levantado com `from None`;
+   - um log `WARNING` com só a rota, o `device_id` e o SQLSTATE (ex.: `sqlstate=23514`), nunca os valores nem a mensagem do servidor.
+
+   O 422, e não o 500, é o que faz o publisher da SPEC-009 isolar o item por bissecção e marcá-lo como `dead`, em vez de reenviar o lote para sempre. A precedência da SPEC-004 §4.5 não muda: o último degrau "422 (valor que o banco recusa)" passa a cobrir as classes `22` e `23`. `OperationalError` continua → 503.
+2. **500 genérico** (`UnhandledErrorMiddleware`): se a exceção não tratada for um `psycopg.Error`, ou tiver um `psycopg.Error` na cadeia `__cause__`/`__context__`, o middleware registra em nível `ERROR` uma única linha `unhandled database error: route=<rota> type=<classe> sqlstate=<código>` (`-` quando não houver SQLSTATE), **sem** `exc_info` e sem a mensagem. `<rota>` segue a mesma regra do log por requisição (o template da rota, ou o `repr` cortado do caminho). `<classe>` é a da primeira `psycopg.Error` da cadeia. As outras exceções continuam com o `logger.exception` de hoje. A resposta continua 500 `{"detail": "Internal server error"}`.
+
 ## 5. Critérios de aceite
 
 **Conjunto D** (inserido direto no banco de teste migrado, com `edge-01` e `sim-01` registrados; `T0 = 2026-10-01T10:00:00Z`; campos não listados válidos):
@@ -119,15 +132,17 @@ Chave de leitura `R = "r"*32`. Valores `float` comparados com tolerância relati
 - **CA-17** — Dado uma app com `DATABASE_URL` para uma porta local fechada, quando qualquer das quatro rotas é chamada com `R`, então 503 com `{"detail": "Database unavailable"}`.
 - **CA-18** — Dado D, quando a listagem é chamada com `lot_id=L-A` e o parâmetro desconhecido `foo=bar`, então 200 com `total=4` (parâmetros desconhecidos ignorados).
 - **CA-19** — Dado o código de `api/src/qc_api`, quando o teste procura f-strings, formatação com `%` ou `str.format` aplicados a textos SQL (que contenham `SELECT`, `WHERE` ou `INSERT`), então não encontra nenhuma ocorrência (SQL sempre parametrizado); a composição com `psycopg.sql.SQL(...).format(...)` é permitida e não conta como ocorrência.
+- **CA-20 (security, SEC-04-01)** — Dado o contexto comum da SPEC-004 §5 (chave `KE` de `edge-01`, payload `P(id)`), `edge-01` com `last_seen_at` nulo e, no banco de teste, a restrição extra `alter table inspections add constraint ca20_marker check (lot_id <> 'L-INTEG-MARK')`, criada pelo teste e removida num `finally` (ou num banco próprio do teste, com nome que contém `test`), quando `POST /api/v1/inspections` recebe `P(X)` com `lot_id="L-INTEG-MARK"`, e quando `POST /api/v1/inspections/batch` recebe `[P(A), P(B)]` em que `P(B)` tem esse `lot_id`, então cada resposta é 422 com o corpo exato `{"detail": "Value cannot be stored"}`, a tabela não ganha nenhuma linha (`X`, `A` ou `B`), `last_seen_at` continua nulo, ao menos um registro de log contém `sqlstate=23514`, e nenhum registro de log (`caplog` no nível DEBUG) nem corpo de resposta contém `L-INTEG-MARK`.
+- **CA-21 (security, regra de `architecture.md` §4)** — Dado o app da API com três rotas de teste acrescentadas pelo próprio teste (`app.add_api_route`): a 1ª levanta `psycopg.errors.UndefinedTable(<marcador 1>)`, a 2ª levanta `RuntimeError("wrapper")` com `__cause__` igual a `psycopg.errors.CheckViolation(<marcador 2>)` e a 3ª levanta `ValueError(<marcador 3>)` (marcadores gerados no teste), quando cada uma é chamada com `TestClient(app, raise_server_exceptions=False)`, então as três respondem 500 com o corpo exato `{"detail": "Internal server error"}`; nos dois primeiros casos, há um registro `ERROR` com `sqlstate=42P01` (e `sqlstate=23514`, respectivamente), nenhum registro contém o marcador 1 nem o 2, e nenhum registro tem `exc_info`; no 3º caso, há um registro com `exc_info` (o comportamento atual continua para exceções que não são de banco).
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
 | Unitário (autor) | Validação de filtros (sem banco); consultas e agregações contra o banco de teste com D | `api/tests/` |
-| Aceite (tester) | Um teste por CA (marcados `db`, exceto CA-19) | `api/tests/acceptance/test_spec_005.py` |
+| Aceite (tester) | Um teste por CA (marcados `db`, exceto CA-19 e CA-21) | `api/tests/acceptance/test_spec_005.py` |
 
-Banco: Postgres 16 de teste com as fixtures da SPEC-003. O conjunto D é inserido por SQL direto (não pela API), para não depender da regra dos 5 min no futuro. Sem mocks.
+Banco: Postgres 16 de teste com as fixtures da SPEC-003. O conjunto D é inserido por SQL direto (não pela API), para não depender da regra dos 5 min no futuro. Sem mocks. No CA-20, a restrição extra é real (nada de mock da exceção) e sai do banco no fim do teste. No CA-21, as rotas de teste existem só no app do teste. Para construir as exceções do `psycopg` diretamente, note que o SQLSTATE é atributo de classe (`psycopg.errors.UndefinedTable.sqlstate == "42P01"`).
 
 ## 7. Riscos e notas para o implementador
 
@@ -142,3 +157,9 @@ Banco: Postgres 16 de teste com as fixtures da SPEC-003. O conjunto D é inserid
 - [ ] review-report APPROVED + security-report PASS
 - [ ] CI verde; `ruff` limpo
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-13 | Mudanças: (a) §3.1 inclui a manutenção da escrita (`routers/inspections.py`) e do `middleware.py` da SPEC-004; (b) §4.5 nova: `psycopg.IntegrityError` (classe `23`) na escrita → `rollback` e 422 `{"detail": "Value cannot be stored"}`, com log só de rota, `device_id` e SQLSTATE; 500 genérico sem a mensagem de `psycopg.Error` no log; (c) CAs novos: CA-20 e CA-21; (d) §6 atualizada. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-04-01 de `reviews/SPEC-004/r2-security-report.md` (= RV-01 de `r2-review-report.md`); regra nova em `docs/architecture.md` §4 | Orquestrador, a pedido do humano |
