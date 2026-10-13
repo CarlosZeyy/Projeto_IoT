@@ -1137,7 +1137,7 @@ wheels = [
 
 [[package]]
 name = "qc-api"
-version = "0.0.0"
+version = "0.1.0"
 source = { editable = "api" }
 dependencies = [
     { name = "fastapi" },

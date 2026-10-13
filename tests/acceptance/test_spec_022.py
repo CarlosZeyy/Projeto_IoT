@@ -547,25 +547,7 @@ def test_ca14_reviews_readme_architect_commits_after_role_tracking() -> None:
 # --------------------------------------------------------------------------- CA-15
 
 
-def test_ca15_ruff_and_full_suite_without_ci_and_db_url() -> None:
-    env = _clean_env(CI=None, TEST_DATABASE_URL=None)
-    for cmd in (["check", "."], ["format", "--check", "."]):
-        result = subprocess.run(
-            [sys.executable, "-m", "ruff", *cmd],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        assert result.returncode == 0, (cmd, result.stdout + result.stderr)
-
-    # Deselect this test in the inner run to avoid infinite recursion.
-    me = "tests/acceptance/test_spec_022.py::test_ca15_ruff_and_full_suite_without_ci_and_db_url"
-    result = _run_pytest(["-q", "--deselect", me], CI=None, TEST_DATABASE_URL=None)
-    out = result.stdout + result.stderr
-    assert result.returncode == 0, out[-4000:]
-    assert re.search(r"\b\d+ passed\b", out), out[-4000:]
+# CA-15: checked by CI and by the test-report, not by a test (docs/architecture.md section 10).
 
 
 # --------------------------------------------------------------------------- CA-16

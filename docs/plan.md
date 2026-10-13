@@ -36,8 +36,8 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 |---|---|---|---|---|---|---|
 | [001](specs/SPEC-001-setup-repositorio.md) | Setup do repositório e ferramentas | developer | infra | — | S1 | Done |
 | [002](specs/SPEC-002-pacotes-compartilhados.md) | Pacotes compartilhados v0 (`qc-contracts` e `qc-preprocess`) | developer | contrato | 001 | S1 | Done |
-| [003](specs/SPEC-003-schema-banco.md) | Schema Supabase, migrações e RLS | developer | security | 002 | S2 | In Security (r1) |
-| [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023, 024 | S2 | Ready |
+| [003](specs/SPEC-003-schema-banco.md) | Schema Supabase, migrações e RLS | developer | security | 002 | S2 | Done |
+| [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023, 024 | S2 | In Security (r2) |
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Ready |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Ready |
 | [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Ready |
@@ -56,8 +56,8 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [020](specs/SPEC-020-mqtt.md) | Fase 3: transporte MQTT | developer | security | 009 (e 004) | S8 | Draft |
 | [021](specs/SPEC-021-ferramentas-eletricas.md) | Fase 3: ferramentas elétricas (identificação) | ml-engineer + developer | contrato | 016 | S8 | Draft |
 | [022](specs/SPEC-022-manutencao-setup.md) | Manutenção do setup (hook, CI sem senha, commits do architect) | developer | infra | 001 | S1 | Done |
-| [023](specs/SPEC-023-pacotes-compartilhados-0-2.md) | Pacotes compartilhados 0.2.0 (teto de `latency_ms`, proporção da imagem, flag de JPEG truncado) | developer | contrato, security | 002 | S2 | In Security (r1) |
-| [024](specs/SPEC-024-preprocess-0-3-scans-jpeg.md) | `qc-preprocess` 0.3.0 (limite de scans do JPEG) | developer | security | 023 | S2 | In Security (r1) |
+| [023](specs/SPEC-023-pacotes-compartilhados-0-2.md) | Pacotes compartilhados 0.2.0 (teto de `latency_ms`, proporção da imagem, flag de JPEG truncado) | developer | contrato, security | 002 | S2 | Done |
+| [024](specs/SPEC-024-preprocess-0-3-scans-jpeg.md) | `qc-preprocess` 0.3.0 (limite de scans do JPEG) | developer | security | 023 | S2 | Done |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC.
 

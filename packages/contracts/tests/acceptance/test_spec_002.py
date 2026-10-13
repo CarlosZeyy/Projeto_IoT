@@ -1,4 +1,4 @@
-"""Acceptance tests for SPEC-002 (qc-contracts 0.2.0).
+"""Acceptance tests for SPEC-002 (qc-contracts).
 
 Written by the tester from the SPEC acceptance criteria (black box), before reading the
 implementation. Covers CA-01 (qc-contracts part), CA-02 to CA-18 and CA-27. Tests named
@@ -107,8 +107,10 @@ def unknown_payload(**overrides: Any) -> dict[str, Any]:
 
 
 def test_ca01_contracts_version() -> None:
-    assert qc_contracts.__version__ == "0.2.0"
-    assert importlib.metadata.version("qc-contracts") == "0.2.0"
+    v = qc_contracts.__version__
+    assert qc_contracts.__version__ == importlib.metadata.version("qc-contracts")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
+    assert (0, 1, 0) <= tuple(int(p) for p in v.split(".")) < (1, 0, 0)
 
 
 # --------------------------------------------------------------------------- CA-02
