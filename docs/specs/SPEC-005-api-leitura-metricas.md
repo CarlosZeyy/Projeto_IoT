@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -163,3 +163,4 @@ Banco: Postgres 16 de teste com as fixtures da SPEC-003. O conjunto D é inserid
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-13 | Mudanças: (a) §3.1 inclui a manutenção da escrita (`routers/inspections.py`) e do `middleware.py` da SPEC-004; (b) §4.5 nova: `psycopg.IntegrityError` (classe `23`) na escrita → `rollback` e 422 `{"detail": "Value cannot be stored"}`, com log só de rota, `device_id` e SQLSTATE; 500 genérico sem a mensagem de `psycopg.Error` no log; (c) CAs novos: CA-20 e CA-21; (d) §6 atualizada. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-04-01 de `reviews/SPEC-004/r2-security-report.md` (= RV-01 de `r2-review-report.md`); regra nova em `docs/architecture.md` §4 | Orquestrador, a pedido do humano |
+| 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

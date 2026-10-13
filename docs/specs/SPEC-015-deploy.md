@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | security-devops |
 | Tags | deploy, security |
@@ -197,3 +197,4 @@ Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é i
 | 2026-10-12 | Mudanças: (a) §1 com as pendências de produção da SPEC-003; (b) §3.1 inclui `infra/migrate.py` (só a §4.7) e corrige a nota de `testpaths`; §3.2 registra o papel só de DML como não adotado e proíbe migrações no Actions; (c) §4.6, passo 1: migração pelo pooler em modo session, com `.env.migrate`; (d) §4.7 nova: recusa da porta 6543, prazo do lock com `pg_try_advisory_lock` (`lock_wait_s`, padrão 30 s), detecção de controle de transação no arquivo, regex só com dígitos ASCII e leitura única do arquivo; (e) CA-06 ganhou `.env.migrate`; CA-14 ganhou `schema_migrations`, `relforcerowsecurity` e a verificação de grants de `anon`/`authenticated`; CAs novos: CA-19 (manual, `search_path` e migração) e CA-20 a CA-24 (executor). Nenhuma decisão de ADR muda: a API continua no modo transaction (ADR-006). SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 e RV-02 a RV-04 de `reviews/SPEC-003/r1-review-report.md`; SEC-01 a SEC-05 de `reviews/SPEC-003/r1-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-13 | Mudanças: (a) §1 com as três pendências de operação da SPEC-004; (b) §4.6, passo 3: registro de dispositivos com `--env-file .env.migrate`, nunca `--database-url` com a URL de produção; (c) §4.8 nova: seção "Riscos aceitos" no `deployment-plan.md` (rajada anônima no pool, com a verificação do Render, e o log do `psycopg.pool`); (d) CA-25 novo; (e) §6 atualizada. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-04-02, SEC-04-03 e SEC-04-05 de `reviews/SPEC-004/r2-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -144,3 +144,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 | 2026-10-12 | §4.1: o campo `image` segue os limites próprios da rota da SPEC-007 §4.7 (3 MiB e 4 M pixels, via `load_capture_image`), dentro do limitador de decodificações. O CA-14 trocou 10 485 761 por 3 145 729 bytes e ganhou o JPEG de 2001×2000 (415) e a verificação de `DATASET_DIR` intacto. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-24-02 de `reviews/SPEC-024/r1-security-report.md` (decisão registrada na SPEC-007) | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-13 | Mudanças: (a) §4.2, item 5 novo: diretórios criados pelo modo coleta com `0700` e imagens, `manifest.csv` e `manifest.csv.lock` com `0600`, exatos, seja qual for o `umask`; (b) CA-18 novo; (c) §7: notas sobre o limitador e o console depois da SPEC-025 e sobre o `umask`. Nenhum CA existente muda. A espera do limitador fora do threadpool (SEC-03) e as permissões de `captures/` ficaram na SPEC-025, que mexe no código da SPEC-007 que esta reutiliza; a retenção das fotos de inspeção está em `docs/dataset-protocol.md` §9. SPEC marcada como "Aguardando reaprovação humana". | SEC-06 de `reviews/SPEC-007/r1-security-report.md` (parte de `DATASET_DIR`) | Orquestrador, a pedido do humano |
+| 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

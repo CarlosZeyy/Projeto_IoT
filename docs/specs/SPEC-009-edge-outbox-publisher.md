@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -172,3 +172,4 @@ Mock só de fronteiras: rede da nuvem (MockTransport), relógio e RNG. O SQLite 
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-13 | Mudanças: (a) dependência da SPEC-025 (validação do `Host` do console), que precisa estar `Done` antes do merge desta, porque a partir daqui uma inspeção injetada por DNS rebinding chegaria à nuvem como `live`; (b) §4.2: `PublishRejectedError.detail` passa a ser um resumo da recusa (status, `detail` em texto ou contagem de erros), e o corpo do 422 nunca vai para o log nem para `last_error`; §4.3 usa esse resumo no item `dead`; (c) CA-18 novo; (d) §8 com o item da SPEC-025. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-01 de `reviews/SPEC-007/r1-security-report.md`; SEC-04-04 de `reviews/SPEC-004/r2-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

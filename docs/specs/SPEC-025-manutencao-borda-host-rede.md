@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -210,3 +210,4 @@ Contexto comum: `EdgeSettings` com `EDGE_PORT=8000` e `EDGE_DATA_DIR` em `tmp_pa
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-13 | SPEC criada (Draft). | SEC-01, SEC-03, SEC-04, SEC-05, SEC-06 (parte de `captures/`) e SEC-07 de `reviews/SPEC-007/r1-security-report.md`; RV-04 e RV-05 de `reviews/SPEC-007/r1-review-report.md`; RV-02 de `reviews/SPEC-004/r2-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-13 | `Draft` → `Ready`. Aprovação humana, com 422 para a classe 23 e retenção das fotos até a entrega. | Aprovação humana | Humano (Carlos) |
