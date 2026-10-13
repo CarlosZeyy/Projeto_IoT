@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlunsplit
 
+import httpx
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -1273,3 +1274,261 @@ def test_extra_real_server_413_for_declared_and_chunked_bodies() -> None:
     log = out.decode("utf-8", "replace")
     assert NO_DB_PASSWORD + "@" not in log
     assert READ_KEY not in log
+
+
+# --------------------------------------------------------------------------- r2 extras
+# Variations of T-01 (500 instead of 4xx) and T-02 (request body in the log) of
+# reviews/SPEC-004/r1-test-report.md: other bodies and content types that the default 422
+# handler cannot encode, and other ways for the body to reach the server log.
+
+
+def _assert_rejected_quietly(
+    env: Env, caplog: pytest.LogCaptureFixture, resp: Any, marker: str, statuses: tuple[int, ...]
+) -> None:
+    """4xx with a ``{"detail": ...}`` body, nothing written, no error log, no body in the log."""
+    assert resp.status_code in statuses, resp.text[:500]
+    assert "detail" in resp.json()
+    assert_no_traceback(resp)
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    text = log_text(caplog)
+    assert marker not in text
+    assert "\\xff\\xd8\\xff" not in text
+    assert count_rows(env.db) == 0
+    assert last_seen(env.db, "edge-01") is None
+
+
+def _unencodable_body(kind: str, marker: bytes) -> tuple[bytes, dict[str, str]]:
+    jpeg = b"\xff\xd8\xff" + marker + b"\xff" * 8
+    json_ct = {"Content-Type": "application/json"}
+    if kind.startswith("ct:"):
+        ctype = kind[3:]
+        return jpeg, ({"Content-Type": ctype} if ctype else {})
+    if kind == "deep-list-5000":
+        return b"[" * 5000 + b'"' + marker + b'"' + b"]" * 5000, json_ct
+    if kind == "deep-object-3000":
+        return b'{"a":' * 3000 + b'"' + marker + b'"' + b"}" * 3000, json_ct
+    if kind == "deep-in-extra-field":
+        head = json.dumps(payload(new_id()))[:-1].encode()
+        return head + b', "x": ' + b"[" * 3000 + b'"' + marker + b'"' + b"]" * 3000 + b"}", json_ct
+    if kind == "deep-batch-item":
+        return b'{"items": [' + b"[" * 3000 + b'"' + marker + b'"' + b"]" * 3000 + b"]}", json_ct
+    raise AssertionError(kind)
+
+
+UNENCODABLE_KINDS = [
+    "ct:application/octet-stream",
+    "ct:image/jpeg",
+    "ct:image/png",
+    "ct:text/plain",
+    "ct:application/x-www-form-urlencoded",
+    "ct:application/xml",
+    "ct:",  # no Content-Type at all
+    "deep-list-5000",
+    "deep-object-3000",
+    "deep-in-extra-field",
+    "deep-batch-item",
+]
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("url", [URL_ONE, URL_BATCH])
+@pytest.mark.parametrize("kind", UNENCODABLE_KINDS)
+def test_extra_r2_unencodable_bodies_are_422_and_not_logged(
+    env: Env, caplog: pytest.LogCaptureFixture, url: str, kind: str
+) -> None:
+    """T-01/T-02 variations: every body the default 422 cannot echo is a 422, never logged."""
+    caplog.set_level(logging.DEBUG)
+    marker = "BODYMARK" + secrets.token_hex(6)
+    body, headers = _unencodable_body(kind, marker.encode())
+    assert len(body) < MAX_BODY
+    resp = env.client.post(url, content=body, headers={**key_header(env.ke), **headers})
+    _assert_rejected_quietly(env, caplog, resp, marker, (422,))
+    assert isinstance(resp.json()["detail"], list)  # the shape of the default 422 (§4.5)
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("url", [URL_ONE, URL_BATCH])
+def test_extra_r2_multipart_with_json_and_image_parts(
+    env: Env, caplog: pytest.LogCaptureFixture, url: str
+) -> None:
+    """A multipart upload with a JSON-looking part and a binary image part is a quiet 422."""
+    caplog.set_level(logging.DEBUG)
+    marker = "BODYMARK" + secrets.token_hex(6)
+    files = {
+        "payload": (None, json.dumps(payload(new_id())), "application/json"),
+        "image": ("a.jpg", b"\xff\xd8\xff" + marker.encode() + b"\xff" * 8, "image/jpeg"),
+    }
+    resp = env.client.post(url, files=files, headers=key_header(env.ke))
+    _assert_rejected_quietly(env, caplog, resp, marker, (422,))
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("url", [URL_ONE, URL_BATCH])
+def test_extra_r2_nesting_sweep_around_recursion_limit(
+    env: Env, caplog: pytest.LogCaptureFixture, url: str
+) -> None:
+    """Nesting depths around ``sys.getrecursionlimit()`` and far above it: never a 500."""
+    caplog.set_level(logging.DEBUG)
+    limit = sys.getrecursionlimit()
+    depths = [*range(limit - 150, limit + 151, 25), 20_000, 40_000]
+    for depth in depths:
+        for body in (b"[" * depth + b"]" * depth, b'{"a":' * depth + b"1" + b"}" * depth):
+            assert len(body) < MAX_BODY
+            resp = env.client.post(
+                url,
+                content=body,
+                headers={**key_header(env.ke), "Content-Type": "application/json"},
+            )
+            assert resp.status_code in (400, 422), (depth, resp.text[:300])
+            assert_no_traceback(resp)
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert count_rows(env.db) == 0
+    assert last_seen(env.db, "edge-01") is None
+
+
+@pytest.mark.db
+def test_extra_r2_non_finite_numbers_are_422(env: Env, caplog: pytest.LogCaptureFixture) -> None:
+    """``json.loads`` accepts NaN/Infinity and turns 1e400 into inf, which ``json.dumps``
+    (``allow_nan=False``) cannot echo back: still a quiet 422, on both routes."""
+    caplog.set_level(logging.DEBUG)
+    base = json.dumps(payload(new_id()))
+    variants = [
+        base.replace('"type_confidence": 0.97', '"type_confidence": NaN'),
+        base.replace('"grade_score": 2.0', '"grade_score": Infinity'),
+        base.replace('"grade_confidence": 0.81', '"grade_confidence": -Infinity'),
+        base.replace('"grade_score": 2.0', '"grade_score": 1e400'),
+        base.replace('"latency_ms": 42', '"latency_ms": NaN'),
+        base[:-1] + ', "x": NaN}',
+        "NaN",
+    ]
+    for text in variants:
+        assert text != base
+        for url, body in ((URL_ONE, text), (URL_BATCH, '{"items": [' + text + "]}")):
+            resp = env.client.post(
+                url,
+                content=body.encode(),
+                headers={**key_header(env.ke), "Content-Type": "application/json"},
+            )
+            assert resp.status_code == 422, (url, text[-60:], resp.text[:300])
+            assert_no_traceback(resp)
+    resp = env.client.post(
+        URL_BATCH,
+        content=b'{"items": NaN}',
+        headers={**key_header(env.ke), "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert count_rows(env.db) == 0
+    assert last_seen(env.db, "edge-01") is None
+
+
+@pytest.mark.db
+def test_extra_r2_lone_surrogates_and_nul_are_422(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    """JSON escapes that decode to strings UTF-8 cannot encode (lone surrogates) or to NUL,
+    in values and in unknown keys: 422, never a 500, and nothing written."""
+    caplog.set_level(logging.DEBUG)
+    base = json.dumps(payload(new_id()))
+    variants = [
+        base[:-1] + ', "\\ud800x": 1}',
+        base[:-1] + ', "\\u0000x": 1}',
+        base.replace('"lot_id": "L-001"', '"lot_id": "L-\\udfff"'),
+        base.replace('"lot_id": "L-001"', '"lot_id": "L-\\u0000"'),
+        base.replace('"object_type": "screw"', '"object_type": "\\ud83d"'),
+        re.sub(r'"inspection_id": "[^"]+"', '"inspection_id": "0\\\\ud800"', base),
+        base.replace('"source": "live"', '"source": "live\\u0000"'),
+    ]
+    for text in variants:
+        assert text != base
+        for url, body in ((URL_ONE, text), (URL_BATCH, '{"items": [' + text + "]}")):
+            resp = env.client.post(
+                url,
+                content=body.encode(),
+                headers={**key_header(env.ke), "Content-Type": "application/json"},
+            )
+            assert resp.status_code == 422, (url, text[-80:], resp.text[:300])
+            assert_no_traceback(resp)
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert count_rows(env.db) == 0
+    assert last_seen(env.db, "edge-01") is None
+
+
+@pytest.mark.db
+def test_extra_r2_encodable_422_is_still_the_default(env: Env) -> None:
+    """§4.5: when the input can be encoded, the 422 is FastAPI's default (``input`` echoed)."""
+    body = payload(new_id())
+    del body["lot_id"]
+    resp = env.post(body, env.ke)
+    assert resp.status_code == 422, resp.text
+    errors = resp.json()["detail"]
+    assert errors and errors[0]["type"] == "missing"
+    assert errors[0]["loc"] == ["body", "lot_id"]
+    assert "input" in errors[0]
+    resp = env.client.post(
+        URL_ONE,
+        content=b"not json",
+        headers={**key_header(env.ke), "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"][0]["type"] == "json_invalid"
+
+
+@pytest.mark.db
+def test_extra_r2_real_server_unencodable_bodies_are_422_and_not_logged(clean_db: str) -> None:
+    """T-01/T-02 over a real socket (uvicorn, main-thread stack) with the test database:
+    422 (or 400 for nesting ``json.loads`` refuses) and the body never in the server log."""
+    ke = secrets.token_urlsafe(32)
+    register(clean_db, "edge-01", ke)
+    port = _free_port()
+    proc_env = dict(os.environ)
+    proc_env.update(DATABASE_URL=clean_db, READ_API_KEY=READ_KEY, LOG_LEVEL="DEBUG")
+    cmd = [sys.executable, "-m", "uvicorn", "qc_api.main:app", "--port", str(port)]
+    proc = subprocess.Popen(
+        cmd, env=proc_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=ROOT
+    )
+    marker = ("BODYMARK" + secrets.token_hex(6)).encode()
+    jpeg = b"\xff\xd8\xff" + marker + b"\xff" * 8
+    statuses: list[tuple[str, str, int]] = []
+    try:
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                assert proc.poll() is None, "uvicorn exited"
+                assert time.monotonic() < deadline, "uvicorn did not start"
+                time.sleep(0.2)
+        headers = key_header(ke)
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10) as client:
+            for url in (URL_ONE, URL_BATCH):
+                resp = client.post(
+                    url, files={"image": ("a.jpg", jpeg, "image/jpeg")}, headers=headers
+                )
+                statuses.append((url, "multipart", resp.status_code))
+                resp = client.post(
+                    url,
+                    content=jpeg,
+                    headers={**headers, "Content-Type": "application/octet-stream"},
+                )
+                statuses.append((url, "octet-stream", resp.status_code))
+                for depth in (1000, 2000, 5000, 50_000):
+                    body = b"[" * depth + b'"' + marker + b'"' + b"]" * depth
+                    resp = client.post(
+                        url, content=body, headers={**headers, "Content-Type": "application/json"}
+                    )
+                    statuses.append((url, f"deep-{depth}", resp.status_code))
+    finally:
+        proc.terminate()
+        out, _ = proc.communicate(timeout=20)
+    log = out.decode("utf-8", "replace")
+    for url, kind, code in statuses:
+        expected = (400, 422) if kind == "deep-50000" else (422,)
+        assert code in expected, (url, kind, code)
+    assert marker.decode() not in log
+    assert "Traceback" not in log
+    assert " ERROR " not in log
+    assert ke not in log
+    assert count_rows(clean_db) == 0
+    assert last_seen(clean_db, "edge-01") is None
