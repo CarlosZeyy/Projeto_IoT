@@ -15,7 +15,7 @@
 
 O security-report da SPEC-023 (`reviews/SPEC-023/r1-security-report.md`, SEC-01, severidade média) mostrou que o `load_image` aceita um **JPEG progressivo com scans repetidos** e que o custo de decodificação cresce com `nº de scans × pixels`:
 
-- cerca de 4 ms por scan a 40 M pixels, com 65 bytes por scan;
+- cerca de 4 ms por scan a 40 M pixels, com 65 bytes por scan, segundo a prova de conceito do relatório. A medição feita na r1 desta SPEC deu cerca de 30 ms por scan, e é esse o número que vale (§4.1);
 - 338 KB levaram 16 s; extrapolando para o corpo máximo da borda (10 MiB), seriam cerca de 10 min de CPU por requisição;
 - a imagem é aceita e o resultado é idêntico ao da imagem limpa, então nada acusa o ataque.
 
@@ -71,13 +71,22 @@ O SEC-02 (memória com uploads simultâneos), o SEC-04 (checagem da flag na subi
 
 **Por que no `load_image` (ADR-004).** Pelo mesmo motivo da SPEC-023 §4.2: o `load_image` é a barreira usada pela borda (SPEC-007, SPEC-010) e pelo ML (SPEC-011, SPEC-012). Com a regra nele, treino e borda rejeitam as mesmas imagens.
 
-**Por que 64.** O maior script padrão do libjpeg-turbo para até 4 componentes tem 18 scans (CMYK), e um JPEG de celular tem 1 scan, mais 1 a 3 marcadores de miniatura EXIF, MPO ou gain map. 64 dá folga de mais de 3× sobre o caso padrão mais longo. No pior caso aceito (40 M pixels), o custo extra fica em cerca de 64 × 4 ms ≈ 0,26 s, contra 16 s no exemplo do relatório.
+**Por que 64.** O maior script padrão do libjpeg-turbo para até 4 componentes tem 18 scans (CMYK), e um JPEG de celular tem 1 scan, mais 1 a 3 marcadores de miniatura EXIF, MPO ou gain map. 64 dá folga de mais de 3× sobre o caso padrão mais longo.
+
+**Custo do pior caso aceito** (medido na r1 com o Pillow 12.3.0; `reviews/SPEC-024/r1-security-report.md` e `r1-test-report.md`):
+
+- cada scan repetido custa cerca de **30 ms** a 40 M pixels, e até cerca de 75 ms quando o scan carrega dados;
+- **dentro do corpo de 10 MiB da borda**, o pior caso aceito (64 marcadores) fica em cerca de **2 s por requisição** (de 1,7 a 2,0 s medidos), cerca de 7× uma foto progressiva legítima de 40 M pixels (de 0,28 a 0,54 s);
+- os cerca de **5 s** (4,79 s medidos) só aparecem com um corpo bem acima de 10 MiB, que a borda recusa com 413. Valem só para o caminho local do ML (SPEC-011), que lê arquivos da própria dupla e não é superfície de ataque;
+- sem a regra, o mesmo ataque custava cerca de 10 min por requisição.
+
+A estimativa original desta seção (64 × 4 ms ≈ 0,26 s) estava errada por cerca de uma ordem de grandeza (SPEC_ISSUE-01 da r1). O humano reconfirmou o limite de 64 com os números medidos (ver o Histórico). Baixar para 32 levaria o resíduo dos scans a cerca de 1 s, mas as inundações de segmentos sem scan (SEC-24-02) já custam de 1,5 a 2,4 s, e a folga sobre o script CMYK cairia de 3,5× para 1,8×. A alavanca escolhida para a borda são os limites próprios da rota de captura (SPEC-007 §4.7), que não mexem neste pacote.
 
 ### 4.2 Consumidores (sem código nesta SPEC)
 
-- SPEC-007: o JPEG com mais de 64 marcadores vira 415, como todo `InvalidImageError` (CA-08 da SPEC-007).
+- SPEC-007: o JPEG com mais de 64 marcadores vira 415, como todo `InvalidImageError` (CA-08 da SPEC-007). O limitador de decodificações é dimensionado com o custo medido (SPEC-007 §4.6 e §4.7, SEC-24-02).
 - SPEC-010: herda pelas "mesmas regras da SPEC-007".
-- SPEC-011: uma imagem rejeitada aparece como `unreadable_image`.
+- SPEC-011: uma imagem rejeitada por esta regra aparece como o problema próprio `too_many_jpeg_scans`, separado de `unreadable_image` (SEC-24-03).
 
 ## 5. Critérios de aceite
 
@@ -108,7 +117,7 @@ Sem mocks do código testado: só `monkeypatch` da flag global no CA-08 (configu
 
 - Não interprete os segmentos do JPEG para "contar melhor". Um parser que pare num segmento malformado contaria a menos, porque o libjpeg pula bytes estranhos até o próximo marcador e segue decodificando. A contagem ingênua do arquivo inteiro é a garantia (§1).
 - `bytes.count` num corpo de 10 MiB leva poucos milissegundos. Não há custo relevante para as imagens aceitas.
-- **Opção (b) do SEC-01 não adotada:** recusar JPEG progressivo na rota da borda, ou baixar o corpo para 2 MiB, dependeria de o canvas de cada navegador gerar JPEG baseline, o que esta SPEC não verifica. Além disso, o ML (SPEC-011) lê fotos originais do celular. Com o limite de 64 marcadores, o custo por requisição já fica limitado, e a SPEC-007 limita as decodificações simultâneas (SEC-02).
+- **Opção (b) do SEC-01 não adotada:** recusar JPEG progressivo na rota da borda, ou baixar o corpo para 2 MiB, dependeria de o canvas de cada navegador gerar JPEG baseline, o que esta SPEC não verifica. Além disso, o ML (SPEC-011) lê fotos originais do celular. Com o limite de 64 marcadores, o custo por requisição já fica limitado, e a SPEC-007 limita as decodificações simultâneas (SEC-02). Depois, a SPEC-007 §4.7 adotou limites próprios da rota (3 MiB e 4 M pixels) por outro motivo (SEC-24-02 de `reviews/SPEC-024/r1-security-report.md`): esses limites não dependem de o canvas gerar JPEG baseline, porque a página sempre reencoda para no máximo 1280 px, e não valem para o ML.
 - O reviewer confere que `git diff main -- packages/preprocess/src/qc_preprocess/transform.py packages/preprocess/src/qc_preprocess/params.py` está vazio e que, nos três arquivos de aceite antigos, só mudaram as expectativas de versão do `qc-preprocess` e as docstrings.
 - Gerar o "JPEG progressivo com scans repetidos" depende da estrutura que o Pillow grava (último scan seguido de `FF D9`). Se a decodificação do arquivo com 65 marcadores falhar antes da regra por outro motivo, o teste não prova nada: o CA-05 exige a mensagem `JPEG scans`.
 
@@ -126,3 +135,5 @@ Sem mocks do código testado: só `monkeypatch` da flag global no CA-08 (configu
 |---|---|---|---|
 | 2026-10-12 | Criação em `Draft`. Decisões do architect: (a) a correção do SEC-01 fica numa SPEC curta só do `qc-preprocess` (0.3.0), e não dentro da SPEC-007, para manter a paridade do ADR-004 (treino e borda rejeitam as mesmas imagens) e não misturar o pacote compartilhado com o código da borda; (b) contagem ingênua de `FF DA` no arquivo inteiro, só para conteúdo com assinatura JPEG; (c) limite de 64; (d) a opção (b) do SEC-01 (recusar JPEG progressivo na rota) não foi adotada. | SEC-01 de `reviews/SPEC-023/r1-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | `Draft` → `Ready`, com o limite de 64 marcadores SOS aprovado. | Aprovação humana | Humano (Carlos) |
+| 2026-10-12 | Depois do merge (PR #9): a §1 e a §4.1 ("Por que 64") foram corrigidas com os custos medidos na r1 (~30 ms por scan a 40 M pixels; ~2 s no pior caso aceito dentro do corpo de 10 MiB da borda; ~5 s só sem limite de corpo, no caminho local do ML). A §4.2 e a §7 apontam para os desdobramentos (SPEC-007 §4.6 e §4.7; SPEC-011, `too_many_jpeg_scans`). Sem mudança de código, de CA ou de versão. | SPEC_ISSUE-01 (RV-01) de `reviews/SPEC-024/r1-review-report.md`; SEC-24-01, SEC-24-02 e SEC-24-03 de `reviews/SPEC-024/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Limite de 64 marcadores **reconfirmado** com os números medidos (~30 ms por scan; ~2 s no pior caso da borda), conforme a recomendação do security-devops. Um limite menor exigiria uma SPEC nova (0.3.x/0.4.0). | Decisão humana sobre o SPEC_ISSUE-01 | Humano (Carlos) |

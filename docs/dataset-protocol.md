@@ -68,6 +68,7 @@ A SPEC-016 finaliza esta parte.
 - **Luz:** luz ambiente mais uma luminária fixa. Faça uma parte das fotos com outra luz (janela, outra lâmpada) para dar robustez. Evite flash direto, que estoura o brilho do metal.
 - **Ângulos:** de 3 a 5 por peça e por estágio, de 0 a 4 (`angle`): topo, lateral, 45° e o outro lado.
 - **Celulares:** os dois da dupla, em proporções parecidas.
+- **Configuração da câmera:** desligue a "foto com movimento" (Motion Photo do Android) e qualquer recurso parecido que anexe vídeo ou áudio à foto, nos dois celulares, antes de começar. Ela anexa um vídeo de alguns MB depois do fim do JPEG. Esses bytes contêm pares `FF DA` por acaso (~16 por MiB), e o `qc_preprocess.load_image` recusa todo JPEG com mais de 64 deles no arquivo (SPEC-024). A partir de ~3 a 4 MiB de vídeo, a foto é recusada. O pipeline acusa o caso com o problema `too_many_jpeg_scans` (SPEC-011). Para resolver, **refotografe** com o recurso desligado. Não corte o arquivo à mão. Isso vale para as fotos tiradas direto no app da câmera (por exemplo, antes da SPEC-010). As fotos do modo coleta passam pela página `/capture`, que reencoda a imagem e descarta tudo o que vem depois dela.
 - **Privacidade:** sem rostos nem pessoas no quadro (R-14).
 - **Classe `other` (negativos):** objetos variados (moeda, tampinha, caneta, chave de casa, pregos, arruela, a mesa vazia) e, opcionalmente, as categorias do MVTec AD, respeitando a licença CC BY-NC-SA 4.0, com atribuição, para uso acadêmico. Mínimo de 150 imagens de pelo menos 30 objetos diferentes.
 
@@ -127,3 +128,4 @@ Uma linha por imagem. As correções de rótulo **não** reescrevem a linha orig
 |---|---|---|
 | 2026-10-12 | Rubrica v0 | Versão inicial |
 | 2026-10-12 | Uso das peças existentes; pregos como `other` | A dupla já tem peças novas e enferrujadas, pregos e ferramentas |
+| 2026-10-12 | §3: desligar a "foto com movimento" e recursos parecidos na câmera | O vídeo anexado ao JPEG faz o `load_image` recusar a foto pelo limite de marcadores de scan (SEC-24-03 de `reviews/SPEC-024/r1-security-report.md`) |

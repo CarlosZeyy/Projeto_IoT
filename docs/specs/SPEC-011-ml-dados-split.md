@@ -57,7 +57,8 @@ def load_manifest(dataset_dir: Path | str, *, apply_overrides: bool = True,
 |---|---|
 | `missing_column` | coluna obrigatória ausente no manifest (aborta as demais validações) |
 | `missing_file` | `DATASET_DIR/<image_path>` não existe |
-| `unreadable_image` | `qc_preprocess.load_image` falha (só com `verify_images=True`) |
+| `unreadable_image` | `qc_preprocess.load_image` falha por qualquer motivo que não seja o de `too_many_jpeg_scans` (só com `verify_images=True`) |
+| `too_many_jpeg_scans` | `qc_preprocess.load_image` levanta `InvalidImageError` cuja mensagem contém `JPEG scans` (limite de 64 marcadores, SPEC-024 §4.1); só com `verify_images=True`. A `message` do problema traz a mensagem original e a dica `motion photo? see docs/dataset-protocol.md section 3` |
 | `item_type_conflict` | mesmo `item_id` com dois ou mais `object_type` |
 | `grade_on_other` | grau preenchido em `other` |
 | `missing_grade` | grau vazio em `screw`/`nut` |
@@ -68,6 +69,8 @@ def load_manifest(dataset_dir: Path | str, *, apply_overrides: bool = True,
 | `duplicate_image_path` | `image_path` repetido no manifest |
 | `override_unknown_image` | override para `image_path` ausente do manifest |
 | `override_missing_reason` | override com `reason` vazio |
+
+**Rejeições por motivo (SEC-24-03).** O `python -m qc_ml.data validate` imprime um problema por linha e, depois deles, uma linha de resumo por `code` presente, em ordem alfabética, no formato `count <code>: <n>` (ex.: `count too_many_jpeg_scans: 3`). Assim, uma câmera com a "foto com movimento" ligada aparece logo na primeira validação, e não como um punhado de `unreadable_image` soltos. A classificação usa só a mensagem, que a SPEC-024 garante conter `JPEG scans`. O pipeline **não** conta os marcadores de novo nem trata o arquivo de outra forma.
 
 ### 4.2 Relatório de dados
 
@@ -137,6 +140,7 @@ def make_split(df: pd.DataFrame, seed: int = 42, ratios: tuple[float, float, flo
 - **CA-25** — *Dado* `PartsDataset(..., train=False)` (com `pytest.importorskip("torch")`), *quando* o item de uma imagem `nut/poor` é lido, *então* o tensor tem shape `(3, 224, 224)` e dtype `float32`, é igual a `qc_preprocess.preprocess(load_image(path), params)[0]` com `np.array_equal`, `type_idx = 1` e `grade_idx = 3`; para uma imagem `other`, `grade_idx = -1`.
 - **CA-26 (CI sem torch)** — *Dado* um subprocesso Python com `sys.modules["torch"] = None`, *quando* importa `qc_ml.data`, `qc_ml.split`, `qc_ml.agreement`, `qc_ml.augment` e `qc_ml.synthetic`, *então* não ocorre `ImportError`.
 - **CA-27 (R-02/R-14)** — *Dado* o repositório depois da SPEC, *quando* `git ls-files ml` é listado, *então* não há nenhum `.jpg`, `.jpeg` ou `.png` fora de `ml/reports/`; os testes criam as imagens em `tmp_path`.
+- **CA-28 (SEC-24-03)** — *Dado* o dataset do CA-01 com 1 imagem `screw` reescrita como os próprios bytes seguidos de `b"\xff\xda" * 64` depois do EOI (o JPEG sintético é baseline, com 1 marcador, e o arquivo passa a ter 65; simula o vídeo anexado pela "foto com movimento") e outra imagem sobrescrita com `b"not an image"`, *quando* `load_manifest` é chamado, *então* a `ManifestError` tem exatamente 1 problema `too_many_jpeg_scans`, com o `image_path` da primeira e uma `message` que contém `JPEG scans` e `dataset-protocol`, e exatamente 1 `unreadable_image`, com o `image_path` da segunda; `python -m qc_ml.data validate --dataset-dir <root>` sai com código 2, e a saída contém as linhas `count too_many_jpeg_scans: 1` e `count unreadable_image: 1`, nessa ordem; e, com `verify_images=False`, nenhum erro.
 
 ## 6. Plano de testes
 
@@ -156,6 +160,7 @@ Nada é mockado além do sistema de arquivos temporário. O CA-25 usa `pytest.im
 - Proporções finais de **imagens** podem divergir de 70/15/15 porque o número de fotos por peça varia; o `split_v<N>.json` registra as contagens reais.
 - Com poucos dados por estrato (ex.: `unusable` de porca), o teste pode ficar com 1 peça só. Registre no relatório de dados; não altere a regra sem ADR.
 - `split_v1` só deve ser gerado com os dados reais da S3 (marco "teste final congelado" do `docs/plan.md`).
+- **`too_many_jpeg_scans` (SEC-24-03):** não "conserte" a foto no pipeline. Não corte os bytes depois do primeiro `FF D9` e não reconte os marcadores de outro jeito: um `FF D9` pode aparecer dentro de um segmento APPn ou COM, e a contagem ficaria abaixo do número real de scans, o que reabriria o ataque fechado pela SPEC-024. Também não use `verify_images=False` para fazer a validação passar. O caminho é refotografar com a "foto com movimento" desligada (`docs/dataset-protocol.md` §3).
 
 ## 8. Definição de pronto
 
@@ -164,3 +169,10 @@ Nada é mockado além do sistema de arquivos temporário. O CA-25 usa `pytest.im
 - [ ] CI verde (sem torch); `ruff` limpo
 - [ ] README de `ml/` com os comandos de `validate`, `report`, `split` e `agreement`
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-12 | §4.1: problema novo `too_many_jpeg_scans` (a mensagem do `load_image` contém `JPEG scans`), separado de `unreadable_image`, e linhas de resumo `count <code>: <n>` no `validate`. CA-28 novo. §7: não cortar no `FF D9`, não recontar e não usar `verify_images=False` para contornar. Nenhum CA existente muda (o CA-07 continua imprimindo as 3 linhas de problema; o resumo vem depois delas). SPEC marcada como "Aguardando reaprovação humana". | SEC-24-03 de `reviews/SPEC-024/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

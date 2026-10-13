@@ -6,7 +6,7 @@
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
-| Depende de | SPEC-002, SPEC-003, SPEC-023 (`qc-contracts` 0.2.0) |
+| Depende de | SPEC-002, SPEC-003, SPEC-023 (`qc-contracts` 0.2.0), SPEC-024 (só para a migração das expectativas de versão, §3.1) |
 | Semana alvo | S2 |
 | Requisitos cobertos | RF-06, RF-15, RNF-04 (lado da API), RNF-06, R-02, R-03, R-05 |
 | ADRs relevantes | ADR-006 (FastAPI + Supabase + psycopg), ADR-009 (publisher HTTP), ADR-008 (Render/Supabase free), ADR-012 (idioma) |
@@ -33,6 +33,17 @@ Um dispositivo registrado grava inspeções via `POST /api/v1/inspections` e `/i
   - `test_ca13_ruff_and_full_suite` (e o helper `_clean_env`) de `packages/contracts/tests/acceptance/test_spec_023.py`.
 
   No lugar de cada um, fica um comentário de uma linha, em inglês: `# CA-15: checked by CI and by the test-report, not by a test (docs/architecture.md section 10).` (com `CA-13` no arquivo da SPEC-023). O developer não toca em `tests/acceptance/`.
+- **Tester desta SPEC (manutenção, "Expectativas de versão" de `docs/architecture.md` §10):** migração única das expectativas de versão dos testes de aceite dos pacotes compartilhados. Esta SPEC não muda a versão de nenhum pacote compartilhado. Ela faz a migração agora porque o tester já mexe num desses arquivos (a remoção acima), e assim o próximo aumento de versão não precisa reeditar os arquivos antigos. "Forma do §10" = coerência `<mod>.__version__ == importlib.metadata.version("<dist>")`, formato `\d+\.\d+\.\d+` e `piso <= versão < (1, 0, 0)` por tupla.
+
+  | Arquivo | O que muda |
+  |---|---|
+  | `packages/preprocess/tests/acceptance/test_spec_002.py` | CA-01: `"0.3.0"` exato → forma do §10, piso `(0, 1, 0)`. A docstring do módulo deixa de citar um número de versão |
+  | `packages/preprocess/tests/acceptance/test_spec_023.py` | CA-01: as asserções exatas do `qc-preprocess` (`"0.3.0"`) e do `qc-contracts` (`"0.2.0"`) → forma do §10, piso `(0, 2, 0)` para os dois. A docstring fica (cita a 0.2.0, que a SPEC-023 introduziu) |
+  | `packages/preprocess/tests/acceptance/test_spec_024.py` | CA-01: o `qc-preprocess` continua exato (`"0.3.0"`, SPEC vigente); `qc_contracts.__version__ == "0.2.0"` → forma do §10, piso `(0, 2, 0)`. CA-09 (`test_ca09_old_preprocess_acceptance_files_pass`): remover as asserções textuais que procuram os literais `"0.3.0"` e `"0.2.0"` no texto dos arquivos antigos, mantendo a execução em subprocesso e a checagem dos nomes dos testes; e trocar `"error" not in out.lower()` por uma regex na linha de resumo, por exemplo `re.search(r"\b\d+ passed\b", out)` e `not re.search(r"\b\d+ (failed\|errors?)\b", out)` (RV-02 de `reviews/SPEC-024/r1-review-report.md`) |
+  | `packages/contracts/tests/acceptance/test_spec_002.py` | CA-01: `"0.2.0"` exato → forma do §10, piso `(0, 1, 0)`. A docstring do módulo deixa de citar um número de versão |
+  | `packages/contracts/tests/acceptance/test_spec_023.py` | CA-01: o `qc-contracts` continua exato (`"0.2.0"`, SPEC vigente); a parte do `qc-preprocess` (`"0.3.0"`) → forma do §10, piso `(0, 2, 0)` |
+
+  Nada mais muda nesses arquivos além de imports e helpers que ficarem sem uso, ou que a forma do §10 exigir (`re`).
 
 ### 3.2 Fora
 
@@ -133,13 +144,20 @@ Contexto comum: banco de teste migrado (fixtures `migrated_db`/`clean_db` da SPE
 - **CA-25 (security, SEC-03)** — Dado a chave `KE` e `edge-01` com `last_seen_at` nulo, quando `POST /api/v1/inspections` recebe `P(X)` com `grade_score=1e-50`, e quando `POST /api/v1/inspections/batch` recebe `[P(A), P(B)]` em que `P(B)` tem `type_confidence=5e-324`, então cada resposta é 422 com o corpo exato `{"detail": "Value cannot be stored"}`, a tabela não ganha nenhuma linha (`X`, `A` ou `B`), `last_seen_at` continua nulo e nenhum registro de log contém `1e-50` nem `5e-324`; e `P(Y)` com `type_confidence=1e-40` (subnormal representável em `float4`) responde 201.
 - **CA-26 (security)** — Dado a chave `KE`, quando o corpo é o JSON de `P(X)` com o valor de `latency_ms` substituído, no texto, por um inteiro de 5 000 dígitos (corpo abaixo de 256 KB), então a resposta tem status 400 ou 422 (nunca 500), o corpo não contém `Traceback` e nada é gravado.
 - **CA-27 (manutenção, `architecture.md` §10)** — Dado o repositório desta SPEC, quando se roda `uv run pytest --collect-only -q tests/acceptance/test_spec_022.py packages/contracts/tests/acceptance/test_spec_023.py`, então o código de saída é 0, a saída não lista `test_ca15_ruff_and_full_suite_without_ci_and_db_url` nem `test_ca13_ruff_and_full_suite`, e os demais testes desses dois arquivos continuam coletados (a contagem de cada arquivo cai exatamente 1 em relação à `main`).
+- **CA-28 (manutenção, "Expectativas de versão" de `architecture.md` §10)** — *Dado* os arquivos `packages/*/tests/acceptance/test_spec_*.py` desta SPEC, *quando* analisados com `ast`, *então*:
+  - (a) toda comparação `==` entre um atributo `__version__` ou uma chamada `importlib.metadata.version(...)`, de um lado, e uma string literal, do outro, está só no CA-01 de `packages/preprocess/tests/acceptance/test_spec_024.py` (do `qc-preprocess`, com `"0.3.0"`) e no CA-01 de `packages/contracts/tests/acceptance/test_spec_023.py` (do `qc-contracts`, com `"0.2.0"`);
+  - (b) cada um dos 5 arquivos da tabela do §3.1 contém, para cada pacote cuja versão verificava antes, a comparação `<mod>.__version__ == importlib.metadata.version("<dist>")`;
+  - (c) as docstrings de módulo dos dois `test_spec_002.py` não casam `\d+\.\d+\.\d+`;
+  - (d) `test_spec_024.py` não contém mais `"error" not in out.lower()`.
+
+  Além disso, `uv run pytest --collect-only -q` nesses 5 arquivos coleta, em cada um, o mesmo número de testes da `main`. A exceção é `packages/contracts/tests/acceptance/test_spec_023.py`, que coleta 1 a menos (CA-27).
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
 | Unitário (autor) | `hash_api_key`, `require_read_key`, middleware de limite (sem banco), settings; rotas e script contra o banco de teste | `api/tests/` |
-| Aceite (tester) | Um teste por CA (marcados `db`, exceto CA-17, CA-19, CA-20 e CA-27); a remoção dos dois testes de §3.1 | `api/tests/acceptance/test_spec_004.py`, `tests/acceptance/test_spec_022.py`, `packages/contracts/tests/acceptance/test_spec_023.py` |
+| Aceite (tester) | Um teste por CA (marcados `db`, exceto CA-17, CA-19, CA-20, CA-27 e CA-28); a remoção dos dois testes do §3.1 e a migração das expectativas de versão do §3.1 | `api/tests/acceptance/test_spec_004.py`, `tests/acceptance/test_spec_022.py` e os 5 arquivos da tabela do §3.1 |
 
 Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco" usa uma porta fechada local. O script é testado com `subprocess` e `sys.executable`.
 
@@ -153,6 +171,7 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 - `psycopg.DataError` é a mesma classe de `psycopg.errors.DataError`, base de todos os erros SQLSTATE `22`. Capture-a só em volta da escrita (`insert` e `update devices`), nunca de forma genérica: `IntegrityError` (classe `23`) e `OperationalError` continuam com o tratamento atual.
 - **Alternativas ao 422 do SEC-03, não adotadas:** (a) migração `002` trocando as três colunas `real` por `double precision`: muda o schema aprovado da SPEC-003 (e o CA-04 dela), exige SPEC e migração novas e ainda deixaria a API sem rede de segurança para a classe `22`; (b) rejeitar `0 < x < 1e-30` no contrato (minor 0.3.0): cria uma regra numérica arbitrária e um aumento de versão do contrato para um valor que nenhum produtor legítimo emite. O 422 resolve o efeito real (500 e lote reenviado para sempre) com o menor diff.
 - Até a remoção do §3.1, cada `uv run pytest -q` roda a suíte 4 vezes (RV-01 de `reviews/SPEC-023/r1-review-report.md`). Remova os dois testes no início da etapa de teste, para encurtar as execuções seguintes.
+- **Migração das expectativas de versão (§3.1, CA-28):** ela não muda o que os outros CAs desses 5 arquivos verificam. Se algum teste além dos de versão (e do CA-09 da SPEC-024, já listado) precisar mudar para a suíte passar, registre `SPEC_ISSUE` e pare. Os testes migrados continuam passando com as versões atuais (0.3.0 e 0.2.0), o que é verificado pela execução da suíte (CI e test-report), não por um teste que rode o pytest em subprocesso. O reviewer confere que o diff desses arquivos se limita ao que a tabela do §3.1 lista.
 
 ## 8. Definição de pronto
 
@@ -169,4 +188,6 @@ Banco: Postgres 16 de teste (SPEC-001/003). Sem mock de banco; a "app sem banco"
 | 2026-10-12 | Mudanças: (a) dependência da SPEC-023 (`qc-contracts` 0.2.0); (b) nota em §4.5 sobre o teto de `latency_ms` (422, nunca 500); (c) §4.6 exige `re.fullmatch` para `--device-id`; (d) o CA-01 compara `contract_version` com `qc_contracts.__version__`; (e) o CA-08 ganhou o caso `latency_ms=2147483648`; (f) o CA-23 ganhou o caso `"edge-01\n"`; (g) CA-24 novo, com os limites de `latency_ms` na rota única e no lote. Nenhum outro requisito muda. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-02 (RV-03) e RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-12 | Mudanças: (a) §4.5: `psycopg.DataError` (SQLSTATE `22`) na escrita → `rollback` e 422 `{"detail": "Value cannot be stored"}`, com a precedência atualizada; (b) §4.5: inteiro JSON com mais de 4 300 dígitos → 4xx, nunca 500; (c) §3.1: o tester remove os dois testes que rodam a suíte inteira em subprocesso (CA-15 da SPEC-022 e CA-13 da SPEC-023), conforme a regra nova de `architecture.md` §10; (d) CAs novos: CA-25 (underflow de `float4` → 422), CA-26 (inteiro de 5 000 dígitos → 4xx) e CA-27 (remoção dos meta-testes); (e) §7 com as alternativas não adotadas. Nenhum CA existente mudou. SPEC marcada como "Aguardando reaprovação humana". | SEC-03 e "Notas para a SPEC-004" de `reviews/SPEC-023/r1-security-report.md`; RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-12 | Mudanças: (a) §3.1: o tester faz a migração única das expectativas de versão dos testes de aceite dos pacotes compartilhados (regra nova de `architecture.md` §10), em 5 arquivos, incluindo a correção do RV-02 da SPEC-024 no `test_spec_024.py`; (b) dependência da SPEC-024 (já mergeada), só por essa migração; (c) CA-28 novo; (d) §6 e §7 atualizadas. Nenhum requisito da API muda, e nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | RV-04 (e RV-02) de `reviews/SPEC-024/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
