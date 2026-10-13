@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-002, SPEC-023, SPEC-024 (`qc-preprocess` 0.3.0) |
