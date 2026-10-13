@@ -10,10 +10,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-import os
 import re
-import subprocess
-import sys
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -192,48 +189,7 @@ def test_ca06_readme_version_history_and_max_latency() -> None:
 # --------------------------------------------------------------------------- CA-13
 
 
-def _clean_env() -> dict[str, str]:
-    env = dict(os.environ)
-    for key in ("PYTEST_ADDOPTS", "PYTEST_CURRENT_TEST", "PYTEST_PLUGINS"):
-        env.pop(key, None)
-    env["PARTQC_SPEC023_CA13_INNER"] = "1"
-    return env
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(
-    os.environ.get("PARTQC_SPEC023_CA13_INNER") == "1", reason="inner run of CA-13 itself"
-)
-def test_ca13_ruff_and_full_suite() -> None:
-    env = _clean_env()
-    for cmd in (["check", "."], ["format", "--check", "."]):
-        result = subprocess.run(
-            [sys.executable, "-m", "ruff", *cmd],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        assert result.returncode == 0, (cmd, result.stdout + result.stderr)
-
-    # SPEC-022 CA-15 runs the whole suite in a subprocess too; deselect it here so the inner
-    # run does not nest a third full run (it is still covered by the outer run).
-    spec022 = (
-        "tests/acceptance/test_spec_022.py::test_ca15_ruff_and_full_suite_without_ci_and_db_url"
-    )
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "--deselect", spec022],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    out = result.stdout + result.stderr
-    assert result.returncode == 0, out[-4000:]
-    assert re.search(r"\b\d+ passed\b", out), out[-4000:]
-    assert not re.search(r"\b\d+ (failed|error)", out), out[-4000:]
+# CA-13: checked by CI and by the test-report, not by a test (docs/architecture.md section 10).
 
 
 # --------------------------------------------------------------------------- extras
