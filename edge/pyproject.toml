@@ -12,7 +12,11 @@ dependencies = [
     "qrcode",
     "httpx",
     "python-multipart",
+    "pydantic-settings>=2",
 ]
+
+[project.scripts]
+qc-edge = "qc_edge.cli:main"
 
 [build-system]
 requires = ["hatchling"]
