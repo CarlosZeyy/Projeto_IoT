@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PartQC — captura</title>
+<link rel="stylesheet" href="/static/capture.css">
+</head>
+<body>
+<main>
+<h1>PartQC — captura</h1>
+<label class="field">Lote
+<input type="text" id="lot_id" name="lot_id" maxlength="40" autocomplete="off" placeholder="L-001">
+</label>
+<label class="field">Modo
+<select id="mode" name="mode">
+<option value="inspect" selected>inspeção</option>
+<option value="collect" disabled>coleta (em breve)</option>
+</select>
+</label>
+<label class="shoot" id="shoot">Fotografar
+<input type="file" accept="image/*" capture="environment">
+</label>
+<p id="status" class="status" role="status"></p>
+<section id="result" class="card" hidden>
+<p class="verdict" id="verdict"></p>
+<p><span id="object_type"></span> <span id="grade"></span></p>
+<p class="review" id="review" hidden>Revisar</p>
+<p class="times">Borda: <span id="latency"></span> ms · Total: <span id="total"></span> ms</p>
+</section>
+</main>
+<script src="/static/capture.js"></script>
+</body>
+</html>
