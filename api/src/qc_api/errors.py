@@ -1,4 +1,4 @@
-"""Error bodies and exception handlers (SPEC-004 sections 4.3 to 4.5).
+"""Error bodies and exception handlers (SPEC-004 sections 4.3 to 4.5, SPEC-005 section 4.3).
 
 Every error body is ``{"detail": ...}`` without stack traces (docs/architecture.md section 3.3).
 Validation errors keep FastAPI's default 422 (``{"detail": [...]}``). When the default handler
@@ -25,6 +25,7 @@ DETAIL_BODY_TOO_LARGE = "Request body too large"
 DETAIL_DB_UNAVAILABLE = "Database unavailable"
 DETAIL_VALUE_NOT_STORABLE = "Value cannot be stored"
 DETAIL_INTERNAL = "Internal server error"
+DETAIL_TOO_MANY_BUCKETS = "Too many buckets; narrow the time range or use a larger bucket"
 
 
 class DatabaseUnavailableError(Exception):

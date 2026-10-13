@@ -17,11 +17,20 @@ from typing import Annotated
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from qc_api.auth import require_device
+from qc_api.auth import require_device, require_read_key
 from qc_api.db import insert_inspections
 from qc_api.errors import DETAIL_DEVICE_MISMATCH, DETAIL_VALUE_NOT_STORABLE
-from qc_api.routers import API_PREFIX
-from qc_contracts import BatchCreate, BatchResult, InspectionCreate, InspectionCreated
+from qc_api.filters import InspectionFilters, Pagination
+from qc_api.repositories import inspections as repository
+from qc_api.routers import API_PREFIX, READ_ERROR_RESPONSES
+from qc_contracts import (
+    BatchCreate,
+    BatchResult,
+    InspectionCreate,
+    InspectionCreated,
+    InspectionRead,
+    Page,
+)
 
 logger = logging.getLogger("qc_api")
 
@@ -87,3 +96,20 @@ def create_inspections_batch(
 ) -> BatchResult:
     """Create 1 to 100 inspections in one transaction; results in the same order."""
     return BatchResult(results=_write(request, device_id, payload.items))
+
+
+@router.get(
+    "/inspections",
+    response_model=Page[InspectionRead],
+    responses=READ_ERROR_RESPONSES,
+    dependencies=[Depends(require_read_key)],
+)
+def list_inspections(
+    request: Request,
+    filters: Annotated[InspectionFilters, Depends()],
+    page: Annotated[Pagination, Depends()],
+) -> Page[InspectionRead]:
+    """Filtered inspections, ``inspected_at desc, inspection_id asc`` (SPEC-005 section 4.3)."""
+    return repository.list_inspections(
+        request.app.state.pool, filters, limit=page.limit, offset=page.offset
+    )
