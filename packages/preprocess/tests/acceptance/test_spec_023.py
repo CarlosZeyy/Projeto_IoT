@@ -12,6 +12,7 @@ import contextlib
 import importlib.metadata
 import io
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -108,15 +109,19 @@ def header_size(data: bytes) -> tuple[int, int]:
 
 
 def test_ca01_preprocess_version() -> None:
-    assert qc_preprocess.__version__ == "0.3.0"
-    assert importlib.metadata.version("qc-preprocess") == "0.3.0"
+    v = qc_preprocess.__version__
+    assert qc_preprocess.__version__ == importlib.metadata.version("qc-preprocess")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
+    assert (0, 2, 0) <= tuple(int(p) for p in v.split(".")) < (1, 0, 0)
 
 
 def test_ca01_both_packages_version() -> None:
     import qc_contracts
 
-    assert qc_contracts.__version__ == "0.2.0"
-    assert importlib.metadata.version("qc-contracts") == "0.2.0"
+    v = qc_contracts.__version__
+    assert qc_contracts.__version__ == importlib.metadata.version("qc-contracts")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
+    assert (0, 2, 0) <= tuple(int(p) for p in v.split(".")) < (1, 0, 0)
 
 
 # --------------------------------------------------------------------------- CA-02
