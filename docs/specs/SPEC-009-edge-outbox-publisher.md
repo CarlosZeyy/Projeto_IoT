@@ -6,7 +6,7 @@
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
-| Depende de | SPEC-004, SPEC-007 |
+| Depende de | SPEC-004, SPEC-007, SPEC-025 (validação do `Host` do console: tem de estar `Done` antes do merge desta, SEC-01 de `reviews/SPEC-007/r1-security-report.md`) |
 | Semana alvo | S3 |
 | Requisitos cobertos | RF-06, RF-07, RNF-04, RNF-05, RNF-09, RNF-10 |
 | ADRs relevantes | ADR-002, ADR-009 |
@@ -75,7 +75,7 @@ class SqliteOutbox:                     # implementa InspectionSink (SPEC-007)
 class PublishResult: inspection_id: UUID; status: Literal["created", "duplicate"]
 class PublishTransientError(Exception): ...   # rede, timeout, 5xx, 429, outros 4xx inesperados, resposta malformada
 class PublishAuthError(Exception): ...        # 401, 403
-class PublishRejectedError(Exception): ...    # 422 ou 413; .detail com o corpo
+class PublishRejectedError(Exception): ...    # 422 ou 413; .detail = resumo da recusa (abaixo), nunca o corpo
 class Publisher(Protocol):
     def publish_batch(self, items: Sequence[InspectionCreate]) -> list[PublishResult]: ...
     def check_health(self) -> bool: ...
@@ -85,6 +85,12 @@ class HttpPublisher:
 ```
 
 - `publish_batch`: `POST {base_url}/api/v1/inspections/batch`, header `X-API-Key`, corpo `qc_contracts.BatchCreate(items=...)` em JSON, 1 a 100 itens. A resposta é validada como `qc_contracts.BatchResult` e precisa ter `results` do mesmo tamanho e com os mesmos ids na mesma ordem; senão `PublishTransientError`.
+- **Resumo da recusa (SEC-04-04 de `reviews/SPEC-004/r2-security-report.md`):** no 422 padrão do FastAPI, a API ecoa o `input` enviado (até 256 KB). Para 413 e 422, `PublishRejectedError.detail` é:
+  - `"HTTP <status>: <detail>"`, quando o corpo é JSON com `detail` do tipo string (ex.: `HTTP 422: Value cannot be stored`). O texto é cortado em 200 caracteres, e cada caractere de controle vira `?`;
+  - `"HTTP <status>: <n> validation errors"`, quando `detail` é uma lista (`n` = tamanho da lista);
+  - `"HTTP <status>"`, nos outros casos (corpo que não é JSON ou sem `detail`).
+
+  O corpo da resposta **nunca** vai para o log, para `last_error` nem para a mensagem da exceção. O log da recusa registra só o status, o resumo e a quantidade de itens do lote enviado.
 - `check_health`: `GET {base_url}/api/v1/health`, `True` só com 200.
 - `CLOUD_API_URL` precisa ser `https://`, exceto host `localhost` ou `127.0.0.1` (testes locais); outro caso → erro na subida, código 2. É o único módulo do `qc_edge` que importa `httpx` (SPEC-007, CA-17).
 
@@ -107,7 +113,7 @@ Ciclo (`run_once`):
 3. `publish_batch(itens)`:
    - sucesso → `mark_sent` de todos (`created` e `duplicate` contam igual), `last_success_at = now`, estado `online`;
    - `PublishTransientError` → `mark_retry` com `attempts += 1` e `next_attempt_at = now + min(60, 2**n · U(0,8; 1,2))` s, onde `n` é o `attempts` **antes** do incremento; estado `offline`;
-   - `PublishRejectedError` → bissecção: divide o lote ao meio e publica cada metade; um item sozinho rejeitado vira `dead` com `last_error` = detalhe; os demais seguem as regras acima;
+   - `PublishRejectedError` → bissecção: divide o lote ao meio e publica cada metade; um item sozinho rejeitado vira `dead` com `last_error` = o resumo da recusa (§4.2); os demais seguem as regras acima;
    - `PublishAuthError` → estado `auth_error`, **sem** incrementar `attempts`, log de erro único ("verifique DEVICE_API_KEY e reinicie").
 4. Exceção inesperada → log com stack trace, `mark_retry` e o laço continua (a thread nunca morre).
 
@@ -134,6 +140,7 @@ Os testes usam `httpx.MockTransport` com uma **nuvem falsa** que implementa a id
 - **CA-15** — *Dado* 4 threads fazendo `put` de 50 inspeções cada, em paralelo com `run_once`, *então* o outbox tem 200 linhas e nenhuma exceção ocorreu.
 - **CA-16** — *Dado* as suítes, *quando* rodo `pytest --cov=qc_edge.outbox`, *então* a cobertura é ≥ 80%.
 - **CA-17 (manual)** — Demo offline: 1. borda ligada com `DEVICE_API_KEY` válida e a API publicada; 2. desligar o Wi-Fi do notebook (no plano B, os dados móveis do celular); 3. inspecionar 3 peças: o console mostra `offline` e `pending=3`; 4. religar; 5. em até 90 s o console mostra `online`, `pending=0`, e as 3 inspeções aparecem no dashboard.
+- **CA-18 (security, SEC-04-04)** — *Dado* um lote de 4 itens em que o 3º é rejeitado (a nuvem falsa responde 422 a qualquer lote que o contenha) e, em casos separados, o corpo do 422 sendo (a) o formato padrão do FastAPI com 2 erros, cujos campos `input` contêm um marcador gerado no teste que não aparece em nenhum item enviado, e (b) `{"detail": "Value cannot be stored"}`, *quando* `run_once` roda até esvaziar com `caplog` no nível DEBUG, *então* o item rejeitado fica `dead` com `last_error` exatamente `HTTP 422: 2 validation errors` no caso (a) e `HTTP 422: Value cannot be stored` no caso (b), os outros 3 ficam `sent`, e nenhum registro de log nem nenhuma coluna `last_error` contém o marcador.
 
 ## 6. Plano de testes
 
@@ -157,4 +164,12 @@ Mock só de fronteiras: rede da nuvem (MockTransport), relógio e RNG. O SQLite 
 - [ ] review-report APPROVED + security-report PASS
 - [ ] CI verde; `ruff` limpo; cobertura de `qc_edge.outbox` ≥ 80%
 - [ ] `edge/README.md` e `.env.example` atualizados
+- [ ] SPEC-025 `Done` (merge feito) antes do merge desta
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-13 | Mudanças: (a) dependência da SPEC-025 (validação do `Host` do console), que precisa estar `Done` antes do merge desta, porque a partir daqui uma inspeção injetada por DNS rebinding chegaria à nuvem como `live`; (b) §4.2: `PublishRejectedError.detail` passa a ser um resumo da recusa (status, `detail` em texto ou contagem de erros), e o corpo do 422 nunca vai para o log nem para `last_error`; §4.3 usa esse resumo no item `dead`; (c) CA-18 novo; (d) §8 com o item da SPEC-025. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-01 de `reviews/SPEC-007/r1-security-report.md`; SEC-04-04 de `reviews/SPEC-004/r2-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

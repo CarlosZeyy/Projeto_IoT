@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="5">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PartQC — console da borda</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 1.5rem; color: #1b1b1b; }
+h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+.pairing { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+.qr svg { width: 260px; height: 260px; background: #fff; }
+.url { font-family: monospace; word-break: break-all; }
+.warning { background: #fff3cd; border: 1px solid #e0b000; padding: 0.6rem; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #ccc; padding: 0.3rem 0.6rem; text-align: left; }
+dl { display: grid; grid-template-columns: max-content auto; gap: 0.2rem 1rem; margin: 0; }
+dt { font-weight: bold; }
+dd { margin: 0; }
+</style>
+</head>
+<body>
+<h1>PartQC — console da borda (<span>$device_id</span>)</h1>
+$ip_warning
+<div class="pairing">
+<div class="qr">$qr_svg</div>
+<div>
+<p>Leia o QR code com o celular na mesma rede ou abra:</p>
+<p class="url">$capture_url</p>
+$other_ips
+</div>
+</div>
+<h2>Estado</h2>
+<dl>
+<dt>Modelo</dt><dd>$model_state</dd>
+<dt>Pendentes</dt><dd id="sink-pending">$sink_pending</dd>
+<dt>Com falha definitiva</dt><dd>$sink_dead</dd>
+<dt>Conectividade com a nuvem</dt><dd>$connectivity</dd>
+<dt>Último envio</dt><dd>$last_success_at</dd>
+</dl>
+<h2>Últimas inspeções desta sessão</h2>
+<table>
+<thead><tr><th>Hora</th><th>Lote</th><th>Tipo</th><th>Grau</th></tr></thead>
+<tbody>
+$rows
+</tbody>
+</table>
+</body>
+</html>

@@ -144,7 +144,12 @@ Resposta:
 - **Leitura:** chave única `READ_API_KEY` (variável de ambiente da API), usada pelo dashboard.
 - Sem chave ou com chave inválida: 401.
 
-**Outras proteções:** corpo limitado a 256 KB, CORS fechado (o dashboard chama do servidor, não do navegador) e documentação em `/docs`. Um valor que o contrato aceita mas o banco recusa (`psycopg.DataError`, SQLSTATE classe `22`, como o underflow das colunas `real` do §5) vira 422 `{"detail": "Value cannot be stored"}`, com `rollback` de tudo, e nunca 500 (SPEC-004).
+**Outras proteções:** corpo limitado a 256 KB, CORS fechado (o dashboard chama do servidor, não do navegador) e documentação em `/docs`. Um valor que o contrato aceita mas o banco recusa vira 422 `{"detail": "Value cannot be stored"}`, com `rollback` de tudo, e nunca 500:
+
+- `psycopg.DataError` (SQLSTATE classe `22`, como o underflow das colunas `real` do §5), desde a SPEC-004;
+- `psycopg.IntegrityError` (classe `23`, como uma `check` do banco mais estrita que o contrato depois de uma migração), a partir da SPEC-005. Hoje esse caminho é inalcançável, porque as `check` espelham o contrato (§5).
+
+**Erros de banco no log** (regra para o servidor da API, `qc_api`; SEC-04-01 de `reviews/SPEC-004/r2-security-report.md`): de um `psycopg.Error`, o log registra só a rota, o `device_id` (quando houver), a classe da exceção e o SQLSTATE. Nunca `str(exc)`, `exc.diag.*` nem o traceback, que repete a mensagem: a mensagem do servidor pode trazer os valores da linha (`Failing row contains (...)`). Vale também para o 500 genérico (SPEC-005). Exceção aceita: o logger `psycopg.pool` da dependência, que registra falhas de conexão com o host, a porta e o usuário do pooler, sem a senha (SEC-04-05 do mesmo relatório). O `infra/migrate.py` não é servidor: roda só na máquina do humano e mostra o `DETAIL` do servidor (SPEC-015 §4.7).
 
 ## 5. Banco (Supabase Postgres)
 
@@ -177,14 +182,14 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 
 | Rota | Quem usa | Descrição |
 |---|---|---|
-| `GET /` | operador (navegador do notebook) | Console com QR code para `http://<ip-lan>:<porta>/capture?t=<token>`, status do modelo, tamanho do outbox, último envio, últimas inspeções |
+| `GET /` | operador (navegador do notebook) | Console com QR code para `http://<ip-lan>:<porta>/capture?t=<token>`, status do modelo, tamanho do outbox, último envio, últimas inspeções. Só responde a cliente de loopback, sem headers de proxy e com `Host` de loopback (`127.0.0.1`, `localhost` ou `[::1]` na porta configurada, SPEC-025); senão, 403. Testes que chamam o console usam a URL base `http://127.0.0.1:<porta>` |
 | `GET /capture?t=<token>` | celular | Página HTML/JS mínima: campo de lote, modo (inspeção/coleta), botão "Fotografar" (`<input type=file accept="image/*" capture="environment">`) e resultado. O JS redimensiona para no máximo 1280 px no lado maior e reencoda em JPEG (q=0,9) via canvas, o que também corrige a rotação EXIF |
 | `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG; limites próprios da rota: ≤ 3 MiB e ≤ 4 M pixels, checados pelo cabeçalho antes de decodificar (SPEC-007 §4.7); depois, as regras do `qc_preprocess.load_image`: ≤ 40 M pixels, proporção ≤ 10:1, JPEG com ≤ 64 marcadores de scan; tudo dentro do limitador de decodificações, §9), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
 | `GET /api/status` | console e celular | Modelo (versão, sha), outbox (pendentes), conectividade com a nuvem |
 
 **Sem modelo carregado** (`MODEL_DIR` vazio, por exemplo na S2, antes do primeiro treino): a borda sobe normalmente, o modo `collect` funciona e o modo `inspect` responde 503 com `{"detail": "model not loaded"}` (a página mostra o rótulo PT-BR). O stub de desenvolvimento (`--stub-model`, SPEC-007) **nunca** publica na nuvem.
 
-**Token de sessão:** 32 bytes aleatórios (`secrets.token_urlsafe`), gerados na inicialização (ou via `EDGE_SESSION_TOKEN`) e comparados em tempo constante. Requisição sem token válido recebe 401.
+**Token de sessão:** 32 bytes aleatórios (`secrets.token_urlsafe`), gerados na inicialização (ou via `EDGE_SESSION_TOKEN`) e comparados em tempo constante. Requisição sem token válido recebe 401. Em operação, `EDGE_SESSION_TOKEN` fica vazio, para que cada subida gere um token novo (SPEC-025).
 
 ### 6.2 Fluxo de uma inspeção
 
@@ -214,7 +219,7 @@ Nada é enviado à nuvem e nenhuma inferência é feita. Formato do manifest em 
 
 ### 6.4 Configuração (`.env` da borda)
 
-`EDGE_HOST` (0.0.0.0), `EDGE_PORT` (8000), `EDGE_DATA_DIR` (padrão `edge/data`, no `.gitignore`), `EDGE_SESSION_TOKEN` (opcional), `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` (os três últimos são opcionais e sobrescrevem o `decision.json`).
+`EDGE_HOST` (0.0.0.0; só IPv4 literal, SPEC-025), `EDGE_PORT` (8000), `EDGE_DATA_DIR` (padrão `edge/data`, no `.gitignore`), `EDGE_SESSION_TOKEN` (opcional), `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` (os três últimos são opcionais e sobrescrevem o `decision.json`).
 
 ## 7. Modelo (`qc-ml`) — artefatos
 
@@ -235,7 +240,7 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
 
 ## 8. Rede e operação
 
-- A borda escuta em `0.0.0.0:8000`. No Arch, libere a porta 8000/tcp no firewall ativo (ufw, firewalld ou nftables).
+- A borda escuta em `0.0.0.0:8000`. No Arch, libere a porta 8000/tcp no firewall ativo (ufw, firewalld ou nftables) **só para a sub-rede** da Wi-Fi de casa ou do hotspot, só durante a sessão, e desfaça a regra no fim. Não rode a borda com a porta aberta numa rede que não seja da dupla. Comandos no `edge/README.md` (SPEC-025).
 - **Em casa (desenvolvimento e testes):** celular e notebook na mesma rede Wi-Fi.
 - **Na apresentação (padrão):** o notebook se conecta ao **hotspot do celular** e o celular acessa o IP do notebook nessa rede. A rede fica sob controle da dupla, independente do Wi-Fi do campus (que pode isolar os clientes), e o notebook chega à nuvem pelos dados móveis.
 - **Plano C:** **ancoragem USB** (USB tethering): o celular ligado ao notebook pelo cabo cria uma rede local entre os dois, e o celular acessa o IP do notebook nessa interface.
@@ -248,11 +253,14 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
 |---|---|
 | Alguém na LAN envia fotos falsas | Token de sessão no QR + 401 |
 | Console (que exibe o token) exposto por proxy ou túnel indevido | Console só para loopback **e** 403 se houver headers de proxy (`X-Forwarded-For`, `CF-Connecting-IP`); uvicorn com `proxy_headers=False` (defesa em profundidade; túneis são proibidos pela §8) |
+| Página hostil no navegador do notebook usa DNS rebinding para ler o token no console e injetar inspeções falsas | O console só responde com `Host` de loopback (`127.0.0.1`, `localhost` ou `[::1]` na porta configurada); senão, 403. Precisa estar `Done` antes do merge da SPEC-009, quando uma inspeção injetada chegaria à nuvem como `live` (SPEC-025; SEC-01 de `reviews/SPEC-007/r1-security-report.md`). As rotas com token não checam o `Host`: sem o token, nada é aceito |
+| Porta da borda alcançada fora da rede da dupla (Wi-Fi do campus, bridges do Docker) | Regra de firewall só para a sub-rede da LAN ou do hotspot, só durante a sessão (§8); o token cobre o resto |
+| Fotos lidas por outra conta local do notebook | `captures/` e `DATASET_DIR` com diretórios `0700` e arquivos `0600` (SPEC-025 e SPEC-010); retenção das fotos de inspeção em `docs/dataset-protocol.md` §9 (R-14) |
 | Chave de dispositivo vazada | Hash no banco; rotação por `register_device.py --rotate` |
 | Leitura indevida pela chave anon do Supabase | RLS sem políticas; a API usa `DATABASE_URL` só no servidor |
 | Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão. O `load_image` checa pelo cabeçalho, antes de decodificar, o limite de pixels (40 M) e de proporção (≤ 10:1), o que evita o OOM do resize (SPEC-023), e recusa JPEG com mais de 64 marcadores de scan (`FF DA`), o que limita a CPU gasta com scans progressivos repetidos (SPEC-024). Nenhum componente liga `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`: o `load_image` se recusa a rodar com ela ligada, e a borda se recusa a subir (SPEC-007) |
-| Muitos uploads simultâneos na borda (memória e CPU) | Toda chamada a `load_image` em `qc_edge` passa por um semáforo de decodificações (padrão 2, espera de 10 s, depois 503 `server busy`); vale para os modos `inspect` e `collect` (SPEC-007 §4.6, SPEC-010). Custo por slot no pior caso aceito: ~2,5 s de CPU e ~360 MB só com os limites do `load_image` (medido, SEC-24-02 de `reviews/SPEC-024/r1-security-report.md`); ~1,4 s e ~110 MB estimados com os limites próprios da rota (3 MiB e 4 M pixels, SPEC-007 §4.7) |
-| Valor aceito pelo contrato e recusado pelo banco | 422 com `rollback` (§4); o publisher da borda isola o item por bissecção e o marca como `dead` (SPEC-009) |
+| Muitos uploads simultâneos na borda (memória e CPU) | Toda chamada a `load_image` em `qc_edge` passa por um semáforo de decodificações (padrão 2, espera de 10 s, depois 503 `server busy`); vale para os modos `inspect` e `collect` (SPEC-007 §4.6, SPEC-010). Custo por slot no pior caso aceito: ~2,5 s de CPU e ~360 MB só com os limites do `load_image` (medido, SEC-24-02 de `reviews/SPEC-024/r1-security-report.md`); com os limites próprios da rota (3 MiB e 4 M pixels, SPEC-007 §4.7), **~4 s de CPU e ~90 MB acima da base (pico de 133 MB) medidos**, com os 2 slots serializados pelo GIL (~1 núcleo) (SEC-02 de `reviews/SPEC-007/r1-security-report.md`). A espera por um slot acontece no event loop e não ocupa thread do threadpool, que é compartilhado com o console e o `/api/status` (SPEC-025) |
+| Valor aceito pelo contrato e recusado pelo banco | 422 com `rollback` para os SQLSTATE das classes `22` e `23` (§4); o publisher da borda isola o item por bissecção e o marca como `dead`, e do 422 registra só o status, o `detail` em texto ou a contagem de erros, nunca o corpo, que ecoa o `input` (SPEC-009) |
 | Vazamento de segredo no Git | `.gitignore`, `.env.example` e a busca do reviewer (R-03) |
 
 **Ao subir a versão do Pillow no `uv.lock`** (qualquer SPEC; SEC-24-02, item c, de `reviews/SPEC-024/r1-security-report.md`): o limite de 64 scans foi medido com o Pillow 12.3.0, cujo libjpeg-turbo empacotado **não** decodifica JPEG com codificação aritmética (SOF9/SOF10). O `load_image` recusa esse JPEG com `InvalidImageError` em ~10 ms. Quem sobe o Pillow registra no dev-report o `PIL.features.version("libjpeg_turbo")` e confirma que um JPEG progressivo aritmético (gerado fora do repositório, por exemplo com `cjpeg -arithmetic -progressive`) continua recusado. O security-devops da SPEC confere. Se o JPEG passar a ser decodificado, o custo de scans sem dados pode subir: o limite tem de ser medido de novo, e isso vira uma SPEC do `qc-preprocess`.

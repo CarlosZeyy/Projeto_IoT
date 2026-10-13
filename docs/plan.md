@@ -37,12 +37,12 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [001](specs/SPEC-001-setup-repositorio.md) | Setup do repositório e ferramentas | developer | infra | — | S1 | Done |
 | [002](specs/SPEC-002-pacotes-compartilhados.md) | Pacotes compartilhados v0 (`qc-contracts` e `qc-preprocess`) | developer | contrato | 001 | S1 | Done |
 | [003](specs/SPEC-003-schema-banco.md) | Schema Supabase, migrações e RLS | developer | security | 002 | S2 | Done |
-| [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023, 024 | S2 | In Security (r2) |
+| [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023, 024 | S2 | Done |
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Ready |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Ready |
-| [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Ready |
+| [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | In Security (r1) |
 | [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | Ready |
-| [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007 | S3 | Ready |
+| [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007, 025 | S3 | Ready |
 | [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | Ready |
 | [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready |
 | [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | Ready |
@@ -58,6 +58,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [022](specs/SPEC-022-manutencao-setup.md) | Manutenção do setup (hook, CI sem senha, commits do architect) | developer | infra | 001 | S1 | Done |
 | [023](specs/SPEC-023-pacotes-compartilhados-0-2.md) | Pacotes compartilhados 0.2.0 (teto de `latency_ms`, proporção da imagem, flag de JPEG truncado) | developer | contrato, security | 002 | S2 | Done |
 | [024](specs/SPEC-024-preprocess-0-3-scans-jpeg.md) | `qc-preprocess` 0.3.0 (limite de scans do JPEG) | developer | security | 023 | S2 | Done |
+| [025](specs/SPEC-025-manutencao-borda-host-rede.md) | Manutenção da borda (Host do console, rede, limitador e permissões) | developer | security | 007 | S3 | Ready |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC.
 
@@ -67,7 +68,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 001 → 002 ─┬─► 003 → 004 ─┬─► 005, 006, 014 ─► 013 ─► 015 ─┐
            │              └─► 009 ◄──┐                      ├─► MVP (S4)
            └─► 007 ─┬─► 008 ─────────┼──────────────────────┤
-                    ├────────────────┘                      │
+                    ├─► 025 ─────────┘                      │
                     └─► 010 ─► 011 ─► 012 (modelo v1 → usado pela 008) ┘
 ```
 
@@ -75,6 +76,16 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 - A **SPEC-024** (`qc-preprocess` 0.3.0, SEC-01 do security-report da SPEC-023) entra **antes** da 007 (`023 → 024 → 007`). A 004 depende dela só pela migração das expectativas de versão (abaixo), e a 024 já está mergeada (PR #9).
 - As pendências de produção do executor de migrações (SPEC-003) ficam na **SPEC-015**. As duas regras de testes de `architecture.md` §10, "sem suíte dentro da suíte" e "expectativas de versão" (migração única), são aplicadas pelo tester da **SPEC-004**.
 - As pendências da SPEC-024: o dimensionamento do limitador e os limites próprios da rota de captura (3 MiB e 4 M pixels) entram na **SPEC-007** (§4.6 e §4.7) e são herdados pela **SPEC-010**. O problema `too_many_jpeg_scans` entra na **SPEC-011**, e a "foto com movimento" desligada, no `docs/dataset-protocol.md` §3.
+- As pendências dos portões r1 da **SPEC-007** (PR #12):
+  - **SPEC-025** (nova): validação do `Host` do console contra DNS rebinding (SEC-01, média), espera do limitador fora do threadpool (SEC-03), `EDGE_HOST` só IPv4 (SEC-04), permissões de `captures/` (SEC-06), CLI estrita (RV-05) e o `edge/README.md` (firewall por sub-rede e só em runtime, token novo a cada subida, aviso das bridges do Docker: SEC-05, SEC-07, RV-04). Ela tem de estar `Done` **antes do merge da SPEC-009** (`007 → 025 → 009`), que passou a depender dela;
+  - **SPEC-010**: permissões de `DATASET_DIR` (SEC-06). A retenção das fotos de inspeção está em `docs/dataset-protocol.md` §9;
+  - **SPEC-007** (texto, sem reaprovação): os números medidos do custo por slot (SEC-02).
+  - **Decisão futura:** depois do passo 6 do CA-20 da SPEC-007, se o maior arquivo real dos dois celulares ficar bem abaixo de 3 MiB, uma SPEC posterior pode baixar `CAPTURE_MAX_BYTES` e `CAPTURE_MAX_REQUEST_BYTES` para ~2× o maior medido (o custo da inundação de segmentos cai na mesma proporção). Pode entrar como emenda da SPEC-010, se ela ainda não tiver começado, ou numa SPEC curta.
+- As pendências da **SPEC-004** (mergeada):
+  - **SPEC-005**: `IntegrityError` na escrita → 422 com log só do SQLSTATE e 500 genérico sem a mensagem de `psycopg.Error` (SEC-04-01 = RV-01; regra em `architecture.md` §4);
+  - **SPEC-009**: o publisher registra do 422 só um resumo, nunca o corpo (SEC-04-04);
+  - **SPEC-015**: riscos aceitos no `deployment-plan.md` (rajada anônima no pool e log do `psycopg.pool`) e registro de dispositivos com `--env-file` (SEC-04-02, 03 e 05);
+  - **SPEC-025** (tester): as docstrings desatualizadas dos testes de aceite das SPECs 022 e 023 (RV-02).
 - O **ML depende de dados**: a coleta (humana) começa já na S1, mesmo antes da SPEC-010.
 - A SPEC-008 é desenvolvida com um **modelo dummy** (ONNX gerado nos testes, com as mesmas entradas e saídas) e não depende da SPEC-012. O modelo real é só um artefato trocado via `MODEL_DIR`.
 
@@ -83,3 +94,4 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | Data | Decisão |
 |---|---|
 | 2026-10-12 | Escopo em camadas: MVP parafuso/porca; Fase 2 ferramentas manuais; Fase 3 elétricas (só identificação); tornos e fresadoras fora |
+| 2026-10-13 | SPEC-025 (manutenção da borda) criada para as pendências da SPEC-007; a SPEC-009 passa a depender dela. Fotos de inspeção fora do dataset, com retenção até a entrega (`docs/dataset-protocol.md` §9) |

@@ -118,6 +118,14 @@ uv run --package qc-api python scripts/register_device.py --device-id edge-01 --
 
 A URL vem de `DATABASE_URL` (ou `--database-url`). Códigos de saída: `0` sucesso; `1` dispositivo já existente (sem `--rotate`), inexistente (com `--rotate`) ou falha de banco; `2` uso inválido (`--device-id` fora de `^[a-z0-9-]{3,32}$`, sem URL).
 
+### Gateway de borda (SPEC-007)
+
+```bash
+uv run --env-file .env --package qc-edge qc-edge --stub-model   # console em http://127.0.0.1:8000/
+```
+
+Variáveis, firewall no Arch, plano B (hotspot) e o roteiro do teste com os celulares estão em [edge/README.md](edge/README.md).
+
 ### CI
 
 O workflow `ci` (`.github/workflows/ci.yml`) roda em todo PR e em push na `main`: `uv sync --all-packages --frozen`, `ruff check`, `ruff format --check` e `pytest -q` com um serviço `postgres:16`. O teste `tests/test_dependency_isolation.py` garante, pelo `uv.lock`, que `qc-api` e `qc-dashboard` não dependem de torch, torchvision, timm nem onnxruntime (R-12).
