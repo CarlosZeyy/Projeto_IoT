@@ -333,6 +333,35 @@ def test_huge_json_integer_is_4xx(client: TestClient, device_keys, make_payload,
     assert _count(db) == 0
 
 
+@pytest.mark.parametrize("url", [URL, BATCH_URL])
+def test_bodies_the_default_422_cannot_encode_are_422(
+    client: TestClient, device_keys, db, caplog: pytest.LogCaptureFixture, url: str
+) -> None:
+    """T-01/T-02 of r1: binary, multipart and deeply nested bodies are 422, never 500 or logged."""
+    caplog.set_level(logging.DEBUG)
+    marker = "BODYMARK" + uuid.uuid4().hex
+    jpeg = b"\xff\xd8\xff" + marker.encode() + b"\xff" * 8
+    headers = _key(device_keys)
+    responses = [
+        client.post(url, files={"image": ("a.jpg", jpeg, "image/jpeg")}, headers=headers),
+        client.post(
+            url, content=jpeg, headers={**headers, "Content-Type": "application/octet-stream"}
+        ),
+        client.post(
+            url,
+            content=b"[" * 2000 + b"]" * 2000,
+            headers={**headers, "Content-Type": "application/json"},
+        ),
+    ]
+    for response in responses:
+        assert response.status_code == 422, response.text
+        assert all("input" not in error for error in response.json()["detail"])
+    assert _count(db) == 0
+    assert _last_seen(db) is None
+    assert marker not in caplog.text
+    assert "\\xff\\xd8\\xff" not in caplog.text
+
+
 def _race(client: TestClient, payload: dict, headers: dict[str, str]) -> list[int]:
     """Send ``payload`` from two threads released together by a barrier."""
     barrier = threading.Barrier(2)
