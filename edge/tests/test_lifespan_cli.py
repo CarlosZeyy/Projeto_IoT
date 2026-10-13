@@ -153,9 +153,10 @@ def test_unknown_arguments_are_ignored(
     edge_env: Path, uvicorn_spy: _UvicornSpy, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.WARNING, logger="qc_edge"):
-        cli.main(["-q", "--stub", "edge/tests"])
+        cli.main(["-q", "--stub", "--opt=hidden-value", "edge/tests"])
     assert len(uvicorn_spy.calls) == 1
-    assert "ignoring 3 unknown command-line argument(s): -q --stub" in caplog.text
+    assert "ignoring 4 unknown command-line argument(s): -q --stub --opt" in caplog.text
+    assert "hidden-value" not in caplog.text
 
 
 def test_main_without_argv_reads_sys_argv(

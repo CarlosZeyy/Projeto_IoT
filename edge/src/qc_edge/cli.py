@@ -64,7 +64,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     # Unknown arguments are ignored with a warning, so ``main()`` can be called from a host
     # process with its own command line (e.g. tests).
     args, unknown = parser.parse_known_args(argv)
-    flags = [arg for arg in unknown if arg.startswith("-")]
+    flags = [arg.split("=", 1)[0] for arg in unknown if arg.startswith("-")]
     if unknown:
         logger.warning(
             "ignoring %d unknown command-line argument(s)%s",
