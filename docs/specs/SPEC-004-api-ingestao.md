@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Test |
-| Rodada atual | r1 |
+| Status | In Dev |
+| Rodada atual | r2 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-002, SPEC-003, SPEC-023 (`qc-contracts` 0.2.0), SPEC-024 (só para a migração das expectativas de versão, §3.1) |
