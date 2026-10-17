@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked — **Aguardando reaprovação humana** |
+| Status | In Test |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -151,3 +151,4 @@ Só fronteiras são mockadas: a API falsa do simulador (`httpx.MockTransport`, c
 |---|---|---|---|
 | 2026-10-17 | Criação (`Draft`) e `Draft` → `Ready`, com aprovação humana. | Pendências dos relatórios das SPECs 005, 006 e 014 | Humano (Carlos), via orquestrador |
 | 2026-10-17 | §3.1 item 1: `test_extra_new_migration_after_existing` (SPEC-003) entra nos ajustes autorizados ao tester, com a saída (a): copiar todos os `.sql` de `infra/migrations/` para o diretório temporário e usar a próxima versão livre, calculada no teste, em vez de `002_more.sql`. Os demais testes de aceite da SPEC-003 com diretório temporário usam `empty_db` e não precisam de ajuste. Nenhum CA da SPEC-003 muda de intenção. | SPEC_ISSUE-01 de `reviews/SPEC-027/r1-dev-report.md` (com a `002` real registrada pela `ca01_db`, o teste dava `checksum mismatch for 002`) | Orquestrador |
+| 2026-10-17 | Correção do SPEC_ISSUE-01 reaprovada; `Blocked` → `In Test`, retomando a r1. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
