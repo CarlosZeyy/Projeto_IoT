@@ -478,13 +478,66 @@ SPC_EXAMPLE = {
 }
 
 
+SPC_CUT_FIELDS = {"max_points": 100, "valid_lots_total": 130, "excluded_lots_total": 1}
+SPC_NO_CUT_FIELDS = dict.fromkeys(SPC_CUT_FIELDS)
+SPC_FIELDS_0_2_0 = {
+    "baseline_lots",
+    "min_lot_size",
+    "source",
+    "p_bar",
+    "points",
+    "excluded_lots",
+    "message",
+}
+
+
 def test_spc_response_round_trip() -> None:
-    _round_trip(SpcResponse, SPC_EXAMPLE)
+    _round_trip(SpcResponse, SPC_EXAMPLE | SPC_CUT_FIELDS)
 
 
 def test_spc_response_empty_with_message() -> None:
     data = SPC_EXAMPLE | {"p_bar": None, "points": [], "message": "fewer than 2 valid lots"}
+    _round_trip(SpcResponse, data | SPC_NO_CUT_FIELDS)
+
+
+def test_spc_response_0_2_0_json_is_still_valid() -> None:
+    """A 0.2.0 body (without the cut fields) validates, with the three fields ``None``."""
+    response = SpcResponse.model_validate_json(json.dumps(SPC_EXAMPLE))
+    assert response.model_dump(mode="json") == SPC_EXAMPLE | SPC_NO_CUT_FIELDS
+
+
+def test_spc_response_fields_are_0_2_0_plus_the_cut_fields() -> None:
+    assert set(SpcResponse.model_fields) == SPC_FIELDS_0_2_0 | set(SPC_CUT_FIELDS)
+    assert list(SpcResponse.model_fields)[-3:] == list(SPC_CUT_FIELDS)
+    for name in SPC_CUT_FIELDS:
+        assert SpcResponse.model_fields[name].default is None, name
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"max_points": 0},
+        {"max_points": -1},
+        {"valid_lots_total": -1},
+        {"excluded_lots_total": -1},
+        {"max_points": 1.5},
+        {"valid_lots_total": "x"},
+    ],
+)
+def test_spc_response_rejects_bad_cut_fields(bad: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        SpcResponse.model_validate(SPC_EXAMPLE | bad)
+
+
+def test_spc_response_cut_field_boundaries() -> None:
+    data = SPC_EXAMPLE | {"max_points": 1, "valid_lots_total": 0, "excluded_lots_total": 0}
     _round_trip(SpcResponse, data)
+
+
+def test_spc_response_reader_ignores_unknown_fields() -> None:
+    """A newer minor version may add fields: a 0.3.0 reader ignores them (``extra="ignore"``)."""
+    response = SpcResponse.model_validate(SPC_EXAMPLE | {"future_field": 1})
+    assert "future_field" not in response.model_dump()
 
 
 def test_spc_response_rejects_bad_source() -> None:

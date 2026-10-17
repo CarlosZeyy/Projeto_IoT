@@ -180,7 +180,13 @@ class SpcExcludedLot(_ResponseModel):
 
 
 class SpcResponse(_ResponseModel):
-    """p chart by lot (section 3.4, ADR-013)."""
+    """p chart by lot (section 3.4, ADR-013), cut to the latest lots (ADR-017, SPEC-026).
+
+    The three fields added in 0.3.0 are optional and ``None`` in a 0.2.0 response:
+    ``max_points`` is the cap on ``points`` that was applied (``None`` when the chart was built
+    without one); ``valid_lots_total`` and ``excluded_lots_total`` count the valid
+    (``n >= min_lot_size``) and excluded lots before the cut.
+    """
 
     baseline_lots: int
     min_lot_size: int
@@ -189,6 +195,9 @@ class SpcResponse(_ResponseModel):
     points: list[SpcPoint]
     excluded_lots: list[SpcExcludedLot]
     message: str | None
+    max_points: Annotated[int, Field(ge=1)] | None = None
+    valid_lots_total: Annotated[int, Field(ge=0)] | None = None
+    excluded_lots_total: Annotated[int, Field(ge=0)] | None = None
 
 
 class LotSummary(_ResponseModel):
