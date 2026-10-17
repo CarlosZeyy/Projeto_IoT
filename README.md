@@ -118,6 +118,25 @@ uv run --package qc-api python scripts/register_device.py --device-id edge-01 --
 
 A URL vem de `DATABASE_URL` (ou `--database-url`). Códigos de saída: `0` sucesso; `1` dispositivo já existente (sem `--rotate`), inexistente (com `--rotate`) ou falha de banco; `2` uso inválido (`--device-id` fora de `^[a-z0-9-]{3,32}$`, sem URL).
 
+### Simulador (SPEC-014)
+
+`scripts/simulate.py` gera lotes de inspeções plausíveis e os envia pela mesma rota de ingestão da borda (`POST /api/v1/inspections/batch`), em blocos de até 100 itens. Todo registro sai com `source=simulated` (R-06): não existe opção para mudar isso, e `--source` é recusado. O dispositivo do simulador precisa estar registrado, com a chave no ambiente:
+
+```bash
+uv run --package qc-api python scripts/register_device.py --device-id sim-01   # copie a chave para SIM_DEVICE_API_KEY no .env
+uv run --env-file .env --package qc-api python scripts/simulate.py --lots 10 --seed 42
+uv run --env-file .env --package qc-api python scripts/simulate.py --lots 30 --lot-size 200 --out-of-control-lots 24,28 --seed 42
+uv run --package qc-api python scripts/simulate.py --dry-run --device-id sim-01 --lots 3 --seed 42   # JSON Lines no stdout, sem rede
+```
+
+- **Variáveis:** `CLOUD_API_URL` (ou `--api-url`; `https://`, e `http://` só para `localhost`/`127.0.0.1`), `SIM_DEVICE_ID` (ou `--device-id`) e `SIM_DEVICE_API_KEY` (ou `--api-key`; prefira a variável, porque o argumento fica no histórico do shell). A chave nunca é impressa.
+- **Lotes:** `--lots` (padrão 10, até 500), `--lot-size` (padrão 25) ou o par `--lot-size-min`/`--lot-size-max`, `--defect-rate` (padrão 0,10, taxa de `poor` + `unusable`), `--unknown-rate` (padrão 0,02) e `--out-of-control-lots` (números 1-based, com a taxa de defeito triplicada, limitada a 1). Cada lote se chama `SIM-<AAAAMMDD>-<NNN>` (data UTC de `--start`) e ocupa 10 min a partir de `--start` (padrão: agora − lotes × 10 min; com fuso, sem passar de agora + 5 min).
+- **Idempotência (R-05):** os ids derivam de `--seed`. Rodar de novo com a mesma seed reenvia os mesmos ids, e a API responde `duplicate`. Sem `--seed`, uma seed aleatória é sorteada; ela aparece sempre no resumo `sent=<n> created=<n> duplicate=<n> lots=<n> seed=<s> source=simulated`.
+- **Mesmo dia, outra série:** o `lot_id` só usa a data de `--start`. Duas execuções no mesmo dia com seeds diferentes geram lotes com o mesmo nome e misturam os dados no SPC; para uma série nova, use outro `--start`.
+- **Envio:** antes do primeiro lote, `GET /api/v1/health` com até 90 s de espera (acorda o Render). Erro de rede, timeout ou 5xx: até 3 novas tentativas por bloco (2, 4 e 8 s).
+
+Códigos de saída: `0` sucesso; `1` erro interno (item gerado inválido); `2` uso inválido; `3` chave recusada (401/403); `4` bloco recusado (422, com o `detail` no stderr); `5` API fora do ar ou falhando (health, rede, timeout, 5xx depois das tentativas, ou outra resposta inesperada).
+
 ### Gateway de borda (SPEC-007)
 
 ```bash
