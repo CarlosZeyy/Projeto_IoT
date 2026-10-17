@@ -70,3 +70,4 @@ Regras principais:
 |---|---|---|
 | 0.1.0 | 2026-10 | versão inicial (SPEC-002) |
 | 0.2.0 | 2026-10 | teto de latency_ms (MAX_LATENCY_MS = 2³¹ − 1, coluna integer do banco) (SPEC-023) |
+| 0.3.0 | 2026-10 | `SpcResponse` ganha os campos opcionais `max_points`, `valid_lots_total` e `excluded_lots_total` (corte da carta p, ADR-017) (SPEC-026) |

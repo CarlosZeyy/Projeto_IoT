@@ -1,4 +1,5 @@
-"""``GET /api/v1/metrics/spc`` against the test PostgreSQL (SPEC-006 sections 4.2 and 4.4).
+"""``GET /api/v1/metrics/spc`` against the test PostgreSQL (SPEC-006 sections 4.2 and 4.4) and
+the cut of SPEC-026 (sections 4.3 and 4.4: ``lot_selection`` and ``max_points``).
 
 The lots of Example 1 are inserted with SQL (not through the API) as ``live`` screws: in each
 lot, ``defects`` rows ``poor`` and the others ``good``, one minute apart. ``L-001`` also has 3
@@ -8,6 +9,8 @@ are marked ``db``.
 
 from __future__ import annotations
 
+import random
+import re
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -16,9 +19,12 @@ from typing import Any
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg import sql
 
 from qc_api.main import create_app
-from qc_contracts import SpcResponse
+from qc_api.repositories import inspections as repository
+from qc_api.services.spc import LotCounts, compute_p_chart, select_lots
+from qc_contracts import ObjectType, Source, SpcResponse
 
 pytestmark = pytest.mark.db
 
@@ -243,6 +249,9 @@ def test_empty_database(clean_db: str, reader: TestClient) -> None:
         "points": [],
         "excluded_lots": [],
         "message": "insufficient data: need at least 2 lots with n >= 5 (found 0)",
+        "max_points": 100,
+        "valid_lots_total": 0,
+        "excluded_lots_total": 0,
     }
 
 
@@ -307,3 +316,262 @@ def test_needs_the_read_key(example_db, device_keys: dict[str, str], reader: Tes
 def test_missing_key_is_401_before_validation(example_db, reader: TestClient) -> None:
     response = reader.get(URL, params={"baseline_lots": 0})
     assert response.status_code == 401
+
+
+# --- SPEC-026: the cut ---------------------------------------------------------------------------
+
+# One lot of ``n`` rows one second apart from ``start``: the first ``defects`` are ``poor``.
+INSERT_LOT = """
+insert into inspections (
+    inspection_id, device_id, lot_id, inspected_at, object_type, grade, grade_score,
+    type_confidence, grade_confidence, needs_review, model_version, model_sha256, latency_ms,
+    source
+)
+select
+    gen_random_uuid(), %(device_id)s, %(lot_id)s, %(start)s + make_interval(secs => i),
+    %(object_type)s, case when i < %(defects)s then 'poor' else 'good' end, 1.0, 0.9, 0.8, false,
+    'partqc-mnv3-v1', %(sha)s, 100, %(source)s
+from generate_series(0, %(n)s - 1) as i
+"""
+
+# ``count`` lots ``<prefix><k>`` of one ``good`` row each, ``k`` seconds after ``start``.
+INSERT_SINGLE_ROW_LOTS = """
+insert into inspections (
+    inspection_id, device_id, lot_id, inspected_at, object_type, grade, grade_score,
+    type_confidence, grade_confidence, needs_review, model_version, model_sha256, latency_ms,
+    source
+)
+select
+    gen_random_uuid(), 'edge-01', %(prefix)s || k, %(start)s + make_interval(secs => k),
+    'screw', 'good', 1.0, 0.9, 0.8, false, 'partqc-mnv3-v1', %(sha)s, 100, 'live'
+from generate_series(1, %(count)s) as k
+"""
+
+
+def add_lot(
+    db: psycopg.Connection,
+    lot_id: str,
+    start: datetime,
+    n: int,
+    defects: int,
+    object_type: str = "screw",
+    source: str = "live",
+) -> LotCounts:
+    """Inserts the lot with SQL and returns what the SPC should read for it."""
+    db.execute(
+        INSERT_LOT,
+        {
+            "device_id": "sim-01" if source == "simulated" else "edge-01",
+            "lot_id": lot_id,
+            "start": start,
+            "n": n,
+            "defects": defects,
+            "object_type": object_type,
+            "source": source,
+            "sha": SHA,
+        },
+    )
+    return LotCounts(lot_id, start, start + timedelta(seconds=n - 1), n, defects)
+
+
+def cut_history(db: psycopg.Connection) -> list[LotCounts]:
+    """130 valid lots ``C-0001..C-0130`` and 60 excluded lots ``X-001..X-060`` (CA-11)."""
+    lots = [add_lot(db, f"C-{k:04d}", T0 + timedelta(minutes=k), 5, k % 3) for k in range(1, 131)]
+    lots += [
+        add_lot(db, f"X-{k:03d}", T0 + timedelta(minutes=k, seconds=30), 1, 0) for k in range(1, 61)
+    ]
+    return lots
+
+
+def test_example_1_has_the_default_cap_and_totals(example_db, reader: TestClient) -> None:
+    body = get_spc(reader, baseline_lots=3)
+    assert_example_1(body)
+    assert (body["max_points"], body["valid_lots_total"], body["excluded_lots_total"]) == (
+        100,
+        6,
+        1,
+    )
+
+
+def test_route_cuts_to_the_latest_lots(
+    device_keys, db: psycopg.Connection, reader: TestClient
+) -> None:
+    lots = cut_history(db)
+    body = get_spc(reader)
+    assert [point["lot_id"] for point in body["points"]] == [f"C-{k:04d}" for k in range(31, 131)]
+    base = range(1, 21)
+    assert body["p_bar"] == pytest.approx(sum(k % 3 for k in base) / (5 * len(base)))
+    assert [item["lot_id"] for item in body["excluded_lots"]] == [
+        f"X-{k:03d}" for k in range(11, 61)
+    ]
+    assert (body["max_points"], body["valid_lots_total"], body["excluded_lots_total"]) == (
+        100,
+        130,
+        60,
+    )
+    expected = compute_p_chart(lots, 20, 5, source=Source.LIVE, max_points=100, max_excluded=50)
+    assert body == expected.model_dump(mode="json")
+
+    small = get_spc(reader, max_points=10)
+    assert [point["lot_id"] for point in small["points"]] == [f"C-{k:04d}" for k in range(121, 131)]
+    assert small["p_bar"] == body["p_bar"]
+    assert small["points"] == body["points"][-10:]
+
+
+def test_route_ties_use_the_c_collation(
+    device_keys, db: psycopg.Connection, reader: TestClient
+) -> None:
+    lots = [
+        add_lot(db, "a-1", T0, 10, 9),
+        add_lot(db, "B-1", T0, 10, 1),
+        add_lot(db, "_-1", T0, 10, 5),
+    ]
+    body = get_spc(reader, baseline_lots=2, max_points=2)
+    assert [point["lot_id"] for point in body["points"]] == ["_-1", "a-1"]
+    assert body["p_bar"] == pytest.approx(0.3)
+    expected = compute_p_chart(lots, 2, 5, max_points=2, max_excluded=50)
+    assert body == expected.model_dump(mode="json")
+
+
+def test_route_simulated_lots_never_enter_the_live_cut(
+    device_keys, db: psycopg.Connection, reader: TestClient
+) -> None:
+    cut_history(db)
+    for k in range(1, 6):
+        add_lot(db, f"S-{k}", T0 + timedelta(hours=10, minutes=k), 5, 1, source="simulated")
+    live = get_spc(reader)
+    shown = {p["lot_id"] for p in live["points"]} | {e["lot_id"] for e in live["excluded_lots"]}
+    assert not any(lot_id.startswith("S-") for lot_id in shown)
+    assert live["valid_lots_total"] == 130
+    simulated = get_spc(reader, source="simulated")
+    assert [p["lot_id"] for p in simulated["points"]] == [f"S-{k}" for k in range(1, 6)]
+    assert (simulated["valid_lots_total"], simulated["excluded_lots_total"]) == (5, 0)
+    assert simulated["source"] == "simulated"
+
+
+def test_route_large_history_is_bounded(
+    device_keys, db: psycopg.Connection, reader: TestClient
+) -> None:
+    db.execute(INSERT_SINGLE_ROW_LOTS, {"prefix": "V-", "start": T0, "count": 3000, "sha": SHA})
+    for k in range(1, 151):
+        add_lot(db, f"G-{k:03d}", T0 + timedelta(hours=2, minutes=k), 5, 0)
+    response = reader.get(URL, headers=R)
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["points"]) == 100
+    assert len(body["excluded_lots"]) == 50
+    assert (body["valid_lots_total"], body["excluded_lots_total"]) == (150, 3000)
+    assert body["points"][-1]["lot_id"] == "G-150"
+    assert body["excluded_lots"][-1]["lot_id"] == "V-3000"
+    assert len(response.content) < 64 * 1024
+
+
+@pytest.mark.parametrize("value", [0, 1, 501, "abc", 2.5, ""])
+def test_invalid_max_points_is_422(example_db, reader: TestClient, value: Any) -> None:
+    response = reader.get(URL, params={"max_points": value}, headers=R)
+    assert response.status_code == 422, value
+    assert isinstance(response.json()["detail"], list)
+    assert "Traceback" not in response.text
+
+
+@pytest.mark.parametrize("value", [2, 500])
+def test_boundary_max_points_is_200(example_db, reader: TestClient, value: int) -> None:
+    assert get_spc(reader, max_points=value)["max_points"] == value
+
+
+def test_missing_key_is_401_before_max_points_validation(example_db, reader: TestClient) -> None:
+    response = reader.get(URL, params={"max_points": 0})
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Missing or invalid API key"}
+
+
+# --- SPEC-026: lot_selection against select_lots ----------------------------------------------
+
+LOT_ID_ALPHABET = "ABCXYZabcxyz0189_-"
+
+
+def random_lots(rng: random.Random, count: int) -> list[tuple[str, datetime, int, int, str]]:
+    """``(lot_id, start, n, defects, object_type)`` with distinct ids and frequent time ties."""
+    used: set[str] = set()
+    lots = []
+    for _ in range(count):
+        lot_id = "".join(rng.choice(LOT_ID_ALPHABET) for _ in range(rng.randint(1, 3)))
+        if lot_id in used:
+            continue
+        used.add(lot_id)
+        n = rng.randint(1, 12)
+        start = T0 + timedelta(minutes=rng.randint(0, 15))
+        lots.append((lot_id, start, n, rng.randint(0, n), rng.choice(["screw", "nut"])))
+    return lots
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_lot_selection_matches_select_lots(
+    seed: int, device_keys, db: psycopg.Connection, reader: TestClient
+) -> None:
+    rng = random.Random(seed)
+    rows = random_lots(rng, 80)
+    lots = [
+        add_lot(db, lot_id, start, n, defects, object_type)
+        for lot_id, start, n, defects, object_type in rows
+    ]
+    pool = reader.app.state.pool
+    for _ in range(6):
+        params = {
+            "baseline_lots": rng.randint(1, 30),
+            "min_lot_size": rng.randint(1, 8),
+            "max_points": rng.choice([None, rng.randint(1, 40)]),
+            "max_excluded": rng.choice([None, 0, rng.randint(1, 20)]),
+        }
+        got = repository.lot_selection(pool, Source.LIVE, None, **params)
+        assert got == select_lots(lots, **params), params
+
+    screws = [item for item, row in zip(lots, rows, strict=True) if row[4] == "screw"]
+    params = {"baseline_lots": 5, "min_lot_size": 3, "max_points": 7, "max_excluded": 4}
+    got = repository.lot_selection(pool, Source.LIVE, ObjectType.SCREW, **params)
+    assert got == select_lots(screws, **params)
+    assert repository.lot_selection(pool, Source.SIMULATED, None, **params) == select_lots(
+        [], **params
+    )
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"baseline_lots": 0, "min_lot_size": 5, "max_points": 2, "max_excluded": 0},
+        {"baseline_lots": 3, "min_lot_size": 0, "max_points": 2, "max_excluded": 0},
+        {"baseline_lots": 3, "min_lot_size": 5, "max_points": 0, "max_excluded": 0},
+        {"baseline_lots": 3, "min_lot_size": 5, "max_points": 2, "max_excluded": -1},
+    ],
+)
+def test_lot_selection_rejects_invalid_parameters(reader: TestClient, params: dict) -> None:
+    with pytest.raises(ValueError):
+        repository.lot_selection(reader.app.state.pool, Source.LIVE, None, **params)
+
+
+def test_rows_reaching_python_are_bounded(device_keys, db: psycopg.Connection) -> None:
+    db.execute(INSERT_SINGLE_ROW_LOTS, {"prefix": "V-", "start": T0, "count": 500, "sha": SHA})
+    for k in range(1, 41):
+        add_lot(db, f"G-{k:03d}", T0 + timedelta(hours=1, minutes=k), 5, 1)
+    where = sql.SQL("object_type <> %(unknown)s and source = %(f_source)s")
+    query = sql.SQL(repository.SELECT_LOT_SELECTION).format(where=where)
+    params = {
+        "unknown": "unknown",
+        "f_source": "live",
+        "baseline_lots": 3,
+        "min_lot_size": 5,
+        "max_points": 7,
+        "max_excluded": 11,
+    }
+    rows = db.execute(query, params).fetchall()
+    assert len(rows) == 3 + 7 + 11 + 1
+
+
+def test_lot_selection_sql_is_cut_in_the_database() -> None:
+    text = repository.SELECT_LOT_SELECTION
+    assert text.count("materialized") == 1
+    assert text.count("from inspections") == 1  # one aggregation per request
+    assert 'collate "C"' in text
+    for name in ("baseline_lots", "max_points", "max_excluded"):
+        assert re.search(rf"limit\s+%\({name}\)s", text), name
+    assert "%(min_lot_size)s" in text

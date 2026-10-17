@@ -137,11 +137,26 @@ def test_openapi_documents_the_query_parameters(client: TestClient) -> None:
         "/api/v1/metrics/summary": common,
         "/api/v1/metrics/timeseries": common | {"bucket"},
         "/api/v1/lots": common | {"limit", "offset"},
-        "/api/v1/metrics/spc": {"source", "object_type", "baseline_lots", "min_lot_size"},
+        "/api/v1/metrics/spc": {
+            "source",
+            "object_type",
+            "baseline_lots",
+            "min_lot_size",
+            "max_points",
+        },
     }
     for path, names in expected.items():
         parameters = spec["paths"][path]["get"]["parameters"]
         assert {p["name"] for p in parameters if p["in"] == "query"} == names, path
+
+
+def test_openapi_documents_the_max_points_range(client: TestClient) -> None:
+    """SPEC-026 section 4.4: ``max_points`` is an integer from 2 to 500, 100 by default."""
+    spec = client.get("/openapi.json").json()
+    parameters = spec["paths"]["/api/v1/metrics/spc"]["get"]["parameters"]
+    schema = next(p["schema"] for p in parameters if p["name"] == "max_points")
+    assert (schema["type"], schema["minimum"], schema["maximum"]) == ("integer", 2, 500)
+    assert schema["default"] == 100
 
 
 _SQL_WORDS = re.compile(r"\b(select|where|insert)\b", re.IGNORECASE)

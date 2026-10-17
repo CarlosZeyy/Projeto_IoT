@@ -1,9 +1,10 @@
 """Aggregates for the dashboard. Read key only.
 
 * ``/metrics/summary`` and ``/metrics/timeseries`` (SPEC-005 section 4.3).
-* ``/metrics/spc`` (SPEC-006 section 4.2): the p chart by lot of a single ``source`` (``live``
-  by default, R-06). The route only queries the per-lot counts; the chart itself is the pure
-  ``qc_api.services.spc.compute_p_chart``.
+* ``/metrics/spc`` (SPEC-006 section 4.2, SPEC-026 section 4.4): the p chart by lot of a single
+  ``source`` (``live`` by default, R-06), cut to the last ``max_points`` valid lots and the last
+  ``MAX_EXCLUDED_LOTS`` excluded lots (ADR-017). The route only queries the selection, cut in
+  SQL (``lot_selection``); the chart itself is the pure ``qc_api.services.spc.build_p_chart``.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from qc_api.errors import DETAIL_TOO_MANY_BUCKETS
 from qc_api.filters import InspectionFilters
 from qc_api.repositories import inspections as repository
 from qc_api.routers import API_PREFIX, READ_ERROR_RESPONSES
-from qc_api.services.spc import compute_p_chart
+from qc_api.services.spc import MAX_EXCLUDED_LOTS, build_p_chart
 from qc_contracts import MetricsSummary, ObjectType, Source, SpcResponse, TimeseriesPoint
 
 router = APIRouter(
@@ -35,6 +36,9 @@ SPC_MIN_BASELINE_LOTS = 2
 SPC_MAX_BASELINE_LOTS = 100
 SPC_DEFAULT_MIN_LOT_SIZE = 5
 SPC_MAX_MIN_LOT_SIZE = 500
+SPC_DEFAULT_MAX_POINTS = 100
+SPC_MIN_MAX_POINTS = 2
+SPC_MAX_MAX_POINTS = 500
 
 # The object types the SPC accepts: every contract type except ``unknown``, which has no grade
 # and never enters the chart (ADR-013). ``unknown`` is then a 422 like any other invalid value,
@@ -75,11 +79,26 @@ def metrics_spc(
         int, Query(ge=SPC_MIN_BASELINE_LOTS, le=SPC_MAX_BASELINE_LOTS)
     ] = SPC_DEFAULT_BASELINE_LOTS,
     min_lot_size: Annotated[int, Query(ge=1, le=SPC_MAX_MIN_LOT_SIZE)] = SPC_DEFAULT_MIN_LOT_SIZE,
+    max_points: Annotated[
+        int, Query(ge=SPC_MIN_MAX_POINTS, le=SPC_MAX_MAX_POINTS)
+    ] = SPC_DEFAULT_MAX_POINTS,
 ) -> SpcResponse:
-    """p chart by lot of one ``source``; ``unknown`` objects never count."""
-    lots = repository.lot_counts(
+    """p chart by lot of one ``source``; ``unknown`` objects never count.
+
+    Only the last ``max_points`` valid lots and the last ``MAX_EXCLUDED_LOTS`` excluded lots are
+    returned, with the totals before the cut; ``p_bar`` still comes from the first
+    ``baseline_lots`` valid lots of the whole history (ADR-017). More lots than the cap is not
+    an error.
+    """
+    selection = repository.lot_selection(
         request.app.state.pool,
         source,
         ObjectType(object_type.value) if object_type is not None else None,
+        baseline_lots=baseline_lots,
+        min_lot_size=min_lot_size,
+        max_points=max_points,
+        max_excluded=MAX_EXCLUDED_LOTS,
     )
-    return compute_p_chart(lots, baseline_lots, min_lot_size, source=source)
+    return build_p_chart(
+        selection, baseline_lots, min_lot_size, source=source, max_points=max_points
+    )

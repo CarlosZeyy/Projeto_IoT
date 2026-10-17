@@ -1,0 +1,87 @@
+# SPEC-026 — r1 — Review report
+
+| Campo | Valor |
+|---|---|
+| SPEC | [SPEC-026](../../docs/specs/SPEC-026-spc-teto-de-lotes.md) |
+| Rodada | r1 |
+| Reviewer | reviewer |
+| Diff revisado | `main...d2d008d` |
+| Test report | r1-test-report.md (PASS) |
+| **Veredicto** | **APPROVED** |
+
+Nenhum achado bloqueante ou alto. Há 3 achados baixos (RV-01 a RV-03), que não bloqueiam. A SPEC tem as tags `contrato` e `security`, então o próximo passo é o security-devops.
+
+## Achados
+
+| ID | Severidade | Arquivo:linha | Descrição | Sugestão |
+|---|---|---|---|---|
+| RV-01 | baixa | `docs/architecture.md:298` | O texto da regra "Expectativas de versão" ainda diz que, depois da SPEC-004, as asserções exatas do `qc-contracts` ficam em `packages/contracts/tests/acceptance/test_spec_023.py` (0.2.0). Depois desta SPEC, a asserção exata vigente fica em `packages/contracts/tests/acceptance/test_spec_026.py` (0.3.0), como o `ALLOWED_EXACT` do CA-28 já registra. A §3.1 não autoriza o autor nem o tester a mexer no `architecture.md`, e a frase pode ser lida como histórica ("depois dela"). Mesmo assim, quem procurar ali o arquivo vigente vai achar o errado. | O architect atualiza a frase num PR de documentação (ex.: "o arquivo vigente de cada pacote é o par registrado em `ALLOWED_EXACT`"). Não muda código nem a SPEC. |
+| RV-02 | baixa | `api/src/qc_api/repositories/inspections.py:343-363` | `lot_selection` aceita `max_points=None` e `max_excluded=None` (decisão 4 do dev-report), e no SQL isso vira `limit null`, ou seja, sem teto. A rota sempre passa inteiros (2…500 e `MAX_EXCLUDED_LOTS`), então hoje não há caminho sem limite. A SPEC-017 já diz que vai reusar `lot_selection` "com um `max_points` pequeno", mas não fala de `max_excluded`. Um chamador futuro que omita o teto dos excluídos (`None`) reabre o SEC-06-01 nessa parte: 1 milhão de lotes pequenos viram 1 milhão de `LotCounts` em Python. Aceito a decisão, porque mantém o repositório igual à referência pura (`select_lots`), mas é uma armadilha para quem vier depois. | Sem mudança obrigatória nesta SPEC. Quando a SPEC-017 for revisada (ela está `Draft`), o architect registra que ela passa `max_excluded` com um inteiro (ex.: `0` ou `MAX_EXCLUDED_LOTS`) e nunca `None`. Uma alternativa futura é documentar na docstring de `lot_selection` que `None` só serve para testes. Cabe ao security-devops dizer se quer isso já nesta rodada. |
+| RV-03 | baixa | commits `1d29394` e `4b4d90c` | O tester registrou isto nas observações do test-report: no commit `1d29394`, o `ALLOWED_EXACT` já aponta para `packages/contracts/tests/acceptance/test_spec_026.py`, mas o arquivo só entra no `4b4d90c`. Por isso, o CA-28 da SPEC-004 falharia num checkout isolado de `1d29394`. No `HEAD` da branch, tudo passa, e o CI roda no `HEAD` do PR. O único efeito é sobre `git bisect` e sobre a leitura do histórico commit a commit. | Nenhuma ação nesta SPEC. Nas próximas, junte no mesmo commit do tester o ajuste do `ALLOWED_EXACT` e a criação do arquivo de aceite que ele cita. |
+
+## Ajustes em testes de aceite de SPECs anteriores (`1d29394`)
+
+Conferi os três ajustes contra a §3.1 da SPEC, contra a regra "Expectativas de versão" do `docs/architecture.md` §10 (que já está na `main`) e contra a regra "Testes de aceite de SPECs anteriores". Essa regra vem do PR #16 (`spec/SPEC-010-modo-coleta`), que ainda está **aberto** e não entrou na `main`. Li o texto direto da branch dele. Até o PR #16 entrar, vale a autorização explícita da §3.1, e os três ajustes cabem nela.
+
+| # | Arquivo e teste | Conferência | Resultado |
+|---|---|---|---|
+| 1 | `packages/contracts/tests/acceptance/test_spec_023.py::test_ca01_contracts_version` | As duas asserções `== "0.2.0"` saíram. Ficaram as três verificações genéricas da §10: a coerência `qc_contracts.__version__ == importlib.metadata.version("qc-contracts")`, escrita exatamente nessa forma (é a forma que o `_coherence_checks` do CA-28 reconhece); `re.fullmatch(r"\d+\.\d+\.\d+", v)`; e o piso `(0, 2, 0) <= tuple(...) < (1, 0, 0)`. O piso é a versão que a SPEC-023 introduziu, como a §10 pede. `re` já era importado. Nenhuma outra linha do arquivo mudou. O teste continua sendo `test_ca01_*` e mantém a intenção do CA-01 da SPEC-023 (versão coerente, ≥ 0.2.0 e na mesma major). | ✅ |
+| 2 | `api/tests/acceptance/test_spec_004.py`, `ALLOWED_EXACT` do CA-28 | Só trocou o par `(SPEC023_CONTRACTS, "qc_contracts", "0.2.0")` pelo par `(SPEC026_CONTRACTS, "qc_contracts", "0.3.0")`, com a constante nova `SPEC026_CONTRACTS` ao lado das outras e no mesmo padrão. `VERSION_FILES`, `MAIN_COUNTS`, `REMOVED` e o corpo do CA-28 não mudaram. `SPEC023_CONTRACTS` continua em uso (em `VERSION_FILES`, `MAIN_COUNTS` e `REMOVED`), então não há constante morta. O CA-01 da SPEC-026 do contrato está em funções `test_ca01_*`, como o CA-28 exige. | ✅ |
+| 3 | `packages/contracts/tests/acceptance/test_spec_002.py::test_ca16_response_models_json_round_trip` | O valor esperado ganha os 3 campos `None` só quando `model is SpcResponse`. Em `CA16_CASES`, isso acontece exatamente nos casos `spc` e `spc-empty`, e os outros 8 casos continuam comparando com `data`. `SPC_JSON` e `SPC_EMPTY_JSON` não mudaram (continuam sendo o JSON da 0.2.0). As duas asserções (`model_validate_json` e `model_validate`) foram ajustadas do mesmo jeito. A intenção do CA-16 (ida e volta sem perda) continua verificada. | ✅ |
+
+- **Contagem de testes:** os ajustes não adicionam nem removem funções de teste ou parâmetros (o diff de `1d29394` tem 16 inserções e 5 remoções, todas dentro dos dois corpos e da constante). A contagem de 22 testes no `test_spec_023.py` do contrato também é garantida pelo CA-27 da SPEC-004 (`MAIN_COUNTS − 1`), que passa.
+- **Tabela do test-report:** tem uma linha por ajuste, com arquivo, teste, "antes → depois" e a base (item da §3.1 e regra da §10). É o formato que a regra do PR #16 pede. O 4º teste que o dev-report listava (`packages/preprocess/tests/acceptance/test_spec_023.py::test_ca12_...`) voltou a passar sem mudança no arquivo, só pelo efeito do ajuste 3. Conferi que esse arquivo não está no diff.
+- **Autor:** os três arquivos foram alterados só no `1d29394` (`Agent: tester`). O developer não tocou em `tests/acceptance/` e listou no dev-report os 4 testes que falhariam, cada um com o requisito que o invalida, como a regra pede.
+
+## Decisões do dev-report
+
+| Decisão | Avaliação |
+|---|---|
+| 1 e 2. `validate_selection_parameters`, pública, usada por `select_lots`, `build_p_chart` (com `max_excluded=None`) e `lot_selection` | **Aceita.** Aplica num único lugar as regras do passo 1 da §4.2, sem duplicação. É pública porque o repositório a importa. Em `lot_selection`, a validação roda **antes** da consulta. Sem ela, um `limit` negativo viraria `DataError` do Postgres e um 500 genérico. Em `build_p_chart`, ela impede uma resposta com parâmetros que o próprio serviço recusaria. A SPEC não lista essa função, mas ela não muda nenhum comportamento especificado: só concentra validações já pedidas. O teste extra do tester (`test_extra_select_lots_validation`) e os testes do autor cobrem os quatro limites. |
+| 3. `LotCounts` com data que não é `datetime` → `ValueError`; tipos conferidos antes das faixas | **Aceita.** Cumpre o RV-03 da SPEC-006 sem deixar escapar `AttributeError` ou `TypeError`. Checagem de `utcoffset() is None` incluída, como a §4.2 pede. |
+| 4. `None` nos tetos de `lot_selection` (`limit null`) | **Aceita, com o RV-02.** É coerente com `select_lots` e foi exercitada pelo tester (`test_extra_lot_selection_direct_matches_select_lots`, com `None/None`). A rota nunca passa `None`. |
+| 5. Consulta única: CTE `lots as materialized`, `union all` das quatro partes, `collate "C"` | **Aceita.** Ver a seção seguinte. |
+| 6. `SPC_MIN_MAX_POINTS = 2` | **Aceita.** Segue o padrão de `SPC_MIN_BASELINE_LOTS`. A faixa 2…500 da §4.4 está no `Query(ge=..., le=...)`, e o OpenAPI mostra `minimum` 2, `maximum` 500 e `default` 100 (teste do autor e extra do tester). |
+| 7. Remoção de `lot_counts` e `SELECT_LOT_COUNTS` | **Aceita.** A §3.1 autoriza ("sai, se nada mais a usar"). `git grep` confirma que não sobrou nenhuma referência em código ou teste. O simulador (SPEC-014) usa só `LotCounts` e `compute_p_chart`, que continuam com a mesma assinatura posicional. |
+| 8. Testes do autor ajustados pela mudança de contrato | **Aceita.** São testes do próprio autor (`api/tests/`, `packages/contracts/tests/`). Os ajustes só acrescentam os 3 campos ou o parâmetro novo, e o JSON 0.2.0 ganhou um teste próprio, sem perder o anterior. |
+
+## Consulta SQL (`SELECT_LOT_SELECTION`)
+
+- **Uma agregação só:** rodei `EXPLAIN` (read-only) no banco de teste. O plano tem um único `Seq Scan on inspections` sob `HashAggregate`, dentro de `CTE lots`. As quatro partes leem a CTE (`CTE Scan on lots`) e cada parte com teto tem `Limit` sobre `Sort`, ou seja, top-N. O teste do autor também confere que `from inspections` aparece só uma vez.
+- **Partes:** a linha de totais (`count(*) filter`) mais a base (`order by started_at, lot_id collate "C" limit %(baseline_lots)s`), a janela e os excluídos (`order by ... desc ... limit`). O `order by part, started_at, lot_id collate "C"` externo devolve cada parte em ordem crescente, e o Python só agrupa as linhas. Os tipos do `union all` estão explícitos na primeira parte (`null::text`, `null::bigint`, `null::timestamptz`), então não há ambiguidade de tipo.
+- **Ordem:** o banco de teste usa `en_US.utf8` (conferido em `pg_database`). O `collate "C"` está em todas as ordenações, inclusive na externa. Como o `check` da tabela restringe `lot_id` a `^[A-Za-z0-9_-]{1,40}$` (só ASCII), a ordem `C` coincide com a de `str` do Python. Não pode haver empate em `(started_at, lot_id)`, porque a agregação é por `lot_id`, então a seleção é determinística. A mutação sem `collate "C"`, feita pelo autor e pelo tester, quebra 6 testes.
+- **Parâmetros:** todos os valores entram como parâmetros nomeados (`%(min_lot_size)s` 5 vezes; `%(baseline_lots)s`, `%(max_points)s` e `%(max_excluded)s` em `limit`). A composição usa só `sql.SQL(...).format(where=...)`, com os filtros também como `sql.SQL` fixo. Não há f-string em SQL. `limit 0` (`max_excluded=0`) e `limit null` se comportam como a referência.
+- **Linhas no Python:** no máximo `baseline_lots + max_points + max_excluded + 1`. O teste do autor `test_rows_reaching_python_are_bounded` confere esse número exato.
+- **Snapshot:** a consulta continua em `_read_snapshot` (`repeatable read, read only`).
+
+## Coerção de `max_points` (observação do tester)
+
+Reproduzi com o `TypeAdapter` do pydantic: `+5`, `" 5"`, `05`, `1_0` e `10.0` viram inteiros (5 ou 10), enquanto `2.5`, `1e2` e dígitos não ASCII dão erro. É o modo leniente padrão do FastAPI/pydantic, igual ao de `baseline_lots` e `min_lot_size`. O valor final continua sempre limitado a 2…500, e o CA-13 (`2.5` → 422) é cumprido. **Não é achado:** não há risco de memória nem de corte errado, e o resultado ecoa em `max_points` o inteiro efetivamente usado. Se a dupla quiser parâmetros estritos em toda a API, isso é uma decisão transversal (todas as rotas), fora do escopo desta SPEC.
+
+## Checklist ([reviews/checklist.md](../checklist.md))
+
+| Seção | Resultado | Observação |
+|---|---|---|
+| 1. Escopo e SPEC | ✅ | Implementa §4.1 a §4.4, e nada fora do escopo: o dashboard, o `statement_timeout` e a janela `from`/`to` não foram tocados. Assinaturas iguais às da §4.2 (`select_lots` e `build_p_chart` com os tetos só por palavra-chave, sem padrão; `compute_p_chart` com `max_points=None, max_excluded=None` só por palavra-chave). Nenhum CA foi alterado (o diff da SPEC só muda status e rodada, em commits do orquestrador). O dev-report tem a rastreabilidade CA → arquivo → teste. As decisões fora do texto estão no dev-report e foram avaliadas acima. O `docs/architecture.md` §3.4 já descrevia o corte e bate com o código, inclusive a assinatura de `compute_p_chart`. |
+| 2. Regras inegociáveis | ✅ | **R-01:** nenhuma dependência nova; o `uv.lock` muda só na versão do `qc-contracts` (1 linha). **R-02:** N/A (só agregados). **R-03:** a busca no diff por `key`, `secret`, `token`, `password`, `postgres://` e `eyJ` não achou segredos. Os únicos conninfos são `postgresql://postgres@localhost:55432/partqc_test`, sem senha, nos relatórios. Nos testes, as chaves e a senha fictícia são geradas em tempo de execução (`secrets.token_*`, `urlunsplit`). Não há variável nova, então o `.env.example` não muda. **R-04:** a resposta muda só em `packages/contracts` (`SpcResponse`), com 3 campos opcionais e padrão `None`, versão 0.3.0 em `__init__.py`, `pyproject.toml` e `uv.lock`, linha `\| 0.3.0 \|` com SPEC-026 no README, e ADR-017 `Aceito`. A skill `contrato-api` trata isso como minor. Um JSON 0.2.0 continua válido (CA-02), e `_ResponseModel` usa `extra="ignore"`, então um leitor 0.2.0 ignora os campos. **R-05:** N/A (só leitura). **R-06:** o filtro `source = %(f_source)s` está dentro da CTE, antes de qualquer corte, e os totais também respeitam a origem (CA-16). **R-07:** os trailers batem com os arquivos de cada commit: `developer` (`0d35f5c`, `bc1fcc0`, `6d9c335`, `5da1b29`) só em código de produção, `api/tests/`, `packages/contracts/tests/` (fora de `acceptance/`), `uv.lock` e o dev-report; `tester` (`1d29394`, `4b4d90c`) só em `*/tests/acceptance/` e no test-report; `orchestrator` só em status (`docs/plan.md` e cabeçalhos de SPEC). Todos os commits têm `Agent:`. **R-11:** N/A. **R-12:** sem torch nem onnxruntime; Python 3.12. **R-13:** todos os commits são `Carlos Moises <179777237+CarlosZeyy@users.noreply.github.com>`, em Conventional Commits, sem menção a empresa. |
+| 3. Corretude | ✅ | O corte bate com a referência pura: CA-09 com 200 sementes (empates frequentes, alfabeto completo) e 4 histórias aleatórias no banco, comparadas pelo corpo JSON inteiro. Com menos de 2 lotes válidos, a `message` usa `valid_lots_total`, e não o tamanho da janela (CA-07). `p̄` vem da base da história inteira (CA-05, CA-11 com `max_points=10`), o que preserva o ADR-013. `LotCounts` recusa `bool`, `float`, `str`, `None`, datas sem fuso e `tzinfo` sem `utcoffset`. Os `timestamptz` do psycopg vêm com fuso e o `count(*)` vem como `int`, então a rota não é afetada. Seleção incoerente (`baseline` vazio com 2 ou mais válidos) levanta `ValueError`. A rota é `def` síncrona (roda no threadpool), sem I/O bloqueante em `async`. O 503 e o 401 antes do 422 continuam (CA-13 e extras). Não há `except Exception`. O `RuntimeError` para "sem linha de totais" é inalcançável (agregado sem `group by`) e serve só de guarda. |
+| 4. Testes | ✅ | Test-report PASS, com teste de aceite para os CAs 01 a 16. Os testes não são tautológicos: o CA-11 e o CA-12 comparam o corpo inteiro com `compute_p_chart` e com valores calculados à mão, e a checagem de mutação do tester (janela, base, excluídos e `collate`) pegou as 4 mutações. Rodei a suíte inteira com `TEST_DATABASE_URL`: **2482 passed, 1 warning** (o aviso do `TestClient` já existia). O portão de cobertura dá `qc_api.services` 100% (83 statements; 504 passed). Não há rede externa nem pytest em subprocesso nos testes novos. Nenhuma credencial aparece como literal em URL. Versão exata do contrato só no `test_smoke.py` do autor e no `test_ca01_*` do `test_spec_026.py` do contrato, como a §10 manda, e a docstring desse arquivo cita só a 0.3.0. |
+| 5. Qualidade | ✅ | `ruff check .` limpo e `ruff format --check .` com 113 arquivos formatados (conferido). Funções pequenas, docstrings atualizadas (módulo, `lot_selection`, rota), type hints nas públicas, sem `print` e sem código morto (`lot_counts` removido). A lógica de defeito continua só na coluna gerada `is_defective`. O README do contrato tem a linha da 0.3.0. Doc desatualizada fora do alcance do autor: RV-01. |
+| 6. Segurança | ✅ (prévia) | O portão é do security-devops. Na leitura: SQL parametrizado, sem f-string; entrada nova validada (2…500) antes do banco; `lot_selection` valida os tetos antes de consultar; memória limitada pelo corte no SQL. O test-report mede o pior caso do SEC-06-01 com pico RSS de 62,8 a 64,8 MB, contra 803 MB e 1 724 MB antes. O custo restante é linear no banco, como o ADR-017 aceita, e fica para o `statement_timeout` da SPEC-015. Risco residual: RV-02 (`None` nos tetos do repositório). |
+
+## Pontos positivos
+
+- O corte ficou numa única instrução SQL, com a agregação materializada uma vez e top-N por parte. O `EXPLAIN` confirma a forma que a §4.3 pede, e a medição do tester mostra a memória estável qualquer que seja o volume.
+- `select_lots` como referência pura, mais os testes de equivalência entre o SQL e a referência (autor e tester), tornam o `collate "C"` verificável, e não só declarado.
+- A validação centralizada antes da consulta evita que um teto inválido chegue ao Postgres como 500.
+- O contrato 0.3.0 é estritamente aditivo: um JSON 0.2.0 continua válido, e um corpo 0.3.0 sem os 3 campos é um corpo 0.2.0 idêntico (extra do tester).
+- Os ajustes em testes antigos foram mínimos, em commit próprio do tester e com tabela de rastreio, e o dev-report antecipou exatamente quais testes falhariam e por quê.
+
+## SPEC_ISSUE (se houver)
+
+Nenhum. O RV-01 é uma atualização de texto do `architecture.md`, e o RV-02 é uma nota para a SPEC-017 (`Draft`). Nenhum dos dois é uma ambiguidade que bloqueie esta SPEC.
+
+## Declaração
+
+- [x] Não editei código nem testes; só escrevi este relatório.
+- [x] Não sou autor de nenhum commit desta SPEC.
