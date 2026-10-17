@@ -1084,7 +1084,65 @@ def test_api_url_with_invalid_idna_label_is_refused(
     assert "Traceback" not in result.err
 
 
-@pytest.mark.parametrize("url", ["https://api.example.org", "http://127.0.0.1:8001"])
+LABEL_63 = "a" * 63
+LABEL_64 = "a" * 64
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://exa..mple.com",
+        "https://.example.com",
+        "https://example.com..",
+        f"https://{LABEL_64}.example.com",
+        f"https://{LABEL_64}",
+    ],
+    ids=["double-dot", "leading-dot", "two-trailing-dots", "label-64", "single-label-64"],
+)
+def test_api_url_with_label_the_socket_refuses_is_refused(
+    url: str, online_env: str, run: Callable[..., Run]
+) -> None:
+    # The socket encodes the host with the "idna" codec; MockTransport skips the socket, so
+    # these hosts would only fail (UnicodeError, traceback, code 1) against the real API.
+    api = FakeApi()
+    result = run(["--start", START, "--api-url", url], api)
+    assert result.code == 2
+    assert api.requests == []
+    assert "invalid --api-url (not shown)" in result.err
+    for fragment in ("Traceback", "mple.com", "example.com", LABEL_64[:12]):
+        assert fragment not in result.err + result.out
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://exa..mple.com",
+        "https://.example.com",
+        "https://example.com..",
+        f"https://{LABEL_64}.example.com",
+    ],
+)
+def test_socket_codec_really_refuses_those_hosts(url: str) -> None:
+    # Guards the premise of the test above: the codec the socket uses refuses these hosts.
+    with pytest.raises(UnicodeError):
+        httpx.URL(url).raw_host.decode("ascii").encode("idna")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.org",
+        "http://127.0.0.1:8001",
+        "http://127.0.0.1",
+        "http://localhost:8001",
+        "https://example.com.",
+        f"https://{LABEL_63}.example.com",
+        f"https://{LABEL_63}",
+        "https://[::1]",
+        "https://[::1]:8443",
+        "https://xn--nxasmq6b.com",
+    ],
+)
 def test_visible_ascii_api_url_still_sends(
     url: str, online_env: str, run: Callable[..., Run]
 ) -> None:

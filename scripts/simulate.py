@@ -420,6 +420,12 @@ def _api_url(parser: argparse.ArgumentParser, raw: str | None) -> str:
         # The host as httpx encodes it for the request (IDNAError, a ValueError, for an
         # invalid "xn--" label), so the client never raises on it later.
         _ = httpx.URL(url).host
+        # The host as the socket encodes it (codec "idna"): httpx hands the ASCII raw_host
+        # to the socket, which raises UnicodeError (a ValueError) for an empty label
+        # ("exa..mple.com", ".example.com", "example.com..") or one longer than 63 characters.
+        # raw_host, not host: host is the Unicode form of an "xn--" label, which the IDNA 2003
+        # nameprep of the codec could refuse although the socket never sees it.
+        _ = httpx.URL(url).raw_host.decode("ascii").encode("idna")
     except (ValueError, httpx.InvalidURL):
         parser.error(f"invalid --api-url {NOT_SHOWN}")
     if not host or has_userinfo or parts.query or parts.fragment:
