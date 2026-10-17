@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked — **Aguardando reaprovação humana** |
+| Status | In Test |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -152,3 +152,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 | 2026-10-13 | Mudanças: (a) §4.2, item 5 novo: diretórios criados pelo modo coleta com `0700` e imagens, `manifest.csv` e `manifest.csv.lock` com `0600`, exatos, seja qual for o `umask`; (b) CA-18 novo; (c) §7: notas sobre o limitador e o console depois da SPEC-025 e sobre o `umask`. Nenhum CA existente muda. A espera do limitador fora do threadpool (SEC-03) e as permissões de `captures/` ficaram na SPEC-025, que mexe no código da SPEC-007 que esta reutiliza; a retenção das fotos de inspeção está em `docs/dataset-protocol.md` §9. SPEC marcada como "Aguardando reaprovação humana". | SEC-06 de `reviews/SPEC-007/r1-security-report.md` (parte de `DATASET_DIR`) | Orquestrador, a pedido do humano |
 | 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-17 | §3.1: autoriza o tester a fazer exatamente três ajustes em `edge/tests/acceptance/test_spec_007.py`: (1) `test_ca15_capture_page` deixa de exigir `disabled` na opção `collect`; (2) `test_extra_collect_mode_is_501` é removido ou passa a esperar 422; (3) a contagem `parafuso == 10` de `test_ca13_console_from_loopback` passa a valer só nas linhas `<tr class="inspection" …>`. Nenhum requisito nem CA desta SPEC muda; nenhum CA da SPEC-007 tem a intenção alterada. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 de `reviews/SPEC-010/r1-dev-report.md` (três testes de aceite da SPEC-007 verificavam o comportamento que esta SPEC substitui de propósito) | Orquestrador |
+| 2026-10-17 | Correção do SPEC_ISSUE-01 reaprovada, junto com a regra "Testes de aceite de SPECs anteriores" (`architecture.md` §10); `Blocked` → `In Dev`, retomando a r1 (o código da r1 já está pronto; segue para o tester). | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
