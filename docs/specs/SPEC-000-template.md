@@ -60,4 +60,4 @@ Se a SPEC aumenta a versão de um pacote, siga as "Expectativas de versão" de `
 - [ ] review-report APPROVED (+ security-report PASS, se tag `security`/`deploy`)
 - [ ] CI verde; `ruff` limpo
 - [ ] Documentação afetada atualizada (README, `.env.example`, `architecture.md` via architect se necessário)
-- [ ] PR aberto com os relatórios; merge humano
+- [ ] PR aberto com os relatórios; merge conforme R-09 (delegado ao orquestrador, ADR-016)

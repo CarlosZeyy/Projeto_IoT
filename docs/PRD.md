@@ -31,7 +31,7 @@ Um sistema de inspeção visual em três camadas:
 
 ### Metodologia de desenvolvimento
 
-O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autorização prévia do professor: toda entrega nasce de uma especificação (SPEC) com critérios de aceite testáveis, é implementada por um agente e verificada por outros agentes independentes (teste, revisão e segurança) antes do merge humano. Isso também é conteúdo da disciplina: mostra como IA e ML estão sendo usados hoje no desenvolvimento de software (ADR-011, `reviews/README.md`).
+O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autorização prévia do professor: toda entrega nasce de uma especificação (SPEC) com critérios de aceite testáveis, é implementada por um agente e verificada por outros agentes independentes (teste, revisão e segurança) antes do merge. O merge é feito pelo orquestrador sob delegação do humano, que aprova as SPECs e pode vetar qualquer merge (ADR-016). Isso também é conteúdo da disciplina: mostra como IA e ML estão sendo usados hoje no desenvolvimento de software (ADR-011, `reviews/README.md`).
 
 ## 3. Personas
 

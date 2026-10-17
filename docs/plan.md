@@ -26,7 +26,7 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 | S2 | Testar `<input capture>` nos dois celulares e a conexão celular → notebook, em casa, pelo Wi-Fi e pelo hotspot (CA manual da SPEC-007) | Dupla |
 | S1–S3 | Fotografar no modo coleta (assim que a SPEC-010 estiver pronta; antes disso, com a câmera normal, seguindo o protocolo e anotando o `item_id`) | Dupla |
 | S3 | Rotulagem dupla (20%) | Dupla |
-| Contínuo | Aprovar SPECs (`Draft` → `Ready`) e fazer o merge dos PRs | Dupla |
+| Contínuo | Aprovar SPECs (`Draft` → `Ready`) e ADRs (`Proposto` → `Aceito`); vetar um merge quando quiser (o merge dos PRs é feito pelo orquestrador sob delegação, ADR-016) | Dupla |
 
 ## 2. Quadro de SPECs
 
