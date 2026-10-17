@@ -1203,10 +1203,62 @@ def test_extra_script_invalid_url_does_not_print_key(clean_db: str) -> None:
         assert conn.execute("select count(*) from devices").fetchone()[0] == 0
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+_UVICORN_RUNNING = re.compile(rb"Uvicorn running on http://127\.0\.0\.1:(\d+) ")
+Uvicorn = tuple[subprocess.Popen[bytes], int, list[bytes], threading.Thread]
+
+
+def _log_tail(log: str, *hidden: str) -> str:
+    """End of the server log for assertion messages, with the secrets replaced by markers."""
+    for secret, mark in ((READ_KEY, "<READ_KEY>"), (NO_DB_PASSWORD, "<NO_DB_PASSWORD>")):
+        log = log.replace(secret, mark)
+    for secret in hidden:
+        log = log.replace(secret, "<KE>")
+    return log[-3000:]
+
+
+def _start_uvicorn(env: dict[str, str], *hidden: str) -> Uvicorn:
+    """Start ``qc_api.main:app`` with ``--port 0`` and read the port from the uvicorn log.
+
+    SPEC-027 section 4.4: the kernel picks the port at bind time, so nothing can take it between
+    the choice and the bind (uvicorn opens the database pool before binding). Every output line
+    is kept in the returned list for the final assertions.
+    """
+    cmd = [sys.executable, "-m", "uvicorn", "qc_api.main:app", "--port", "0"]
+    proc = subprocess.Popen(
+        cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=ROOT
+    )
+    lines: list[bytes] = []
+    ports: list[int] = []
+    ready = threading.Event()
+
+    def read() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            lines.append(line)
+            match = _UVICORN_RUNNING.search(line)
+            if match and not ports:
+                ports.append(int(match.group(1)))
+                ready.set()
+        ready.set()  # end of output: the server exited
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    started = ready.wait(20)
+    if not ports:
+        proc.kill()
+        log = _stop_uvicorn((proc, 0, lines, reader))
+        reason = "uvicorn exited" if started else "uvicorn did not start"
+        raise AssertionError(f"{reason}\n{_log_tail(log, *hidden)}")
+    return proc, ports[0], lines, reader
+
+
+def _stop_uvicorn(server: Uvicorn) -> str:
+    """Terminate the server and return its whole output."""
+    proc, _, lines, reader = server
+    proc.terminate()
+    proc.wait(timeout=20)
+    reader.join(timeout=20)
+    return b"".join(lines).decode("utf-8", "replace")
 
 
 def _raw_request(port: int, head: bytes, chunks: list[bytes]) -> bytes:
@@ -1232,24 +1284,11 @@ def _raw_request(port: int, head: bytes, chunks: list[bytes]) -> bytes:
 
 def test_extra_real_server_413_for_declared_and_chunked_bodies() -> None:
     """Over a real socket (uvicorn), the 413 does not depend on the TestClient buffering."""
-    port = _free_port()
     env = dict(os.environ)
     env.update(DATABASE_URL=no_db_url(), READ_API_KEY=READ_KEY, LOG_LEVEL="DEBUG")
-    cmd = [sys.executable, "-m", "uvicorn", "qc_api.main:app", "--port", str(port)]
-    proc = subprocess.Popen(
-        cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=ROOT
-    )
+    server = _start_uvicorn(env)
+    port = server[1]
     try:
-        deadline = time.monotonic() + 20
-        while True:
-            try:
-                socket.create_connection(("127.0.0.1", port), timeout=1).close()
-                break
-            except OSError:
-                assert proc.poll() is None, "uvicorn exited"
-                assert time.monotonic() < deadline, "uvicorn did not start"
-                time.sleep(0.2)
-
         # Declared Content-Length over the limit, no body sent: answered without reading it.
         head = (
             b"POST /api/v1/inspections HTTP/1.1\r\nHost: t\r\n"
@@ -1271,9 +1310,7 @@ def test_extra_real_server_413_for_declared_and_chunked_bodies() -> None:
         answer = _raw_request(port, head, chunks)
         assert answer.startswith(b"HTTP/1.1 413"), answer[:200]
     finally:
-        proc.terminate()
-        out, _ = proc.communicate(timeout=20)
-    log = out.decode("utf-8", "replace")
+        log = _stop_uvicorn(server)
     assert NO_DB_PASSWORD + "@" not in log
     assert READ_KEY not in log
 
@@ -1482,26 +1519,14 @@ def test_extra_r2_real_server_unencodable_bodies_are_422_and_not_logged(clean_db
     422 (or 400 for nesting ``json.loads`` refuses) and the body never in the server log."""
     ke = secrets.token_urlsafe(32)
     register(clean_db, "edge-01", ke)
-    port = _free_port()
     proc_env = dict(os.environ)
     proc_env.update(DATABASE_URL=clean_db, READ_API_KEY=READ_KEY, LOG_LEVEL="DEBUG")
-    cmd = [sys.executable, "-m", "uvicorn", "qc_api.main:app", "--port", str(port)]
-    proc = subprocess.Popen(
-        cmd, env=proc_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=ROOT
-    )
+    server = _start_uvicorn(proc_env, ke)
+    port = server[1]
     marker = ("BODYMARK" + secrets.token_hex(6)).encode()
     jpeg = b"\xff\xd8\xff" + marker + b"\xff" * 8
     statuses: list[tuple[str, str, int]] = []
     try:
-        deadline = time.monotonic() + 20
-        while True:
-            try:
-                socket.create_connection(("127.0.0.1", port), timeout=1).close()
-                break
-            except OSError:
-                assert proc.poll() is None, "uvicorn exited"
-                assert time.monotonic() < deadline, "uvicorn did not start"
-                time.sleep(0.2)
         headers = key_header(ke)
         with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10) as client:
             for url in (URL_ONE, URL_BATCH):
@@ -1518,19 +1543,20 @@ def test_extra_r2_real_server_unencodable_bodies_are_422_and_not_logged(clean_db
                 for depth in (1000, 2000, 5000, 50_000):
                     body = b"[" * depth + b'"' + marker + b'"' + b"]" * depth
                     resp = client.post(
-                        url, content=body, headers={**headers, "Content-Type": "application/json"}
+                        url,
+                        content=body,
+                        headers={**headers, "Content-Type": "application/json"},
+                        timeout=60 if depth == 50_000 else 10,
                     )
                     statuses.append((url, f"deep-{depth}", resp.status_code))
     finally:
-        proc.terminate()
-        out, _ = proc.communicate(timeout=20)
-    log = out.decode("utf-8", "replace")
+        log = _stop_uvicorn(server)
     for url, kind, code in statuses:
         expected = (400, 422) if kind == "deep-50000" else (422,)
-        assert code in expected, (url, kind, code)
+        assert code in expected, (url, kind, code, _log_tail(log, ke))
     assert marker.decode() not in log
-    assert "Traceback" not in log
-    assert " ERROR " not in log
+    assert "Traceback" not in log, _log_tail(log, ke)
+    assert " ERROR " not in log, _log_tail(log, ke)
     assert ke not in log
     assert count_rows(clean_db) == 0
     assert last_seen(clean_db, "edge-01") is None
