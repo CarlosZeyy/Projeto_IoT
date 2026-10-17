@@ -16,6 +16,7 @@ options of the same name); the key is never printed nor logged (R-03).
 Exit codes: ``0`` success; ``1`` internal error (a generated item failed the contract);
 ``2`` invalid usage; ``3`` key refused (401/403); ``4`` batch refused (422); ``5`` API
 unreachable or failing (health check, network errors, timeouts and 5xx after the retries).
+Usage errors never repeat a value typed by the operator and never show a traceback (SPEC-027).
 """
 
 import argparse
@@ -27,11 +28,13 @@ import random
 import re
 import secrets
 import sys
+import textwrap
 import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import NoReturn
 from urllib.parse import urlsplit
 
 import httpx
@@ -90,7 +93,15 @@ GOOD_WEIGHTS: tuple[float, ...] = (0.40, 0.35, 0.25)
 TYPE_REVIEW_THRESHOLD = 0.80
 GRADE_REVIEW_THRESHOLD = 0.60
 
-_LOT_NUMBER = re.compile(r"[0-9]+")
+# 1 to 4 digits (SEC-04 of SPEC-014): int() of a huge string would raise ValueError.
+_LOT_NUMBER = re.compile(r"[0-9]{1,4}")
+
+NOT_SHOWN = "(not shown)"
+_UNRECOGNIZED = "unrecognized arguments: "
+_UNRECOGNIZED_REDACTED = re.compile(r"unrecognized arguments: \d+ value\(s\) \(not shown\)")
+# A value that argparse quotes with %r (a Python string literal, single or double quoted, with
+# backslash escapes), with the ": " that precedes it.
+_QUOTED_VALUE = re.compile(r"""(?::\s*|\s+)?(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")""")
 
 
 @dataclass(frozen=True)
@@ -141,8 +152,51 @@ class SendError(Exception):
 # ---------------------------------------------------------------------------------------------
 
 
+def redact_usage_error(message: str) -> str:
+    """``message`` of an argparse usage error without any value typed by the operator.
+
+    The list of ``unrecognized arguments`` becomes a count, and every value argparse quotes
+    (``invalid int value: '<value>'``, ``ignored explicit argument '<value>'``...) becomes
+    ``(not shown)``. The simulator's own messages have no quotes and are kept as they are.
+    """
+    if message.startswith(_UNRECOGNIZED):
+        if _UNRECOGNIZED_REDACTED.fullmatch(message):
+            return message
+        count = len(message[len(_UNRECOGNIZED) :].split())
+        return f"{_UNRECOGNIZED}{count} value(s) {NOT_SHOWN}"
+    return _QUOTED_VALUE.sub(f" {NOT_SHOWN}", message)
+
+
+class NoEchoArgumentParser(argparse.ArgumentParser):
+    """``ArgumentParser`` whose usage errors never repeat a typed value (SEC-01 of SPEC-014).
+
+    A mistyped option can carry the device key (``--api-keyy <key>``), and argparse would print
+    it on stderr. The usage line and the exit code 2 stay as in ``ArgumentParser``.
+    """
+
+    def parse_args(
+        self, args: Sequence[str] | None = None, namespace: argparse.Namespace | None = None
+    ) -> argparse.Namespace:
+        parsed, extras = self.parse_known_args(args, namespace)
+        if extras:
+            # The exact count, even when a value contains spaces.
+            self.error(f"{_UNRECOGNIZED}{len(extras)} value(s) {NOT_SHOWN}")
+        return parsed
+
+    def error(self, message: str) -> NoReturn:
+        super().error(redact_usage_error(message))
+
+
+class _HelpFormatter(argparse.HelpFormatter):
+    """Never splits a word of the help at a hyphen (``--api-key=<value>`` stays whole)."""
+
+    def _split_lines(self, text: str, width: int) -> list[str]:
+        text = " ".join(text.split())
+        return textwrap.wrap(text, width, break_on_hyphens=False, break_long_words=False)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = NoEchoArgumentParser(
         prog="simulate.py",
         description=(
             "Generate simulated inspection lots (always source=simulated) and send them to the "
@@ -150,6 +204,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
         # No prefix matching: only the exact option names are accepted.
         allow_abbrev=False,
+        formatter_class=_HelpFormatter,
     )
     parser.add_argument(
         "--api-url",
@@ -162,7 +217,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--api-key",
         help=(
             "device API key (default: SIM_DEVICE_API_KEY). Prefer the environment variable: "
-            "a value on the command line ends up in the shell history and the process list"
+            "a value on the command line ends up in the shell history and the process list. "
+            "On the command line, use the form --api-key=<value>: a key that starts with '-' "
+            "does not work after a space"
         ),
     )
     parser.add_argument("--lots", type=int, default=DEFAULT_LOTS, help="number of lots (1-500)")
@@ -347,17 +404,24 @@ def _item_offset(j: int, n: int) -> timedelta:
 
 
 def _api_url(parser: argparse.ArgumentParser, raw: str | None) -> str:
-    url = (raw if raw is not None else _env("CLOUD_API_URL")).strip()
-    if not url:
+    url = raw if raw is not None else os.environ.get("CLOUD_API_URL", "")
+    if not url.strip():
         parser.error("no API URL: set CLOUD_API_URL or pass --api-url (or use --dry-run)")
     # The value is never echoed: it might carry credentials (R-03).
+    # Visible ASCII only, before urlsplit: a space, a control character, DEL or a non-ASCII
+    # character would reach httpx (InvalidURL, traceback) or a terminal (SEC-03 of SPEC-014).
+    if not all("!" <= ch <= "~" for ch in url):
+        parser.error(f"invalid --api-url {NOT_SHOWN}")
     try:
         parts = urlsplit(url)
         host = parts.hostname
         has_userinfo = parts.username is not None or parts.password is not None
         _ = parts.port  # raises ValueError for an invalid port
-    except ValueError:
-        parser.error("invalid --api-url (not shown)")
+        # The host as httpx encodes it for the request (IDNAError, a ValueError, for an
+        # invalid "xn--" label), so the client never raises on it later.
+        _ = httpx.URL(url).host
+    except (ValueError, httpx.InvalidURL):
+        parser.error(f"invalid --api-url {NOT_SHOWN}")
     if not host or has_userinfo or parts.query or parts.fragment:
         parser.error("invalid --api-url: expected scheme://host[:port][/path], no credentials")
     if not (parts.scheme == "https" or (parts.scheme == "http" and host in LOCAL_HOSTS)):
