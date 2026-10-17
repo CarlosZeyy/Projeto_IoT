@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -144,3 +144,9 @@ Só fronteiras são mockadas: a API falsa do simulador (`httpx.MockTransport`, c
 - [ ] CI verde; `ruff` limpo
 - [ ] `README.md` (seção "Simulador") atualizado
 - [ ] PR aberto com os relatórios; merge conforme R-09 (delegado ao orquestrador, ADR-016)
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-17 | Criação (`Draft`) e `Draft` → `Ready`, com aprovação humana. | Pendências dos relatórios das SPECs 005, 006 e 014 | Humano (Carlos), via orquestrador |

@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Proposto |
+| Status | Aceito (aprovado pelo humano em 2026-10-17) |
 | Data | 2026-10-17 |
 | Decisores | Dupla (redigido pelo agente architect) |
 | Relacionados | ADR-013 (complementado, não substituído), ADR-007, ADR-008, SPEC-006, SPEC-013, SPEC-015, SPEC-017, SPEC-026, R-04, R-06 |

@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | contrato, security |
@@ -163,3 +163,9 @@ Banco: Postgres 16 de teste com as fixtures da SPEC-003. Os dados do CA-11, CA-1
 - [ ] CI verde, incluindo o portão de cobertura; `ruff` limpo
 - [ ] `packages/contracts/README.md` com a linha da 0.3.0
 - [ ] PR aberto com os relatórios; merge conforme R-09 (delegado ao orquestrador, ADR-016)
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-17 | Criação (`Draft`) e `Draft` → `Ready`, com aprovação humana. | Pendências dos relatórios das SPECs 005, 006 e 014 | Humano (Carlos), via orquestrador |
