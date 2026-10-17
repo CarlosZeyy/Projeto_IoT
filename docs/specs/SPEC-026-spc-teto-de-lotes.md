@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Security |
+| Status | Done |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | contrato, security |
