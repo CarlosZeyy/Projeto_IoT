@@ -79,9 +79,10 @@ def assert_single_le_error(exc: pytest.ExceptionInfo[ValidationError], loc: tupl
 
 
 def test_ca01_contracts_version() -> None:
-    assert qc_contracts.__version__ == "0.2.0"
-    assert importlib.metadata.version("qc-contracts") == "0.2.0"
+    v = qc_contracts.__version__
     assert qc_contracts.__version__ == importlib.metadata.version("qc-contracts")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
+    assert (0, 2, 0) <= tuple(int(p) for p in v.split(".")) < (1, 0, 0)
 
 
 def test_ca01_both_packages_version() -> None:

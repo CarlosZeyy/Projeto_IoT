@@ -519,10 +519,19 @@ CA16_CASES = [
 )
 def test_ca16_response_models_json_round_trip(model: Any, data: dict[str, Any]) -> None:
     text = json.dumps(data)
+    # SPEC-026 section 3.1, adjustment 3: the SPC cases dump the 3 optional cut fields as None.
+    expected = data
+    if model is SpcResponse:  # only the "spc" and "spc-empty" cases
+        expected = {
+            **data,
+            "max_points": None,
+            "valid_lots_total": None,
+            "excluded_lots_total": None,
+        }
     from_json = model.model_validate_json(text)
-    assert from_json.model_dump(mode="json") == data
+    assert from_json.model_dump(mode="json") == expected
     from_obj = model.model_validate(json.loads(text))
-    assert from_obj.model_dump(mode="json") == data
+    assert from_obj.model_dump(mode="json") == expected
 
 
 def test_ca16_health_rejects_unknown_status() -> None:
