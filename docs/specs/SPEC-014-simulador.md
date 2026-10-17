@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked — **Aguardando reaprovação humana** |
+| Status | In Test |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -131,3 +131,4 @@ Os testes importam o script com `importlib.util.spec_from_file_location` (não h
 | 2026-10-12 | §4.1 exige `re.fullmatch` com `DEVICE_ID_PATTERN` e `MODEL_VERSION_PATTERN` de `qc_contracts`. O CA-08 ganhou os casos `"sim-01\n"` e `"sim-v0\n"`. Nenhum outro requisito muda; o `latency_ms` gerado (40 a 180) já respeita o teto do contrato 0.2.0 (SPEC-023). SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-17 | CA-01 (e, por referência, CA-02): `--start` passa de `2026-11-01T12:00:00Z` para a data passada `2026-10-01T12:00:00Z`, com `now` fixo em `2026-10-01T13:00:00Z`; os lotes esperados passam a `SIM-20261001-001`…`003`. Nenhum comportamento muda (opção (a)): o `InspectionCreate` recusa `inspected_at` mais de 5 min no futuro pelo relógio real, e o último item (12:29:00Z) já está no passado; o `now` fixo fica depois do último item, coerente com o CA-09. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-1 de `reviews/SPEC-014/r1-dev-report.md` | Orquestrador |
+| 2026-10-17 | Correção do SPEC_ISSUE-1 reaprovada; `Blocked` → `In Test`, retomando a r1. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
