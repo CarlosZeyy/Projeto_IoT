@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
+| Status | Blocked — **Aguardando reaprovação humana** |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -28,6 +28,12 @@ No modo coleta, cada foto vira um arquivo em `DATASET_DIR/raw/...` e uma linha v
 - Campos de coleta em `capture.html`/`capture.js` (o limite de 200 linhas do JS da SPEC-007 continua valendo).
 - Tabela de cobertura no console (`GET /`).
 - `DATASET_DIR` em `EdgeSettings` (padrão `ml/data`, `docs/dataset-protocol.md` §8) e no `.env.example`; seção "Modo coleta" no `edge/README.md`.
+- **Ajustes autorizados ao tester da SPEC-010 em `edge/tests/acceptance/test_spec_007.py`** (SPEC_ISSUE-01 de `reviews/SPEC-010/r1-dev-report.md`; aplicação explícita da regra "Testes de aceite de SPECs anteriores" de `docs/architecture.md` §10). São exatamente três, todos consequência direta desta SPEC:
+  1. `test_ca15_capture_page`: a asserção `all("disabled" in a for a in collect)` deixa de exigir `disabled`, porque o CA-16 desta SPEC habilita "coleta" (a SPEC-007 §4.4 já o desabilitava só "até a SPEC-010"). Continua exigindo que a opção `collect` exista; as demais asserções do teste não mudam.
+  2. `test_extra_collect_mode_is_501`: é removido, ou passa a esperar 422 (`mode=collect` sem os campos de coleta, §4.1), mantendo `stub.calls == 0` e `edge.captures() == []`, porque o §3.1 desta SPEC substitui o 501 da SPEC-007. É um teste extra, sem CA da SPEC-007 associado.
+  3. `test_ca13_console_from_loopback`: `page.count("parafuso") == 10` passa a contar só dentro das linhas `<tr class="inspection" …>` do console, que continuam sendo exatamente 10. A tabela de cobertura do §4.4 acrescenta 5 linhas "parafuso" fora delas. As demais asserções do teste não mudam.
+
+  Nenhuma outra linha desse arquivo muda e nenhum CA da SPEC-007 tem a intenção alterada. O test-report lista os três ajustes no formato do `docs/architecture.md` §10.
 
 ### 3.2 Fora
 
@@ -145,3 +151,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-13 | Mudanças: (a) §4.2, item 5 novo: diretórios criados pelo modo coleta com `0700` e imagens, `manifest.csv` e `manifest.csv.lock` com `0600`, exatos, seja qual for o `umask`; (b) CA-18 novo; (c) §7: notas sobre o limitador e o console depois da SPEC-025 e sobre o `umask`. Nenhum CA existente muda. A espera do limitador fora do threadpool (SEC-03) e as permissões de `captures/` ficaram na SPEC-025, que mexe no código da SPEC-007 que esta reutiliza; a retenção das fotos de inspeção está em `docs/dataset-protocol.md` §9. SPEC marcada como "Aguardando reaprovação humana". | SEC-06 de `reviews/SPEC-007/r1-security-report.md` (parte de `DATASET_DIR`) | Orquestrador, a pedido do humano |
 | 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-17 | §3.1: autoriza o tester a fazer exatamente três ajustes em `edge/tests/acceptance/test_spec_007.py`: (1) `test_ca15_capture_page` deixa de exigir `disabled` na opção `collect`; (2) `test_extra_collect_mode_is_501` é removido ou passa a esperar 422; (3) a contagem `parafuso == 10` de `test_ca13_console_from_loopback` passa a valer só nas linhas `<tr class="inspection" …>`. Nenhum requisito nem CA desta SPEC muda; nenhum CA da SPEC-007 tem a intenção alterada. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 de `reviews/SPEC-010/r1-dev-report.md` (três testes de aceite da SPEC-007 verificavam o comportamento que esta SPEC substitui de propósito) | Orquestrador |
