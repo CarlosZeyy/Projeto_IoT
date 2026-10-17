@@ -1179,6 +1179,7 @@ dependencies = [
     { name = "plotly" },
     { name = "qc-contracts" },
     { name = "streamlit" },
+    { name = "tzdata" },
 ]
 
 [package.metadata]
@@ -1188,6 +1189,7 @@ requires-dist = [
     { name = "plotly" },
     { name = "qc-contracts", editable = "packages/contracts" },
     { name = "streamlit" },
+    { name = "tzdata" },
 ]
 
 [[package]]
