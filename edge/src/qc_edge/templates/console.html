@@ -18,6 +18,7 @@ th, td { border: 1px solid #ccc; padding: 0.3rem 0.6rem; text-align: left; }
 dl { display: grid; grid-template-columns: max-content auto; gap: 0.2rem 1rem; margin: 0; }
 dt { font-weight: bold; }
 dd { margin: 0; }
+tr.complete td { background: #d7f2dd; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -38,6 +39,7 @@ $other_ips
 <dt>Com falha definitiva</dt><dd>$sink_dead</dd>
 <dt>Conectividade com a nuvem</dt><dd>$connectivity</dd>
 <dt>Último envio</dt><dd>$last_success_at</dd>
+<dt>Dataset (modo coleta)</dt><dd class="url">$dataset_dir</dd>
 </dl>
 <h2>Últimas inspeções desta sessão</h2>
 <table>
@@ -46,5 +48,7 @@ $other_ips
 $rows
 </tbody>
 </table>
+<h2>Cobertura do dataset</h2>
+$coverage
 </body>
 </html>

@@ -5,8 +5,9 @@ Read only from the process environment: no ``.env`` file is loaded here. Locally
 blank lines of ``.env.example`` keep their defaults. Validation errors never show the values that
 were provided (``hide_input_in_errors``), only the variable names (R-03).
 
-``DEVICE_API_KEY``, ``CLOUD_API_URL``, ``MODEL_DIR``, ``DATASET_DIR``, ``OUTBOX_PATH`` and the
-three thresholds are only read here; SPEC-008, SPEC-009 and SPEC-010 validate them.
+``DEVICE_API_KEY``, ``CLOUD_API_URL``, ``MODEL_DIR``, ``OUTBOX_PATH`` and the three thresholds
+are only read here; SPEC-008 and SPEC-009 validate them. ``DATASET_DIR`` (SPEC-010) is not
+created here: the collect mode creates it, with mode ``0700``, on the first capture.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ DEFAULT_EDGE_HOST = "0.0.0.0"
 DEFAULT_EDGE_PORT = 8000
 DEFAULT_DEVICE_ID = "edge-01"
 DEFAULT_EDGE_DATA_DIR = Path("edge/data")
+# docs/dataset-protocol.md section 8; ml/data/ is in .gitignore.
+DEFAULT_DATASET_DIR = Path("ml/data")
 MIN_SESSION_TOKEN_LENGTH = 32
 
 
@@ -46,13 +49,13 @@ class EdgeSettings(BaseSettings):
     # the same validation the contract applies to ``InspectionCreate.device_id``.
     DEVICE_ID: Annotated[str, Field(pattern=DEVICE_ID_PATTERN)] = DEFAULT_DEVICE_ID
     EDGE_DATA_DIR: Path = DEFAULT_EDGE_DATA_DIR
+    # Collect mode (SPEC-010): images and manifest.csv of the dataset; never served (R-02).
+    DATASET_DIR: Path = DEFAULT_DATASET_DIR
 
-    # Read here, validated by later SPECs (008: model and thresholds; 009: cloud and outbox;
-    # 010: dataset).
+    # Read here, validated by later SPECs (008: model and thresholds; 009: cloud and outbox).
     DEVICE_API_KEY: SecretStr | None = None
     CLOUD_API_URL: str | None = None
     MODEL_DIR: Path | None = None
-    DATASET_DIR: Path | None = None
     OUTBOX_PATH: Path | None = None
     TYPE_THRESHOLD: float | None = None
     UNUSABLE_THRESHOLD: float | None = None
@@ -75,5 +78,13 @@ class EdgeSettings(BaseSettings):
         except OSError as exc:
             raise ValueError(f"cannot create the directory ({exc.strerror})") from None
         if not value.is_dir():
+            raise ValueError("must be a directory")
+        return value
+
+    @field_validator("DATASET_DIR")
+    @classmethod
+    def _dataset_dir_is_not_a_file(cls, value: Path) -> Path:
+        # Not created here (section 4.2, item 5): only an existing non-directory is refused.
+        if value.exists() and not value.is_dir():
             raise ValueError("must be a directory")
         return value
