@@ -23,7 +23,7 @@ O dashboard e a carta p (SPEC-006, SPEC-013) precisam de volume e de lotes fora 
 
 ### 3.1 Dentro
 
-- `scripts/simulate.py` (argparse), com funções importáveis: `SimConfig`, `parse_args(argv) -> SimConfig`, `generate(cfg) -> list[InspectionCreate]`, `send(items, cfg, *, transport=None, sleep=time.sleep) -> SendSummary`, `main(argv=None, *, transport=None, sleep=time.sleep, now=None) -> int`.
+- `scripts/simulate.py` (argparse), com funções importáveis: `SimConfig`, `parse_args(argv, *, now=None) -> SimConfig` (o `now` só por palavra-chave substitui o relógio no padrão e no limite de `--start`), `generate(cfg) -> list[InspectionCreate]`, `send(items, cfg, *, transport=None, sleep=time.sleep) -> SendSummary`, `main(argv=None, *, transport=None, sleep=time.sleep, now=None) -> int`.
 - Testes em `scripts/tests/` e inclusão de `"scripts/tests"` em `testpaths` do `pyproject.toml` da raiz (SPEC-001 §4).
 - Seção "Simulador" no `README.md` da raiz; `SIM_DEVICE_ID`/`SIM_DEVICE_API_KEY` no `.env.example` (se ainda não estiverem).
 
@@ -39,9 +39,9 @@ O dashboard e a carta p (SPEC-006, SPEC-013) precisam de volume e de lotes fora 
 
 | Argumento | Padrão | Validação (erro → código 2, mensagem no stderr) |
 |---|---|---|
-| `--api-url` | env `CLOUD_API_URL` | obrigatório fora do `--dry-run`; `https://`, exceto host `localhost`/`127.0.0.1` |
+| `--api-url` | env `CLOUD_API_URL` | obrigatório fora do `--dry-run`; `https://`, exceto host `localhost`/`127.0.0.1`; recusada também sem host, com usuário ou senha, com query ou fragmento, ou com porta inválida; a mensagem nunca repete a URL; a barra final é removida |
 | `--device-id` | env `SIM_DEVICE_ID` | `^[a-z0-9-]{3,32}$` |
-| `--api-key` | env `SIM_DEVICE_API_KEY` | obrigatório fora do `--dry-run`; o help recomenda a variável de ambiente (R-03) |
+| `--api-key` | env `SIM_DEVICE_API_KEY` | obrigatório fora do `--dry-run`; não vazia e só com ASCII visível (`!` a `~`), sem repetir o valor na mensagem; `SimConfig.api_key` com `repr=False`; o help recomenda a variável de ambiente (R-03) |
 | `--lots` | 10 | 1–500 |
 | `--lot-size` | 25 | 1–1000; mutuamente exclusivo com o par abaixo |
 | `--lot-size-min`, `--lot-size-max` | — | os dois juntos, 1–1000, `min ≤ max`; `n` de cada lote sorteado uniforme em `[min, max]` |
@@ -71,9 +71,9 @@ A mesma seed com os mesmos argumentos produz os mesmos ids (e, com `--start` fix
 
 ### 4.3 Envio
 
-1. `GET {api-url}/api/v1/health` com timeout de 90 s (acorda o Render); falha → código 5.
-2. Lotes de até 100 itens em `POST {api-url}/api/v1/inspections/batch`, header `X-API-Key`, corpo `qc_contracts.BatchCreate`, timeout 10 s.
-3. Erro de rede, timeout ou 5xx → até 3 novas tentativas com `sleep(2)`, `sleep(4)`, `sleep(8)`; esgotou → código 5. 401/403 → código 3, sem novas requisições. 422 → código 4, imprimindo o `detail`.
+1. `GET {api-url}/api/v1/health` com timeout de 90 s (acorda o Render), numa única requisição, sem novas tentativas; erro de rede ou qualquer status diferente de 200 → código 5.
+2. Lotes de até 100 itens em `POST {api-url}/api/v1/inspections/batch`, header `X-API-Key`, corpo `qc_contracts.BatchCreate`, timeout 10 s. Os redirecionamentos **não** são seguidos (a chave nunca vai para outro host).
+3. Erro de rede (`httpx.RequestError`), timeout ou 5xx → até 3 novas tentativas com `sleep(2)`, `sleep(4)`, `sleep(8)`; esgotou → código 5. 401/403 → código 3, sem novas requisições. 422 → código 4, imprimindo o `detail` (uma lista vira JSON compacto). Qualquer outro 4xx, um 3xx, ou um 2xx cujo corpo não é `BatchResult` com um resultado por item → código 5, sem nova tentativa, com o status HTTP na mensagem. Numa falha no meio do envio, o stderr mostra o progresso parcial (`sent=… created=… duplicate=… seed=…`).
 4. Resumo no stdout: `sent=<n> created=<n> duplicate=<n> lots=<n> seed=<s> source=simulated`. Código 0.
 5. `--dry-run`: imprime um `InspectionCreate` por linha (JSON Lines, `model_dump_json()`) no stdout e o resumo (sem `created`/`duplicate`) no stderr.
 
@@ -132,3 +132,4 @@ Os testes importam o script com `importlib.util.spec_from_file_location` (não h
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-17 | CA-01 (e, por referência, CA-02): `--start` passa de `2026-11-01T12:00:00Z` para a data passada `2026-10-01T12:00:00Z`, com `now` fixo em `2026-10-01T13:00:00Z`; os lotes esperados passam a `SIM-20261001-001`…`003`. Nenhum comportamento muda (opção (a)): o `InspectionCreate` recusa `inspected_at` mais de 5 min no futuro pelo relógio real, e o último item (12:29:00Z) já está no passado; o `now` fixo fica depois do último item, coerente com o CA-09. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-1 de `reviews/SPEC-014/r1-dev-report.md` | Orquestrador |
 | 2026-10-17 | Correção do SPEC_ISSUE-1 reaprovada; `Blocked` → `In Test`, retomando a r1. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
+| 2026-10-17 | Só texto, depois do merge (PR #18): §3.1 registra o `now` keyword-only de `parse_args`; §4.1 registra a validação extra de `--api-url` e de `--api-key`; §4.3 registra o health sem novas tentativas, os redirecionamentos não seguidos, o código 5 para 3xx, para outros 4xx e para um 2xx inválido, e o progresso parcial na falha. São as decisões 1, 4, 5, 6, 7 e 9 de `reviews/SPEC-014/r1-dev-report.md`, aceitas pelo reviewer. Nenhum CA e nenhum comportamento implementado muda, por isso sem reaprovação. As correções SEC-01 a SEC-04 do security-report ficam na SPEC-027. | RV-04 de `reviews/SPEC-014/r1-review-report.md` | Orquestrador, a pedido do humano |

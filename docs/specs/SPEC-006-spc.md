@@ -143,3 +143,9 @@ Banco: Postgres 16 de teste com as fixtures da SPEC-003; os dados do CA-10 são 
 - [ ] review-report APPROVED + security-report PASS
 - [ ] CI verde, incluindo o portão de cobertura; `ruff` limpo
 - [ ] PR aberto com os relatórios; merge humano
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-17 | Registro, sem mudar o texto desta SPEC: a SPEC-026 (ADR-017) acrescenta à rota o parâmetro `max_points` (padrão 100), corta `points` nos últimos lotes válidos e `excluded_lots` nos 50 mais recentes, e estende `compute_p_chart` com parâmetros só por palavra-chave. Sem corte, o comportamento desta SPEC continua o mesmo, e os CA-01 a CA-16 continuam valendo (os dados deles têm menos de 100 lotes). A SPEC-026 também torna `LotCounts` mais estrito (RV-03). Os tipos da Fase 2 no SPC ficam com a SPEC-016 (RV-01). | SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`; RV-01 a RV-03 de `reviews/SPEC-006/r1-review-report.md` | Orquestrador, a pedido do humano |

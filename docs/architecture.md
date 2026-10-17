@@ -40,9 +40,9 @@ O acesso ao banco é feito com **psycopg 3 direto ao Postgres do Supabase** (con
 
 As **migrações** são a exceção: o `infra/migrate.py` usa um advisory lock de sessão, que não sobrevive entre transações no modo transaction. Por isso, elas rodam pela conexão direta ou pelo pooler em **modo session** (porta 5432), nunca pela porta 6543, e o executor recusa essa porta (SPEC-015 §4.7).
 
-## 3. Contrato v0 (`qc-contracts` 0.2.0)
+## 3. Contrato v0 (`qc-contracts` 0.2.0; 0.3.0 com a SPEC-026)
 
-Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023). O histórico completo fica em `packages/contracts/README.md`.
+Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023); 0.3.0, com os 3 campos opcionais de corte da carta p em `SpcResponse` (SPEC-026, ADR-017; vale a partir do merge dela). O histórico completo fica em `packages/contracts/README.md`.
 
 ### 3.1 Enums
 
@@ -112,9 +112,16 @@ Campos extras são rejeitados (`extra="forbid"`).
   - com `p̄ = 0` ou `p̄ = 1`, os limites são iguais a `p̄` (sem divisão por zero)
 - **Fora de controle:** `out_of_control = p_i > ucl_i or p_i < lcl_i` (regra 1).
 - **Menos de 2 lotes válidos:** `points = []` e `p_bar = null`, com `message` explicando.
-- **Implementação:** função pura `qc_api.services.spc.compute_p_chart(lots, baseline_lots=20, min_lot_size=5, *, source)`, com testes unitários. O endpoint só faz a consulta e a serialização.
+- **Corte** (ADR-017, SPEC-026; a partir do merge dela). A resposta tem tamanho limitado, qualquer que seja a história:
+  - `points` traz só os **últimos** `max_points` lotes válidos (parâmetro da rota de 2 a 500, padrão 100), em ordem crescente;
+  - `p̄` continua sobre os **primeiros** `baseline_lots` lotes válidos da **história inteira** da consulta, mesmo que fiquem fora da janela. Mudar `max_points` não muda `p̄` nem os limites;
+  - `excluded_lots` traz no máximo os 50 excluídos mais recentes (`MAX_EXCLUDED_LOTS`), em ordem crescente;
+  - `valid_lots_total` e `excluded_lots_total` são as contagens antes do corte, e `max_points` repete o teto usado. Os três são opcionais (`null` numa resposta 0.2.0);
+  - acima do teto, a rota corta e responde 200, nunca 422;
+  - o corte é feito no SQL, com uma única agregação por requisição, e os desempates usam `lot_id collate "C"` (a ordem de `str` do Python).
+- **Implementação:** funções puras em `qc_api.services.spc`: `compute_p_chart(lots, baseline_lots=20, min_lot_size=5, *, source, max_points=None, max_excluded=None)`, e, a partir da SPEC-026, `select_lots` (referência do corte) e `build_p_chart` (carta a partir da seleção). Todas têm testes unitários. O endpoint só faz a consulta (`lot_selection`, com o corte no SQL) e a serialização.
 
-Resposta:
+Resposta (com os campos da 0.3.0; `points` abreviado a 1 dos 100 itens de uma história com 130 lotes válidos):
 
 ```json
 {
@@ -122,7 +129,8 @@ Resposta:
   "points": [{"lot_id": "L-001", "started_at": "...", "ended_at": "...", "n": 25, "defects": 4,
               "p": 0.16, "cl": 0.18, "ucl": 0.41, "lcl": 0.0, "out_of_control": false}],
   "excluded_lots": [{"lot_id": "L-009", "n": 3}],
-  "message": null
+  "message": null,
+  "max_points": 100, "valid_lots_total": 130, "excluded_lots_total": 1
 }
 ```
 
@@ -136,7 +144,7 @@ Resposta:
 | `GET /inspections` | leitura | Filtros `device_id`, `lot_id`, `object_type`, `grade`, `source`, `defective`, `from`, `to`; `limit` (padrão 50, máximo 500) e `offset`; ordem `inspected_at desc` | 005 |
 | `GET /metrics/summary` | leitura | Mesmos filtros da listagem | 005 |
 | `GET /metrics/timeseries` | leitura | `bucket=minute|hour|day` e filtros | 005 |
-| `GET /metrics/spc` | leitura | `source`, `object_type` (opcional), `baseline_lots`, `min_lot_size` | 006 |
+| `GET /metrics/spc` | leitura | `source`, `object_type` (opcional), `baseline_lots`, `min_lot_size`; `max_points` (2 a 500, padrão 100), com o corte do §3.4 | 006, 026 |
 | `GET /lots` | leitura | `Page[LotSummary]`: lotes com `n`, `defects` e período | 005 |
 
 **Autenticação** (header `X-API-Key`):
@@ -171,6 +179,7 @@ inspections(
 ```
 
 - **Restrições** (SPEC-003 §4.1): os `check` espelham os enums, as faixas e as regexes do contrato (defesa em profundidade). `inspections.device_id` é `not null`, porque o contrato o exige (SPEC_ISSUE-02 da SPEC-003, ratificado).
+- **Restrições da `002`** (SPEC-027; a partir do merge dela): `model_version` com a regex do contrato; `inspection_id` com versão 4 e variante RFC 4122 (`UUID4` do pydantic); `inspected_at` e `received_at` na faixa do `datetime` do Python em UTC (`>= 0001-01-01 00:00:00+00` e `< 10000-01-01 00:00:00+00`, o que recusa `infinity`). Sem elas, uma linha gravada fora da API (SQL Editor, migração manual) derrubava a leitura com 500. A migração confere antes as linhas existentes e recusa, só com contagens na mensagem, se alguma violar as regras.
 - **Colunas `real` (`float4`):** arredondam (ex.: `0.97` vira `0.9700000286`) e recusam com `22003` todo valor diferente de zero que arredonde para zero (abaixo de cerca de `7e-46`). A API converte esse erro em 422 (§4); a borda legítima não produz esses valores.
 - **Grants do Supabase:** o RLS não cobre `TRUNCATE`, `REFERENCES` e `TRIGGER`. Projetos novos do Supabase deixaram de dar grants automáticos a `anon`/`authenticated` nas tabelas novas do `public` (changelog 45329, <https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically>, consultado em 2026-10-12), mas isso depende da opção escolhida na criação. A SPEC-015 (CA-14) confere os grants em produção e os revoga se existirem; o `revoke` não vai para uma migração, porque esses papéis não existem no Postgres local nem no do CI.
 
@@ -261,6 +270,8 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
 | Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão. O `load_image` checa pelo cabeçalho, antes de decodificar, o limite de pixels (40 M) e de proporção (≤ 10:1), o que evita o OOM do resize (SPEC-023), e recusa JPEG com mais de 64 marcadores de scan (`FF DA`), o que limita a CPU gasta com scans progressivos repetidos (SPEC-024). Nenhum componente liga `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`: o `load_image` se recusa a rodar com ela ligada, e a borda se recusa a subir (SPEC-007) |
 | Muitos uploads simultâneos na borda (memória e CPU) | Toda chamada a `load_image` em `qc_edge` passa por um semáforo de decodificações (padrão 2, espera de 10 s, depois 503 `server busy`); vale para os modos `inspect` e `collect` (SPEC-007 §4.6, SPEC-010). Custo por slot no pior caso aceito: ~2,5 s de CPU e ~360 MB só com os limites do `load_image` (medido, SEC-24-02 de `reviews/SPEC-024/r1-security-report.md`); com os limites próprios da rota (3 MiB e 4 M pixels, SPEC-007 §4.7), **~4 s de CPU e ~90 MB acima da base (pico de 133 MB) medidos**, com os 2 slots serializados pelo GIL (~1 núcleo) (SEC-02 de `reviews/SPEC-007/r1-security-report.md`). A espera por um slot acontece no event loop e não ocupa thread do threadpool, que é compartilhado com o console e o `/api/status` (SPEC-025) |
 | Valor aceito pelo contrato e recusado pelo banco | 422 com `rollback` para os SQLSTATE das classes `22` e `23` (§4); o publisher da borda isola o item por bissecção e o marca como `dead`, e do 422 registra só o status, o `detail` em texto ou a contagem de erros, nunca o corpo, que ecoa o `input` (SPEC-009) |
+| Muitos lotes pequenos gravados com uma chave de dispositivo, e a carta p do dashboard passando dos 512 MB do Render (SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`) | Corte da carta no SQL: no máximo 500 pontos e 50 excluídos por resposta (§3.4, ADR-017, SPEC-026); cache com TTL no dashboard (SPEC-013); `statement_timeout` no papel do banco para a parte do Postgres (SPEC-015) |
+| Linha fora do contrato gravada direto no banco (SQL Editor, migração manual) derrubando a leitura com 500 | `check` da migração `002` (§5, SPEC-027) |
 | Vazamento de segredo no Git | `.gitignore`, `.env.example` e a busca do reviewer (R-03) |
 
 **Ao subir a versão do Pillow no `uv.lock`** (qualquer SPEC; SEC-24-02, item c, de `reviews/SPEC-024/r1-security-report.md`): o limite de 64 scans foi medido com o Pillow 12.3.0, cujo libjpeg-turbo empacotado **não** decodifica JPEG com codificação aritmética (SOF9/SOF10). O `load_image` recusa esse JPEG com `InvalidImageError` em ~10 ms. Quem sobe o Pillow registra no dev-report o `PIL.features.version("libjpeg_turbo")` e confirma que um JPEG progressivo aritmético (gerado fora do repositório, por exemplo com `cjpeg -arithmetic -progressive`) continua recusado. O security-devops da SPEC confere. Se o JPEG passar a ser decodificado, o custo de scans sem dados pode subir: o limite tem de ser medido de novo, e isso vira uma SPEC do `qc-preprocess`.
@@ -283,5 +294,5 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
     3. um piso com a mesma major: `piso <= tuple(int(p) for p in v.split(".")) < (major + 1, 0, 0)`. O piso é a versão que a SPEC do arquivo introduziu ou, se ela não mexeu no pacote, a que estava em vigor quando foi escrita. A comparação é por tupla, sem `packaging`, que é só uma dependência transitiva.
   - "O outro pacote não mudou" não vira teste de aceite. O reviewer confere no diff (`pyproject.toml`, `__init__.py` e `uv.lock`).
   - As docstrings de módulo dos testes citam no máximo a versão que a própria SPEC introduziu, nunca "a versão verificada agora".
-  - **Quando uma SPEC aumenta a versão de um pacote:** o CA dela fixa a versão nova (exata). A §3.1 dela autoriza o tester a converter para a forma acima as asserções exatas desse pacote no arquivo de aceite da SPEC vigente anterior (um arquivo por pacote), e nada mais.
+  - **Quando uma SPEC aumenta a versão de um pacote:** o CA dela fixa a versão nova (exata). A §3.1 dela autoriza o tester a converter para a forma acima as asserções exatas desse pacote no arquivo de aceite da SPEC vigente anterior (um arquivo por pacote), e nada mais. Enquanto existir o CA-28 da SPEC-004 (`test_ca28_version_expectations_migrated`, em `api/tests/acceptance/test_spec_004.py`), que fixa em `ALLOWED_EXACT` o par arquivo/versão vigente de cada pacote e exige essas asserções em funções `test_ca01_*`, a mesma §3.1 autoriza trocar nesse conjunto o par do pacote pelo do arquivo novo, e o CA de versão da SPEC nova é o CA-01 (precedente: SPEC-026).
   - Implementação: migração única pelo tester da SPEC-004 (§3.1 e CA-28 dela). Depois dela, as asserções exatas ficam só em `packages/preprocess/tests/acceptance/test_spec_024.py` (`qc-preprocess` 0.3.0) e em `packages/contracts/tests/acceptance/test_spec_023.py` (`qc-contracts` 0.2.0). O reviewer confere a regra em toda SPEC.
