@@ -28,6 +28,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -1795,29 +1796,186 @@ def test_extra_real_api_end_to_end(
     assert real_api["read_key"] not in dump(at)
 
 
-# --- bugs found (xfail documents them; they turn into XPASS once fixed) ---------------------
+# --- r2: fixes of T-02 (RV-01), T-01 (RV-02) and O-02 (RV-03) ------------------------------
+
+# SPEC-013 section 4.7: dates as ``dd/mm/aaaa HH:MM`` in the interface; with ``bucket=day`` the
+# axis shows the UTC date (no time of day). Only numeric d3 directives: Plotly writes English
+# month names (``Oct 16, 2026``) for ``%b``/``%B`` and for its default date ticks.
+SERIES_DATE_FORMATS = {"minute": "%d/%m/%Y %H:%M", "hour": "%d/%m/%Y %H:%M", "day": "%d/%m/%Y"}
+SERIES_STEPS = {
+    "minute": timedelta(minutes=1),
+    "hour": timedelta(hours=1),
+    "day": timedelta(days=1),
+}
+X_PLACEHOLDER = re.compile(r"%\{x(?:\|([^}]*))?\}")
 
 
-def _date_axis_is_pt_br(fig: go.Figure) -> bool:
-    """The dates of the x axis come out as ``dd/mm[/aaaa][ HH:MM]``, never as ``Oct 16, 2026``."""
-    xs = [t.x for t in fig.data if t.x is not None]
-    if xs and all(isinstance(v, str) and re.fullmatch(r"\d{2}/\d{2}.*", v) for x in xs for v in x):
-        return True
-    axes = [fig.layout[name] for name in fig.layout if name.startswith("xaxis")]
-    return bool(axes) and all("%d/%m" in (axis.tickformat or "") for axis in axes)
-
-
-@pytest.mark.xfail(strict=False, reason="T-02: Plotly default date ticks are English")
-@pytest.mark.parametrize("bucket", ["minute", "hour", "day"])
-def test_bug_t02_series_date_axis_in_pt_br(bucket: str) -> None:
-    """SPEC-013 section 4.7: PT-BR axes and dates as ``dd/mm/aaaa HH:MM`` in the interface."""
-    series = [
+def _series(bucket: str, count: int = 6) -> list[TimeseriesPoint]:
+    start = datetime(2026, 10, 16, 21, tzinfo=UTC)
+    if bucket == "day":
+        start = datetime(2026, 10, 14, tzinfo=UTC)
+    return [
         TimeseriesPoint(
-            bucket_start=datetime(2026, 10, 16, 21, tzinfo=UTC) + timedelta(hours=k),
-            total=10,
+            bucket_start=start + SERIES_STEPS[bucket] * k,
+            total=10 + k,
             defective=1,
             defect_rate=0.1,
         )
-        for k in range(6)
+        for k in range(count)
     ]
-    assert _date_axis_is_pt_br(charts.volume_and_defect_rate(series, bucket))
+
+
+def _x_axes(fig: go.Figure) -> list[Any]:
+    return [fig.layout[name] for name in fig.layout if re.fullmatch(r"xaxis\d*", name)]
+
+
+@pytest.mark.parametrize("count", [3, 6, 30])
+@pytest.mark.parametrize("bucket", ["minute", "hour", "day"])
+def test_extra_t02_series_date_axis_in_pt_br(bucket: str, count: int) -> None:
+    """T-02 fixed (was ``xfail``): every x axis of the series formats dates as section 4.7 says."""
+    fig = charts.volume_and_defect_rate(_series(bucket, count), bucket)
+    axes = _x_axes(fig)
+    assert len(axes) == 2  # the two shared panels
+    expected = SERIES_DATE_FORMATS[bucket]
+    for axis in axes:
+        assert axis.tickformat == expected
+        assert axis.hoverformat == expected
+        assert axis.tickformatstops in (None, ())  # nothing overrides the numeric format
+        assert not re.search(r"%[bBaAcxXp]", axis.tickformat)
+
+
+@pytest.mark.parametrize("bucket", ["minute", "hour", "day"])
+def test_extra_t02_series_hover_in_pt_br(bucket: str) -> None:
+    """The hover of both traces shows the date as ``dd/mm/aaaa[ HH:MM]``, never ``%{x}`` raw."""
+    fig = charts.volume_and_defect_rate(_series(bucket), bucket)
+    expected = SERIES_DATE_FORMATS[bucket]
+    assert {t.name for t in fig.data} == {"Inspeções", "Taxa de defeito"}
+    for trace in fig.data:
+        template = trace.hovertemplate or ""
+        placeholders = X_PLACEHOLDER.findall(template)
+        assert placeholders, template  # the date is in the hover
+        assert placeholders == [expected], template
+        assert "%{x}" not in template
+    # The hover text after the date is PT-BR, and the rate is a percentage.
+    templates = {t.name: t.hovertemplate for t in fig.data}
+    assert "Inspeções: %{y}" in templates["Inspeções"]
+    assert "Taxa de defeito: %{y:.1%}" in templates["Taxa de defeito"]
+
+
+@pytest.mark.parametrize("bucket", ["minute", "hour"])
+def test_extra_t02_series_x_is_local_wall_clock(bucket: str) -> None:
+    """Minute/hour: the x values are the Sao Paulo wall clock (21:00Z -> 18:00), with no offset.
+
+    Plotly drops a UTC offset from the date string, so an aware value would be drawn as UTC.
+    """
+    fig = charts.volume_and_defect_rate(_series(bucket, 2), bucket)
+    for trace in fig.data:
+        first = trace.x[0]
+        if isinstance(first, str):
+            first = datetime.fromisoformat(first)
+        assert first.tzinfo is None
+        assert (first.day, first.hour, first.minute) == (16, 18, 0)
+
+
+def test_extra_t02_series_day_is_the_utc_date() -> None:
+    """``bucket=day``: the axis shows the UTC date and the title says ``(UTC)``."""
+    points = [
+        TimeseriesPoint(
+            bucket_start=datetime(2026, 10, 17, tzinfo=UTC),  # 16/10 21:00 in Sao Paulo
+            total=3,
+            defective=0,
+            defect_rate=0.0,
+        )
+    ]
+    fig = charts.volume_and_defect_rate(points, "day")
+    assert "(UTC)" in (fig.layout.title.text or "")
+    for trace in fig.data:
+        assert str(trace.x[0])[:10] == "2026-10-17"
+
+
+def _legend_below_plot_area(fig: go.Figure) -> bool:
+    """The legend sits under the axes, never in the top band where Plotly draws the title."""
+    legend = fig.layout.legend
+    y, anchor, ref = legend.y, legend.yanchor, legend.yref or "paper"
+    if y is None:  # Plotly default: vertical legend on the right, outside the title band
+        return legend.orientation in (None, "v")
+    if ref == "container":
+        return y <= 0.1 and anchor in ("bottom", "auto", None)
+    return y <= 0 and anchor in ("top", "auto", None)
+
+
+def test_extra_t01_legend_never_in_the_title_band() -> None:
+    """T-01 fixed: in every figure of the dashboard the legend is below the plot area."""
+    figures = {
+        "grades": charts.grade_distribution({"good": 10, "perfect": 5}),
+        "types": charts.by_object_type({"screw": 3, "nut": 1}),
+        "series_hour": charts.volume_and_defect_rate(_series("hour", 30), "hour"),
+        "series_day": charts.volume_and_defect_rate(_series("day", 3), "day"),
+        "p_chart": charts.p_chart(make_spc()),
+    }
+    for name, fig in figures.items():
+        assert fig.layout.title.text, name  # the title is still there
+        if fig.layout.showlegend is False:
+            continue
+        assert _legend_below_plot_area(fig), (name, fig.layout.legend)
+    # The p chart title keeps the origin (section 4.4), now with nothing over it.
+    assert figures["p_chart"].layout.title.text == "Carta p — origem: real"
+
+
+@pytest.fixture
+def widget_state_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture Streamlit's "default value but also set via the Session State API" warning.
+
+    Streamlit only checks that rule when a server runtime exists, and logs it once per process.
+    The test pretends a runtime exists (framework boundary, not the page under test) and resets
+    the once-per-process flag, so every offending render is seen.
+    """
+    from streamlit.elements.lib import policies
+
+    seen: list[str] = []
+    # Only the policies module sees a runtime; the cache and AppTest keep the real answer.
+    monkeypatch.setattr(policies, "runtime", SimpleNamespace(exists=lambda: True))
+    monkeypatch.setattr(policies, "_shown_default_value_warning", False)
+
+    def warning(msg: str, *args: Any, **kwargs: Any) -> None:
+        seen.append(msg % args if args else msg)
+        policies._shown_default_value_warning = False
+
+    monkeypatch.setattr(policies._LOGGER, "warning", warning)
+    return seen
+
+
+def test_extra_rv03_spc_origin_sync_logs_no_widget_state_warning(
+    fake: FakeApi, widget_state_warnings: list[str]
+) -> None:
+    """O-02/RV-03 fixed: syncing the chart origin with the sidebar logs no Streamlit warning."""
+    at = run(page(SPC_PAGE))
+    for option in ("Simulado", "Todos", "Real", "Simulado"):
+        at.sidebar.radio(key="flt_source").set_value(option)
+        run(at)
+        expected = "Simulado" if option == "Simulado" else "Real"
+        assert at.radio(key="spc_source").value == expected
+    at.radio(key="spc_source").set_value("Real")
+    run(at)
+    assert at.radio(key="spc_source").value == "Real"  # a choice on the page is kept
+    at.number_input(key="spc_max_points").set_value(10)
+    run(at)
+    assert at.radio(key="spc_source").value == "Real"
+    assert fake.to("/metrics/spc")[-1].url.params["source"] == "live"
+    assert widget_state_warnings == []
+
+
+def test_extra_rv03_warning_spy_detects_the_r1_pattern(
+    widget_state_warnings: list[str], tmp_path: Path
+) -> None:
+    """Control for the test above: the r1 pattern (state set + ``index=1``) is caught by the spy."""
+    script = tmp_path / "r1_pattern.py"
+    script.write_text(
+        "import streamlit as st\n"
+        "st.session_state['k'] = 'b'\n"
+        "st.radio('r', ['a', 'b'], index=1, key='k')\n",
+        "utf-8",
+    )
+    at = AppTest.from_file(str(script), default_timeout=30).run()
+    assert not at.exception
+    assert any('"k"' in w and "Session State API" in w for w in widget_state_warnings)
