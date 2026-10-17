@@ -23,3 +23,10 @@ h1 { font-size: 1.3rem; margin: 0 0 1rem; }
 .card .review { display: inline-block; background: #f4c20d; font-weight: bold; padding: 0.2rem 0.6rem;
   border-radius: 0.3rem; }
 .card .times { color: #444; font-size: 0.95rem; margin-bottom: 0; }
+.collect { border: 2px solid #1f5fbf; border-radius: 0.6rem; padding: 0.6rem 0.8rem 0; margin: 0 0 0.8rem; }
+.collect legend { font-weight: bold; padding: 0 0.3rem; }
+.field select:disabled { background: #e4e4e4; color: #8a8a8a; }
+.reminder { font-weight: bold; color: #7a4f00; background: #fff3cd; border-radius: 0.3rem;
+  padding: 0.4rem 0.6rem; margin: 0; }
+.card.saved { border-color: #1f5fbf; font-size: 1.1rem; }
+.card.saved .complete { font-weight: bold; color: #1e8e3e; }
