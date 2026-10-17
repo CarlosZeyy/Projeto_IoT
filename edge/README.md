@@ -1,12 +1,12 @@
-# qc-edge — gateway de borda (SPEC-007)
+# qc-edge — gateway de borda (SPEC-007, SPEC-010)
 
-O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (R-02, R-14). Nada é servido dessa pasta e nada dela sobe para a nuvem.
+O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
-Nesta SPEC:
+Estado atual:
 
 - o inferenciador real (ONNX) ainda não existe (SPEC-008). Sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
 - as inspeções aceitas vão para um `InMemorySink`, que só guarda em memória e não envia nada para lugar nenhum. O outbox e o envio para a nuvem são da SPEC-009;
-- o modo coleta aparece desabilitado na página e responde 501 (SPEC-010).
+- o modo coleta (SPEC-010) monta o dataset: funciona sem modelo e não chama o inferenciador nem o sink (seção "Modo coleta").
 
 ## Como rodar
 
@@ -32,7 +32,8 @@ uv run --package qc-edge qc-edge                                  # sem .env: tu
 | `EDGE_SESSION_TOKEN` | gerado a cada subida (`secrets.token_urlsafe(32)`, 43 caracteres) | se definido, no mínimo 32 caracteres. É segredo: fica fora do Git |
 | `DEVICE_ID` | `edge-01` | `^[a-z0-9-]{3,32}$` (sem quebra de linha final) |
 | `EDGE_DATA_DIR` | `edge/data` (relativo ao diretório atual) | criado se não existir; está no `.gitignore` |
-| `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio | lidas agora, validadas nas SPECs 008, 009 e 010 |
+| `DATASET_DIR` | `ml/data` (relativo ao diretório atual) | modo coleta; se existir, tem de ser um diretório. Não é criado na subida: a primeira coleta o cria com `0700`. `ml/data/` está no `.gitignore`; outro caminho deve ficar fora do repositório |
+| `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio | lidas agora, validadas nas SPECs 008 e 009 |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -40,13 +41,13 @@ Variável vazia vale como não definida (o padrão vale).
 
 | Rota | Acesso | O que faz |
 |---|---|---|
-| `GET /` | só loopback, sem headers de proxy | console do operador (HTML, sem JS) |
+| `GET /` | só loopback, sem headers de proxy | console do operador (HTML, sem JS), com a cobertura do dataset |
 | `GET /capture?t=<token>` | token na query | página do celular; token errado → 401 "Sessão inválida. Leia o QR code no console." |
 | `GET /static/capture.js`, `/static/capture.css` | livre | arquivos da página (sem segredo, sem recurso externo) |
-| `POST /api/capture` | header `X-Session-Token` | `multipart/form-data` com `image`, `lot_id` e `mode` |
+| `POST /api/capture` | header `X-Session-Token` | `multipart/form-data` com `image`, `lot_id` e `mode`; no modo `collect`, `item_id`, `object_type`, `grade`, `labeler`, `angle` e `notes` no lugar do `lot_id` |
 | `GET /api/status` | header `X-Session-Token` | `device_id`, `contract_version`, `model`, `sink` |
 
-Ordem das respostas de `POST /api/capture`: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`) → imagem (415) → modelo (503 `model not loaded`). Depois: falha do inferenciador → 500 `inference failed`; falha do sink → 503 `failed to persist inspection` (a foto é apagada); `mode=collect` → 501.
+Ordem das respostas de `POST /api/capture`: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`) → imagem (415) → modelo (503 `model not loaded`). Depois: falha do inferenciador → 500 `inference failed`; falha do sink → 503 `failed to persist inspection` (a foto é apagada). O modo `collect` segue a mesma ordem até a imagem (415) e depois grava no dataset (seção "Modo coleta").
 
 Limites da rota (`qc_edge/limits.py`, SPEC-007 §4.7):
 
@@ -58,6 +59,44 @@ Limites da rota (`qc_edge/limits.py`, SPEC-007 §4.7):
 No máximo 2 decodificações acontecem ao mesmo tempo. Quem passa disso espera até 10 s e recebe 503 `server busy`. A página do celular sempre reduz a foto para no máximo 1280 px no lado maior e a reencoda em JPEG (q = 0,9) antes de enviar.
 
 A foto aceita é salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD em UTC>/<inspection_id>.jpg`, com nome sempre gerado pelo servidor. Um JPEG é salvo como chegou; um PNG é reencodado em JPEG q = 90.
+
+## Modo coleta (SPEC-010)
+
+Serve para montar o dataset seguindo o `docs/dataset-protocol.md` (§3 captura, §4 metas, §5 manifest). Não precisa de modelo: rode `uv run --env-file .env --package qc-edge qc-edge`, sem `--stub-model`.
+
+Na página do celular, escolha **coleta** no seletor de modo e preencha:
+
+| Campo | Regra (a borda responde 422 se não bater) |
+|---|---|
+| Peça (`item_id`) | `S-000` (parafuso), `N-000` (porca) ou `O-000` (outro), com o prefixo do tipo escolhido. `T-` (ferramentas) fica para a SPEC-016 |
+| Tipo (`object_type`) | parafuso, porca ou outro |
+| Grau (`grade`) | um dos 5 graus para parafuso e porca; desabilitado e vazio para "outro" |
+| Rotulador (`labeler`) | `a` ou `b` |
+| Ângulo (`angle`) | 0 a 4 |
+| Observações (`notes`) | opcional, até 200 caracteres, sem quebra de linha nem tabulação |
+
+O lote é ignorado nesse modo. Os campos ficam guardados no navegador (`localStorage`) entre as fotos e depois de recarregar a página. A cada foto salva, o ângulo avança 1; depois do 4, volta a 0 e a página mostra "Peça completa — troque o item_id". O cartão mostra "Salvo: <item_id>, ângulo <n> (fotos desta peça: <total>)". Lembrete fixo: **sem pessoas no quadro** (R-14).
+
+Cada foto vira:
+
+- um arquivo `DATASET_DIR/raw/<object_type>/<grade ou _>/<item_id>__<angle>__<AAAAMMDDTHHMMSSZ>.jpg` (UTC). JPEG é salvo como chegou; PNG é reencodado em JPEG q = 90;
+- uma linha em `DATASET_DIR/manifest.csv` (UTF-8 sem BOM), com as colunas `image_path,item_id,object_type,grade,labeler,angle,captured_at,capture_device,notes`. `capture_device` são os 60 primeiros caracteres do `User-Agent` do celular.
+
+Respostas além das da tabela de rotas:
+
+| Situação | Resposta | O que fazer |
+|---|---|---|
+| a mesma peça já está no manifest com outro tipo | 409 `item_id already registered with another object_type` | conferir o `item_id` (a mesma peça com outro **grau** é permitida: estágios de corrosão) |
+| foto da mesma peça e ângulo no mesmo segundo | 409 `capture already exists, try again` | fotografar de novo |
+| `manifest.csv` com cabeçalho diferente do esperado | 500 `manifest header mismatch` | corrigir o arquivo no notebook; nada é gravado até lá |
+| `manifest.csv` com linhas ilegíveis (não UTF-8) | 500 `manifest unreadable` | idem |
+| falha de disco ao gravar | 500 `failed to write dataset` | a foto não fica pela metade nem sem linha no manifest |
+
+As gravações passam por um lock de processo e por um `flock` em `DATASET_DIR/manifest.csv.lock` (só POSIX). Tudo o que a coleta **cria** sob `DATASET_DIR` (o próprio `DATASET_DIR`, quando é ela que o cria, `raw/`, as pastas de tipo e grau) fica com `0700`, e as imagens, o `manifest.csv` e o `manifest.csv.lock` com `0600`, seja qual for o `umask`. O que já existia não é alterado. Se o `chmod` falhar, o log mostra um `WARNING` com o caminho e a coleta segue.
+
+O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada.
+
+O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backup é o do `docs/dataset-protocol.md` §8 (Drive pessoal, compactado por data). Correções de rótulo e dupla rotulagem são da SPEC-011 (`labels_overrides.csv`), nunca editando a linha original.
 
 ## Firewall no Arch
 
@@ -145,3 +184,23 @@ Registre o resultado no test-report da SPEC-007. Use um lote diferente por celul
 3. Repita os passos 3 a 6 do CA-20 com 3 fotos em cada celular (o celular B se conecta ao hotspot do celular A).
 
 O que registrar, por celular: modelo do aparelho, navegador e versão, câmera direta ou via seletor, o maior "Total" (ms), o tamanho do maior arquivo (bytes) e qualquer erro exibido.
+
+## Teste manual do modo coleta (CA-17 da SPEC-010)
+
+Registre o resultado no test-report da SPEC-010. Use um `DATASET_DIR` descartável para não misturar com o dataset real:
+
+1. No notebook: libere a porta (seção Firewall) e rode `DATASET_DIR=/tmp/partqc-coleta uv run --package qc-edge qc-edge` (sem `--env-file`, sem `--stub-model` e sem `MODEL_DIR`: a coleta não precisa de modelo nem da nuvem). Abra <http://127.0.0.1:8000/>: o modelo aparece como "não carregado" e a tabela de cobertura está zerada.
+2. No celular, leia o QR, escolha **coleta** e preencha `S-001`, parafuso, perfeito, rotulador `a`, ângulo 0.
+3. Tire 5 fotos. Confira em cada uma o cartão "Salvo: S-001, ângulo n (fotos desta peça: n+1)" e o ângulo avançando 0 → 1 → 2 → 3 → 4. Depois da quinta, o ângulo volta a 0 e aparece "Peça completa — troque o item_id".
+4. Recarregue a página no celular: o modo e os campos continuam preenchidos.
+5. Troque o tipo para "outro": o grau fica desabilitado e vazio.
+6. No notebook:
+   ```bash
+   ls -l /tmp/partqc-coleta/raw/screw/perfect/      # 5 arquivos S-001__<0..4>__<ts>.jpg, -rw-------
+   wc -l /tmp/partqc-coleta/manifest.csv            # 6 linhas: cabeçalho + 5
+   stat -c '%a %n' /tmp/partqc-coleta /tmp/partqc-coleta/raw /tmp/partqc-coleta/manifest.csv
+   ```
+   e, no console, a linha parafuso/perfeito com `5/120` e `1/12`.
+7. No fim, apague a pasta de teste: `rm -rf /tmp/partqc-coleta`.
+
+O que registrar: modelo do celular e navegador, se os campos sobreviveram ao recarregamento, a sequência de ângulos e a saída dos comandos do passo 6.
