@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -174,3 +174,4 @@ Só a fronteira HTTP é mockada. Nenhum teste acessa a internet nem a API real.
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-17 | Mudanças: (a) passa a depender da SPEC-026, que tem de estar `Done` antes de esta SPEC entrar em `In Dev`, e cita o ADR-017; (b) §1: contrato 0.3.0 e carta cortada; (c) §4.1: `spc(...)` ganha `max_points`, e as páginas leem dados só pelas funções cacheadas de `data.py`; (d) §4.2: legenda de origem sempre visível na Visão geral e no Histórico; (e) §4.4: controle **Lotes na carta** (`max_points`, 2–500, padrão 100), título da figura com a origem, uma carta e uma requisição por origem, aviso de carta cortada, total de excluídos e aviso de que o período não se aplica à carta; (f) CA-14 e CA-15 alterados (título; `max_points=100` e sem `from`/`to`); CAs novos CA-27 a CA-31. Nenhum outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-06-01 e INFO-02 de `reviews/SPEC-006/r1-security-report.md`; SEC-05-01 e INFO-01 de `reviews/SPEC-005/r1-security-report.md`; ADR-017 | Orquestrador, a pedido do humano |
+| 2026-10-17 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

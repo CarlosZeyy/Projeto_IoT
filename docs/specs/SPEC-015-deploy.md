@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | security-devops |
 | Tags | deploy, security |
@@ -232,3 +232,4 @@ Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é i
 | 2026-10-13 | Mudanças: (a) §1 com as três pendências de operação da SPEC-004; (b) §4.6, passo 3: registro de dispositivos com `--env-file .env.migrate`, nunca `--database-url` com a URL de produção; (c) §4.8 nova: seção "Riscos aceitos" no `deployment-plan.md` (rajada anônima no pool, com a verificação do Render, e o log do `psycopg.pool`); (d) CA-25 novo; (e) §6 atualizada. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-04-02, SEC-04-03 e SEC-04-05 de `reviews/SPEC-004/r2-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-17 | Mudanças: (a) passa a depender da SPEC-026 (teto da carta p, sem o qual a rota SPC passa dos 512 MB do Render) e da SPEC-027 (migração `002` e simulador corrigido); (b) §1 com as pendências de operação das SPECs 005, 006 e 014; (c) §3.2 cita a migração `002` (SPEC-027), aplicada pelo CA-19 junto com a `001`; (d) §4.6: passo 6 com `--env-file` e os limites do simulador, passo 7 novo (`statement_timeout`); (e) §4.9 nova: `statement_timeout` medido e aplicado por `alter role`, conferido em `pg_roles.rolconfig` e pela porta 6543; geração e troca da `READ_API_KEY`; linha do Render com 512 MB e 0,1 CPU; simulador em produção só com execuções pequenas e a chave pelo arquivo de ambiente; (f) CAs novos: CA-26 (manual) e CA-27; §6 e §8 atualizadas. Nenhum CA existente muda. Fatos externos conferidos pelo architect em 2026-10-17: <https://render.com/docs/compute-plans> e <https://supabase.com/docs/guides/database/postgres/timeouts>. SPEC marcada como "Aguardando reaprovação humana". | SEC-05-01 e INFO-02 de `reviews/SPEC-005/r1-security-report.md`; SEC-06-01 e a pendência de deploy de `reviews/SPEC-006/r1-security-report.md`; SEC-07 e a mitigação do SEC-01 de `reviews/SPEC-014/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-17 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
