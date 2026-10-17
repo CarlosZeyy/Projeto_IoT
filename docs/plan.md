@@ -47,7 +47,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready |
 | [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | Ready |
 | [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | Ready |
-| [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | In Security (r1) |
+| [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
 | [015](specs/SPEC-015-deploy.md) | Deploy e keep-alive | security-devops | deploy, security | 004, 013, 026, 027 (e 003, 005, 006, 014) | S4 | Ready |
 | [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais | ml-engineer + developer | contrato | 012 (e 002, 003, 008, 011, 013) | S6 | Draft |
 | [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006 (e 003, 004) | S6 | Draft |
@@ -59,7 +59,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [023](specs/SPEC-023-pacotes-compartilhados-0-2.md) | Pacotes compartilhados 0.2.0 (teto de `latency_ms`, proporção da imagem, flag de JPEG truncado) | developer | contrato, security | 002 | S2 | Done |
 | [024](specs/SPEC-024-preprocess-0-3-scans-jpeg.md) | `qc-preprocess` 0.3.0 (limite de scans do JPEG) | developer | security | 023 | S2 | Done |
 | [025](specs/SPEC-025-manutencao-borda-host-rede.md) | Manutenção da borda (Host do console, rede, limitador e permissões) | developer | security | 007 | S3 | Ready |
-| [026](specs/SPEC-026-spc-teto-de-lotes.md) | Carta p com teto de lotes (`qc-contracts` 0.3.0) | developer | contrato, security | 006 (e 004, 023) | S4 | Ready |
+| [026](specs/SPEC-026-spc-teto-de-lotes.md) | Carta p com teto de lotes (`qc-contracts` 0.3.0) | developer | contrato, security | 006 (e 004, 023) | S4 | In Dev (r1) |
 | [027](specs/SPEC-027-manutencao-api-banco-simulador.md) | Manutenção da API, do banco e do simulador (`check` da `002`, SQLSTATE, argparse, teste intermitente) | developer | security | 003, 005, 014 (e 004) | S4 | Ready |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC.
