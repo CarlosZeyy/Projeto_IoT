@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-005, SPEC-006, **SPEC-026** (tem de estar `Done` antes de esta SPEC entrar em `In Dev`: teto da carta p e `qc-contracts` 0.3.0) (e SPEC-002, pelos schemas e rótulos; SPEC-012, pelo formato do `metrics.json`) |
