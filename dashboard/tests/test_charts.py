@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
 
 from qc_contracts import GRADE_ORDER, TimeseriesPoint
 from qc_dashboard import charts
@@ -104,3 +106,91 @@ def test_p_chart_without_out_of_control_has_no_annotation(factory) -> None:
     assert len(fig.layout.annotations) == 0
     out = next(trace for trace in fig.data if trace.name == "Fora de controle")
     assert list(out.x) == []
+
+
+# ---------- §4.7: dates in PT-BR and legend below the axes (r2: RV-01/T-02, RV-02/T-01) ----------
+
+
+def _hourly(count: int, step: timedelta = timedelta(hours=1)) -> list[TimeseriesPoint]:
+    start = datetime(2026, 10, 16, 21, tzinfo=UTC)
+    return [
+        TimeseriesPoint(bucket_start=start + k * step, total=10, defective=1, defect_rate=0.1)
+        for k in range(count)
+    ]
+
+
+def _x_axes(fig) -> list:
+    return [fig.layout[name] for name in fig.layout if name.startswith("xaxis")]
+
+
+@pytest.mark.parametrize(
+    ("bucket", "expected"),
+    [("minute", "%d/%m/%Y %H:%M"), ("hour", "%d/%m/%Y %H:%M"), ("day", "%d/%m/%Y")],
+)
+def test_series_dates_are_numeric_pt_br(bucket: str, expected: str) -> None:
+    fig = charts.volume_and_defect_rate(_hourly(6), bucket)
+    axes = _x_axes(fig)
+    assert len(axes) == 2  # both panels of the shared x axis
+    for axis in axes:
+        assert axis.tickformat == expected
+        assert axis.hoverformat == expected
+    for trace in fig.data:
+        assert trace.hovertemplate.startswith(f"%{{x|{expected}}}<br>")
+        assert "%{x}" not in trace.hovertemplate
+
+
+def test_series_date_format_matches_table_format() -> None:
+    # The chart and the tables (formatting.fmt_datetime) show the same dd/mm/aaaa HH:MM.
+    assert charts.BUCKET_DATE_FORMATS["hour"] == charts.DATETIME_FORMAT == "%d/%m/%Y %H:%M"
+    assert charts.DATE_FORMAT == "%d/%m/%Y"
+
+
+@pytest.mark.parametrize(
+    ("bucket", "step", "dtick"),
+    [
+        ("minute", timedelta(minutes=1), 60_000),
+        ("hour", timedelta(hours=1), 3_600_000),
+        ("day", timedelta(days=1), 86_400_000),
+    ],
+)
+def test_series_few_buckets_pin_one_tick_per_bucket(
+    bucket: str, step: timedelta, dtick: int
+) -> None:
+    # Without this, Plotly could tick every 30 s or 12 h and repeat the same label.
+    fig = charts.volume_and_defect_rate(_hourly(3, step), bucket)
+    assert [axis.dtick for axis in _x_axes(fig)] == [dtick, dtick]
+
+
+def test_series_many_buckets_let_plotly_choose_ticks() -> None:
+    fig = charts.volume_and_defect_rate(_hourly(charts.MAX_PINNED_TICKS + 2), "hour")
+    assert [axis.dtick for axis in _x_axes(fig)] == [None, None]
+
+
+def test_series_single_point_and_empty() -> None:
+    assert [a.dtick for a in _x_axes(charts.volume_and_defect_rate(_hourly(1), "hour"))] == [
+        3_600_000,
+        3_600_000,
+    ]
+    empty = charts.volume_and_defect_rate([], "hour")
+    assert [axis.dtick for axis in _x_axes(empty)] == [None, None]
+    assert [axis.tickformat for axis in _x_axes(empty)] == ["%d/%m/%Y %H:%M"] * 2
+
+
+def _assert_legend_below(fig) -> None:
+    legend = fig.layout.legend
+    assert legend.orientation == "h"
+    assert legend.yref == "container"
+    assert (legend.y, legend.yanchor) == (0, "bottom")
+    assert (legend.xref, legend.x, legend.xanchor) == ("paper", 0, "left")
+
+
+def test_legend_never_shares_the_title_band(factory) -> None:
+    figures = [
+        charts.p_chart(factory.spc_response()),
+        charts.volume_and_defect_rate(_hourly(6), "hour"),
+        charts.grade_distribution({"good": 1}),
+        charts.by_object_type({"nut": 1}),
+    ]
+    for fig in figures:
+        _assert_legend_below(fig)
+        assert fig.layout.title.text

@@ -21,6 +21,7 @@ from qc_contracts import (
     TimeseriesPoint,
 )
 from qc_dashboard.formatting import (
+    DATETIME_FORMAT,
     fmt_datetime,
     fmt_int,
     fmt_pct,
@@ -63,13 +64,41 @@ BUCKET_TITLES: Mapping[str, str] = MappingProxyType(
     }
 )
 
+# Date axes in PT-BR (§4.7): numeric d3 formats, so Plotly never writes English month names
+# (``Oct 16, 2026``). The directives are the same as ``formatting.DATETIME_FORMAT``.
+DATE_FORMAT = "%d/%m/%Y"
+BUCKET_DATE_FORMATS: Mapping[str, str] = MappingProxyType(
+    {"minute": DATETIME_FORMAT, "hour": DATETIME_FORMAT, "day": DATE_FORMAT}
+)
+BUCKET_MS: Mapping[str, int] = MappingProxyType(
+    {"minute": 60_000, "hour": 3_600_000, "day": 86_400_000}
+)
+# Up to this many buckets on the axis, ticks are pinned to one per bucket; otherwise Plotly
+# could put ticks between buckets, and the label format (no seconds, no hours for ``day``)
+# would repeat the same text on neighboring ticks.
+MAX_PINNED_TICKS = 10
+
 
 def _base_layout(fig: go.Figure, title: str) -> go.Figure:
+    """Title on top and legend at the bottom of the figure, so the legend never covers the title.
+
+    The legend is anchored to the bottom of the container (``yref="container"``), and Plotly
+    reserves that space below the axes; on a narrow screen it wraps downwards, not over the
+    title, which carries the origin of the p chart (§4.4, R-06).
+    """
     fig.update_layout(
         title={"text": title},
         separators=SEPARATORS,
         margin={"l": 10, "r": 10, "t": 50, "b": 10},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+        legend={
+            "orientation": "h",
+            "xref": "paper",
+            "x": 0,
+            "xanchor": "left",
+            "yref": "container",
+            "y": 0,
+            "yanchor": "bottom",
+        },
     )
     return fig
 
@@ -125,6 +154,8 @@ def volume_and_defect_rate(points: Sequence[TimeseriesPoint], bucket: str) -> go
         x = [point.bucket_start.date() for point in points]
     else:
         x = [to_local(point.bucket_start).replace(tzinfo=None) for point in points]
+    date_format = BUCKET_DATE_FORMATS.get(bucket, DATETIME_FORMAT)
+    hover_date = f"%{{x|{date_format}}}"
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08)
     fig.add_trace(
         go.Bar(
@@ -132,7 +163,7 @@ def volume_and_defect_rate(points: Sequence[TimeseriesPoint], bucket: str) -> go
             x=x,
             y=[point.total for point in points],
             marker={"color": LINE_COLOR},
-            hovertemplate="%{x}<br>Inspeções: %{y}<extra></extra>",
+            hovertemplate=f"{hover_date}<br>Inspeções: %{{y}}<extra></extra>",
         ),
         row=1,
         col=1,
@@ -144,17 +175,32 @@ def volume_and_defect_rate(points: Sequence[TimeseriesPoint], bucket: str) -> go
             x=x,
             y=[point.defect_rate for point in points],
             line={"color": GRADE_COLORS[Grade.POOR]},
-            hovertemplate="%{x}<br>Taxa de defeito: %{y:.1%}<extra></extra>",
+            hovertemplate=f"{hover_date}<br>Taxa de defeito: %{{y:.1%}}<extra></extra>",
         ),
         row=2,
         col=1,
     )
+    # Both x axes (the shared one shows only the bottom ticks, but hover uses both).
+    fig.update_xaxes(tickformat=date_format, hoverformat=date_format)
+    pinned = _pinned_dtick(points, bucket)
+    if pinned is not None:
+        fig.update_xaxes(dtick=pinned)
     fig.update_yaxes(title={"text": "Inspeções"}, rangemode="tozero", row=1, col=1)
     fig.update_yaxes(
         title={"text": "Taxa de defeito (%)"}, tickformat=".0%", rangemode="tozero", row=2, col=1
     )
     title = f"Volume e taxa de defeito {BUCKET_TITLES.get(bucket, '')}".strip()
     return _base_layout(fig, title)
+
+
+def _pinned_dtick(points: Sequence[TimeseriesPoint], bucket: str) -> int | None:
+    """One tick per bucket (in ms) when the axis spans few buckets; ``None`` lets Plotly choose."""
+    step = BUCKET_MS.get(bucket)
+    if step is None or not points:
+        return None
+    starts = [point.bucket_start for point in points]
+    span_ms = (max(starts) - min(starts)).total_seconds() * 1000
+    return step if span_ms <= step * MAX_PINNED_TICKS else None
 
 
 def p_chart_title(spc: SpcResponse) -> str:
