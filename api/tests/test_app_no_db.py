@@ -10,6 +10,7 @@ import secrets
 import time
 from collections.abc import Iterator
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -133,3 +134,25 @@ def test_startup_fails_without_settings(monkeypatch: pytest.MonkeyPatch) -> None
     app = create_app()
     with pytest.raises(Exception, match="DATABASE_URL"), TestClient(app):
         pass
+
+
+def test_database_error_in_a_route_of_the_real_app_is_sanitized(
+    no_db_settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The real middleware stack (exception handlers included) also hides the message."""
+    marker = "MARK" + secrets.token_hex(8)
+    app = create_app(no_db_settings)
+
+    def broken() -> None:
+        raise RuntimeError("wrapper") from psycopg.errors.CheckViolation(marker)
+
+    app.add_api_route("/test-only/broken", broken)
+    caplog.set_level(logging.DEBUG)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/test-only/broken")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error"}
+    assert "unhandled database error: route=/test-only/broken type=CheckViolation" in caplog.text
+    assert "sqlstate=23514" in caplog.text
+    assert marker not in caplog.text
+    assert not any(record.exc_info for record in caplog.records)

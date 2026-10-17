@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Security |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-004 |
@@ -28,6 +28,7 @@ O dashboard obtém, com a chave de leitura, listagens e agregados corretos e fil
 - `api/src/qc_api/repositories/` (ou módulo equivalente) com as consultas SQL parametrizadas.
 - **Manutenção da SPEC-004** (§4.5): `api/src/qc_api/routers/inspections.py` (escrita: `psycopg.IntegrityError` → 422) e `api/src/qc_api/middleware.py` (500 genérico sem a mensagem de `psycopg.Error` no log).
 - Testes em `api/tests/`.
+- **Ajuste autorizado ao tester da SPEC-005 em `api/tests/acceptance/test_spec_004.py`** (SPEC_ISSUE-01 de `reviews/SPEC-005/r1-dev-report.md`): só a 1ª asserção de `test_extra_wrong_methods_and_unknown_route` (`env.client.get(URL_ONE, headers=key_header(env.ke)).status_code == 405`), que deixa de valer porque esta SPEC cria `GET /api/v1/inspections`. Ela passa a usar um método que continua sem rota em `/api/v1/inspections`: `PUT` e `DELETE`, com os mesmos headers, cada um → 405. O 401 do `GET` com a chave de dispositivo já é coberto pelo CA-01 em `test_spec_005.py` e não é repetido ali. Nenhuma outra linha desse arquivo muda e nenhum CA da SPEC-004 é alterado.
 
 ### 3.2 Fora
 
@@ -164,3 +165,5 @@ Banco: Postgres 16 de teste com as fixtures da SPEC-003. O conjunto D é inserid
 |---|---|---|---|
 | 2026-10-13 | Mudanças: (a) §3.1 inclui a manutenção da escrita (`routers/inspections.py`) e do `middleware.py` da SPEC-004; (b) §4.5 nova: `psycopg.IntegrityError` (classe `23`) na escrita → `rollback` e 422 `{"detail": "Value cannot be stored"}`, com log só de rota, `device_id` e SQLSTATE; 500 genérico sem a mensagem de `psycopg.Error` no log; (c) CAs novos: CA-20 e CA-21; (d) §6 atualizada. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-04-01 de `reviews/SPEC-004/r2-security-report.md` (= RV-01 de `r2-review-report.md`); regra nova em `docs/architecture.md` §4 | Orquestrador, a pedido do humano |
 | 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-13 | §3.1 autoriza o tester da SPEC-005 a trocar só a 1ª asserção de `test_spec_004.py::test_extra_wrong_methods_and_unknown_route` (`GET` → 405) por `PUT` e `DELETE` em `/api/v1/inspections` → 405. O 401 do `GET` com chave de dispositivo fica no CA-01 desta SPEC. Nenhum CA (desta SPEC ou da SPEC-004) muda. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 de `reviews/SPEC-005/r1-dev-report.md`: o teste extra da SPEC-004 esperava 405 numa rota que esta SPEC cria | Orquestrador |
+| 2026-10-13 | Correção do SPEC_ISSUE-01 reaprovada; `Blocked` → `In Test`, retomando a r1. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |

@@ -1109,7 +1109,8 @@ def test_extra_batch_of_100_with_unknown(env: Env) -> None:
 
 @pytest.mark.db
 def test_extra_wrong_methods_and_unknown_route(env: Env) -> None:
-    assert env.client.get(URL_ONE, headers=key_header(env.ke)).status_code == 405
+    assert env.client.put(URL_ONE, headers=key_header(env.ke)).status_code == 405
+    assert env.client.delete(URL_ONE, headers=key_header(env.ke)).status_code == 405
     assert env.client.post(URL_HEALTH).status_code == 405
     resp = env.client.get("/api/v1/nope")
     assert resp.status_code == 404

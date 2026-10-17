@@ -1,4 +1,4 @@
-"""FastAPI application of the cloud API (SPEC-004 section 4.2, docs/architecture.md section 4).
+"""FastAPI application of the cloud API (SPEC-004 section 4.2, SPEC-005, docs/architecture.md §4).
 
 ``uvicorn qc_api.main:app`` serves the module-level ``app``; its settings are read from the
 environment when the server starts (``lifespan``), not at import time. The connection pool is
@@ -23,7 +23,7 @@ from qc_api.middleware import (
     RequestLogMiddleware,
     UnhandledErrorMiddleware,
 )
-from qc_api.routers import health, inspections
+from qc_api.routers import health, inspections, lots, metrics
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
@@ -74,6 +74,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(inspections.router)
+    app.include_router(metrics.router)
+    app.include_router(lots.router)
     return app
 
 

@@ -105,7 +105,7 @@ def insert_inspections(
     Idempotent by ``inspection_id`` (``ON CONFLICT DO NOTHING``, R-05): an existing ID (or one
     repeated earlier in ``items``) is reported as ``duplicate`` and the stored row is not changed.
     Any error rolls back everything, including ``last_seen_at``. ``psycopg.DataError`` (SQLSTATE
-    class 22) propagates to the caller unchanged.
+    class 22) and ``psycopg.IntegrityError`` (class 23) propagate to the caller unchanged.
     """
     results: list[InspectionCreated] = []
     with db_connection(pool) as conn, conn.transaction():

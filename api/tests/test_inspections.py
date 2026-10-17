@@ -9,11 +9,13 @@ import json
 import logging
 import threading
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg import sql
 
 import qc_contracts
 from qc_api.auth import hash_api_key
@@ -403,3 +405,44 @@ def test_logs_have_no_keys(
     assert any("POST /api/v1/inspections 201 device_id=edge-01" in m for m in messages)
     for secret in (key, hash_api_key(key), "r" * 32):
         assert secret not in caplog.text
+
+
+@pytest.fixture
+def stricter_lot_check(db: psycopg.Connection) -> Iterator[str]:
+    """A database ``check`` stricter than the contract (a future migration that diverges)."""
+    marker = "L-STRICT-" + uuid.uuid4().hex[:8].upper()
+    db.execute(
+        sql.SQL(
+            "alter table inspections add constraint author_strict_lot check (lot_id <> {})"
+        ).format(sql.Literal(marker))
+    )
+    try:
+        yield marker
+    finally:
+        db.execute("alter table inspections drop constraint if exists author_strict_lot")
+
+
+def test_integrity_error_is_422_and_rolls_back(
+    client: TestClient,
+    device_keys,
+    make_payload,
+    db,
+    stricter_lot_check: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    response = client.post(
+        URL, json=make_payload(lot_id=stricter_lot_check), headers=_key(device_keys)
+    )
+    assert response.status_code == 422
+    assert response.json() == NOT_STORABLE
+    items = [make_payload(), make_payload(lot_id=stricter_lot_check)]
+    response = client.post(BATCH_URL, json={"items": items}, headers=_key(device_keys))
+    assert response.status_code == 422
+    assert response.json() == NOT_STORABLE
+    assert _count(db) == 0
+    assert _last_seen(db) is None
+    assert "sqlstate=23514" in caplog.text
+    assert stricter_lot_check not in caplog.text
+    assert not any(r.exc_info for r in caplog.records)
+    assert client.post(URL, json=make_payload(), headers=_key(device_keys)).status_code == 201

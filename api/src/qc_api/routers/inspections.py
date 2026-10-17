@@ -1,8 +1,11 @@
 """Write routes used by the edge outbox and the simulator (SPEC-004 sections 4.4 and 4.5).
 
 Precedence for well-formed JSON: 413 -> 503 -> 401 -> 422 (contract) -> 403 -> 422 (a value the
-database refuses). Writes are idempotent by ``inspection_id`` (R-05). No route accepts images or
-``multipart/form-data`` (R-02): the bodies are the JSON contract models only.
+database refuses: SQLSTATE classes 22 and 23, SPEC-005 section 4.5). Writes are idempotent by
+``inspection_id`` (R-05). No route accepts images or ``multipart/form-data`` (R-02): the bodies
+are the JSON contract models only.
+
+``GET /api/v1/inspections`` (SPEC-005) lives here too: same path, read key.
 """
 
 from __future__ import annotations
@@ -14,11 +17,20 @@ from typing import Annotated
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from qc_api.auth import require_device
+from qc_api.auth import require_device, require_read_key
 from qc_api.db import insert_inspections
 from qc_api.errors import DETAIL_DEVICE_MISMATCH, DETAIL_VALUE_NOT_STORABLE
-from qc_api.routers import API_PREFIX
-from qc_contracts import BatchCreate, BatchResult, InspectionCreate, InspectionCreated
+from qc_api.filters import InspectionFilters, Pagination
+from qc_api.repositories import inspections as repository
+from qc_api.routers import API_PREFIX, READ_ERROR_RESPONSES
+from qc_contracts import (
+    BatchCreate,
+    BatchResult,
+    InspectionCreate,
+    InspectionCreated,
+    InspectionRead,
+    Page,
+)
 
 logger = logging.getLogger("qc_api")
 
@@ -38,15 +50,19 @@ _ERROR_RESPONSES: dict[int | str, dict[str, str]] = {
 def _write(
     request: Request, device_id: str, items: Sequence[InspectionCreate]
 ) -> list[InspectionCreated]:
-    """Check ownership (403) and write everything in one transaction (422 on SQLSTATE 22)."""
+    """Check ownership (403) and write everything in one transaction.
+
+    A value the database refuses (``DataError``, SQLSTATE class 22, or ``IntegrityError``, class
+    23) becomes 422 ``Value cannot be stored``; the transaction is already rolled back.
+    """
     if any(item.device_id != device_id for item in items):
         logger.warning("device_id mismatch for device %s", device_id)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=DETAIL_DEVICE_MISMATCH)
     try:
         return insert_inspections(request.app.state.pool, device_id, items)
-    except psycopg.DataError as exc:
+    except (psycopg.DataError, psycopg.IntegrityError) as exc:
         # Already rolled back. Log only route, device and SQLSTATE: never values nor the
-        # server message, which may echo them.
+        # server message, which may echo them ("Failing row contains (...)").
         logger.warning(
             "value cannot be stored: route=%s device_id=%s sqlstate=%s",
             request.url.path,
@@ -80,3 +96,20 @@ def create_inspections_batch(
 ) -> BatchResult:
     """Create 1 to 100 inspections in one transaction; results in the same order."""
     return BatchResult(results=_write(request, device_id, payload.items))
+
+
+@router.get(
+    "/inspections",
+    response_model=Page[InspectionRead],
+    responses=READ_ERROR_RESPONSES,
+    dependencies=[Depends(require_read_key)],
+)
+def list_inspections(
+    request: Request,
+    filters: Annotated[InspectionFilters, Depends()],
+    page: Annotated[Pagination, Depends()],
+) -> Page[InspectionRead]:
+    """Filtered inspections, ``inspected_at desc, inspection_id asc`` (SPEC-005 section 4.3)."""
+    return repository.list_inspections(
+        request.app.state.pool, filters, limit=page.limit, offset=page.offset
+    )
