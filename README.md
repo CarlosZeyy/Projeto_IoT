@@ -42,7 +42,7 @@ Celular (câmera, navegador) ──HTTP/LAN──► Notebook (FastAPI + ONNX Ru
 
 ## Como o desenvolvimento funciona
 
-Cada entrega é uma SPEC, implementada por um loop de agentes com papéis separados: autor → tester → reviewer → (segurança). Depois, um PR com merge humano. Detalhes em [reviews/README.md](reviews/README.md) e em [CLAUDE.md](CLAUDE.md).
+Cada entrega é uma SPEC, implementada por um loop de agentes com papéis separados: autor → tester → reviewer → (segurança). Depois, um PR que o orquestrador confere e mergeia sob delegação do humano, que pode vetar (ADR-016). Detalhes em [reviews/README.md](reviews/README.md) e em [CLAUDE.md](CLAUDE.md).
 
 ## Como rodar
 
