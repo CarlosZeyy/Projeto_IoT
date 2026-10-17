@@ -251,6 +251,39 @@ def test_spc_follows_simulated_sidebar(factory, mock_api) -> None:
     assert mock_api.to("/metrics/spc")[-1].url.params["source"] == "live"
 
 
+def test_spc_origin_sync_does_not_pass_a_default_with_state(factory, mock_api, monkeypatch) -> None:
+    """r2 (RV-03): no ``index`` on the origin radio when its value comes from the state.
+
+    Streamlit logs a stack trace when a widget gets a default and also a value set through the
+    Session State API (``check_session_state_rules``). The warning itself is shown once per
+    process and needs a running server, so the test records the arguments of the check.
+    """
+    from streamlit.elements.lib import policies
+
+    seen: list[object] = []
+    original = policies.check_session_state_rules
+
+    def spy(default_value, key, writes_allowed=True):
+        if key == "spc_source":
+            seen.append(default_value)
+        return original(default_value, key, writes_allowed)
+
+    monkeypatch.setattr(policies, "check_session_state_rules", spy)
+    at = run(page(factory, "controle_estatistico"), **{filters.KEY_SOURCE: "Simulado"})
+    assert at.radio(key="spc_source").value == "Simulado"
+    seen.clear()
+    # The sidebar change writes the radio value through the state (``_sync_origin_with_sidebar``).
+    at.sidebar.radio(key=filters.KEY_SOURCE).set_value("Real").run()
+    assert_clean(at)
+    assert at.radio(key="spc_source").value == "Real"
+    assert seen and all(value is None for value in seen)
+    at.sidebar.radio(key=filters.KEY_SOURCE).set_value("Simulado").run()
+    assert at.radio(key="spc_source").value == "Simulado"
+    assert all(value is None for value in seen)
+    # The simulated chart was cached on the first render, so no new request is needed.
+    assert chart_spec(at)["layout"]["title"]["text"] == "Carta p — origem: simulado"
+
+
 def test_spc_cut_notices(factory, mock_api) -> None:
     points = [factory.spc_point(f"L-{i:03d}") for i in range(100)]
     excluded = [{"lot_id": f"X-{i:03d}", "n": 1} for i in range(50)]

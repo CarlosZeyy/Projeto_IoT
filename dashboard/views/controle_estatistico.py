@@ -87,12 +87,15 @@ st.caption(PERIOD_CAPTION)
 _sync_origin_with_sidebar(selected.source)
 
 controls = st.columns(5)
-origin = controls[0].radio(
-    "Origem da carta",
-    ORIGIN_OPTIONS,
-    index=filters.option_index(ORIGIN_OPTIONS, KEY_ORIGIN, ORIGIN_REAL),
-    key=KEY_ORIGIN,
+# When the sidebar sync (or the widget itself) already put the value in the session state, that
+# value rules and no ``index`` is passed: Streamlit logs a warning (with a stack) when a widget
+# gets both a default and a value set through the Session State API.
+origin_default = (
+    {}
+    if KEY_ORIGIN in st.session_state
+    else {"index": filters.option_index(ORIGIN_OPTIONS, KEY_ORIGIN, ORIGIN_REAL)}
 )
+origin = controls[0].radio("Origem da carta", ORIGIN_OPTIONS, key=KEY_ORIGIN, **origin_default)
 filters.remember(KEY_ORIGIN, origin)
 type_option = controls[1].selectbox(
     "Tipo",
