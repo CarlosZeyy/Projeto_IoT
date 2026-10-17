@@ -7,6 +7,8 @@
   page item, bucket or lot reaches Python.
 * Every read runs in one ``repeatable read, read only`` transaction, so a page and its
   ``total`` (or a summary and its breakdowns) come from the same snapshot.
+* ``lot_counts`` feeds the SPC (SPEC-006 section 4.2): one row per lot, ``unknown`` objects
+  left out, a single ``source`` (never a mix, R-06).
 * The defect rate is ``defective / (total - unknown)`` and ``null`` when the denominator is 0
   (``nullif``), never a division error. ``is_defective`` is the generated column that mirrors
   ``qc_contracts.is_defective`` (ADR-013, SPEC-003).
@@ -25,6 +27,7 @@ from psycopg_pool import ConnectionPool
 
 from qc_api.db import db_connection
 from qc_api.filters import InspectionFilters
+from qc_api.services.spc import LotCounts
 from qc_contracts import (
     Grade,
     InspectionRead,
@@ -136,6 +139,19 @@ where {where}
 group by lot_id
 order by started_at desc, lot_id asc
 limit %(limit)s offset %(offset)s
+"""
+
+SELECT_LOT_COUNTS = """
+select
+    lot_id,
+    count(*) as n,
+    count(*) filter (where is_defective) as defects,
+    min(inspected_at) as started_at,
+    max(inspected_at) as ended_at
+from inspections
+where {where}
+group by lot_id
+order by started_at, lot_id
 """
 
 
@@ -274,6 +290,29 @@ def list_lots(
         rows = cursor.fetchall()
     items = [_lot_summary(row) for row in rows]
     return Page[LotSummary](items=items, total=total, limit=limit, offset=offset)
+
+
+def lot_counts(
+    pool: ConnectionPool, source: Source, object_type: ObjectType | None = None
+) -> list[LotCounts]:
+    """Per-lot ``n`` and ``defects`` of one ``source`` for the SPC, ``unknown`` objects excluded.
+
+    ``object_type=None`` keeps every known type; otherwise only that type. Lots come ordered by
+    ``(started_at, lot_id)``.
+    """
+    conditions = [
+        sql.SQL("object_type <> %(unknown)s"),
+        sql.SQL("source = %(f_source)s"),
+    ]
+    params: dict[str, Any] = {"unknown": _UNKNOWN, "f_source": source.value}
+    if object_type is not None:
+        conditions.append(sql.SQL("object_type = %(f_object_type)s"))
+        params["f_object_type"] = object_type.value
+    where = sql.SQL(" and ").join(conditions)
+    with _read_snapshot(pool) as cursor:
+        cursor.execute(sql.SQL(SELECT_LOT_COUNTS).format(where=where), params)
+        rows = cursor.fetchall()
+    return [LotCounts(**row) for row in rows]
 
 
 def _lot_summary(row: dict[str, Any]) -> LotSummary:
