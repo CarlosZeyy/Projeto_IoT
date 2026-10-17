@@ -69,15 +69,20 @@ Atualize o status da SPEC para `In Dev`, com "Rodada atual: r1", no arquivo da S
      - tabela com os relatórios da última rodada e os veredictos;
      - checklist R-09;
      - a linha de atribuição exigida pelo sistema.
-  4. Informe ao humano o link do PR e o que testar manualmente, se houver.
-  5. **Diário de entregas (local, nunca commitado):** se existir `notas-locais/diario-de-entregas.md`, acrescente uma entrada no formato do modelo do próprio arquivo:
+  4. **Merge sob delegação (R-09, ADR-016):** espere os checks do PR (`gh pr checks <N> --watch`) e confira **todas** as condições da R-09: checks verdes (inclusive o scanner de segredos), test PASS e review APPROVED da última rodada, security PASS se a tag exigir, CAs manuais registrados se a Definição de pronto exigir, nenhum `SPEC_ISSUE` aberto, PR sem conflito, sem rótulo `hold` e sem veto do humano na sessão. Se tudo valer:
+     - comente no PR a conferência, terminando com "Merge feito pelo orquestrador sob delegação (ADR-016).";
+     - `GH_TOKEN="$(gh auth token --user CarlosZeyy)" gh pr merge <N> --merge --match-head-commit <sha>` (merge commit, nunca squash, `--force` ou `--admin`).
+
+     Se alguma condição falhar (por exemplo, um CA manual pendente), **não** faça o merge: informe ao humano o link do PR e o que falta.
+  5. Informe ao humano o link do PR, o resultado do merge e o que testar manualmente, se houver.
+  6. **Diário de entregas (local, nunca commitado):** se existir `notas-locais/diario-de-entregas.md`, acrescente uma entrada no formato do modelo do próprio arquivo:
      - nome da feature (SPEC e título), data e PR;
      - o que entrega e como funciona, em linguagem simples, para quem não programa;
      - os arquivos principais e o papel de cada um;
      - como ver funcionando e os termos novos.
 
      Escreva a partir do dev-report, do diff e dos relatórios. Não copie código longo; explique-o. A pasta `notas-locais/` está no `.git/info/exclude`: **nunca** a adicione ao Git.
-- **Depois do merge** (quando o humano avisar):
+- **Depois do merge** (feito pelo orquestrador ou pelo humano):
   1. Nada é commitado direto na `main`. A marcação de `Done` (no arquivo da SPEC e em `docs/plan.md`) vai no commit `chore: start` da **próxima** SPEC.
   2. Se não houver próxima SPEC, abra um PR curto `docs: mark <SPEC-ID> done`.
 - **Rodada 3 falhou (R-10):**

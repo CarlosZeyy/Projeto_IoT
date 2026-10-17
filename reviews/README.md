@@ -5,7 +5,7 @@ Cada SPEC passa por um ciclo com papéis separados. Quem faz não aprova o que f
 ```text
             ┌─────────────── CHANGES_REQUESTED / FAIL (rodada N+1, máx. 3) ───────────────┐
             ▼                                                                             │
- SPEC Ready ─► DEV (developer | ml-engineer | security-devops*) ─► TEST (tester) ─► REVIEW (reviewer) ─► SECURITY (security-devops)** ─► PR ─► merge humano ─► Done
+ SPEC Ready ─► DEV (developer | ml-engineer | security-devops*) ─► TEST (tester) ─► REVIEW (reviewer) ─► SECURITY (security-devops)** ─► PR ─► merge (orquestrador, ADR-016) ─► Done
                     rN-dev-report.md                                rN-test-report.md   rN-review-report.md   rN-security-report.md
 ```
 
@@ -21,7 +21,7 @@ Cada SPEC passa por um ciclo com papéis separados. Quem faz não aprova o que f
 | Reviewer | `reviewer` | Editar código ou testes |
 | Security | `security-devops` (se não for o autor) | Editar código |
 | Orquestrador | Sessão principal | Implementar, testar ou aprovar no lugar dos agentes; pular etapa |
-| Humano | Dupla | — (aprova SPEC, decide escalonamentos e faz o merge) |
+| Humano | Dupla | — (aprova SPECs e ADRs, decide escalonamentos e pode vetar merges; o merge é delegado ao orquestrador, ADR-016) |
 
 ## Passo a passo do orquestrador
 
@@ -51,8 +51,8 @@ Cada SPEC passa por um ciclo com papéis separados. Quem faz não aprova o que f
 8. **PR:**
    1. Fazer push da branch e abrir o PR (`gh pr create`) com o título `SPEC-XXX: <título>`.
    2. No corpo: resumo, link da SPEC, os relatórios da última rodada e o checklist do portão de merge (R-09).
-   3. Status da SPEC: permanece `In Review` (ou `In Security`) até o merge humano.
-9. **Merge:** o humano faz o merge. A marcação de `Done` (na SPEC e em `docs/plan.md`) entra no primeiro commit da próxima SPEC. Nada é commitado direto na `main`.
+   3. Status da SPEC: permanece `In Review` (ou `In Security`) até o merge.
+9. **Merge:** o orquestrador confere as condições da R-09 e faz o merge sob delegação (ADR-016), registrando a conferência no PR; o humano pode vetar (rótulo `hold` ou instrução na sessão). A marcação de `Done` (na SPEC e em `docs/plan.md`) entra no primeiro commit da próxima SPEC. Nada é commitado direto na `main`.
 
 **Rastreio de papéis:** como todos os commits usam a mesma identidade git (R-13), cada commit de agente leva o trailer `Agent: <papel>`. O reviewer confere com `git log --format='%h %s%n%(trailers:key=Agent)' main..HEAD` e cruza com `git show --stat`: arquivos de `tests/acceptance/` só podem aparecer em commits `Agent: tester`, e código de produção só em commits do autor.
 
