@@ -9,7 +9,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-from migrate import DEFAULT_DIR
+from migrate import DEFAULT_DIR, load_migrations
 
 SCRIPT = Path(__file__).resolve().parents[1] / "migrate.py"
 SECRET = "s3cr3t-pw"
@@ -109,6 +109,7 @@ def test_cli_apply_then_status(empty_schema: str) -> None:
     applied = _run(env_updates={"DATABASE_URL": empty_schema})
     assert applied.returncode == 0, applied.stderr
     assert "applied migration 001" in applied.stdout
+    assert "applied migration 002" in applied.stdout
 
     again = _run("--database-url", empty_schema)
     assert again.returncode == 0, again.stderr
@@ -117,6 +118,7 @@ def test_cli_apply_then_status(empty_schema: str) -> None:
     status_after = _run("--database-url", empty_schema, "--status")
     assert status_after.returncode == 0, status_after.stderr
     assert "001 applied" in status_after.stdout
+    assert "002 applied" in status_after.stdout
     assert "0 pending" in status_after.stdout
 
 
@@ -140,8 +142,12 @@ def test_cli_checksum_mismatch_exits_1(migrated_db: str, tmp_path: Path) -> None
 
 @pytest.mark.db
 def test_cli_failed_migration_exits_1(migrated_db: str, tmp_path: Path) -> None:
-    (tmp_path / "001_init.sql").write_bytes((DEFAULT_DIR / "001_init.sql").read_bytes())
-    (tmp_path / "002_broken.sql").write_text("select from nao_existe;\n", encoding="utf-8")
+    # Copies of every applied migration, plus a broken one with the next number.
+    migrations = load_migrations()
+    for migration in migrations:
+        (tmp_path / migration.filename).write_bytes(migration.path.read_bytes())
+    broken = f"{int(migrations[-1].version) + 1:03d}"
+    (tmp_path / f"{broken}_broken.sql").write_text("select from nao_existe;\n", encoding="utf-8")
     result = _run("--database-url", migrated_db, "--migrations-dir", str(tmp_path))
     assert result.returncode == 1
-    assert "migration 002" in result.stderr
+    assert f"migration {broken}" in result.stderr

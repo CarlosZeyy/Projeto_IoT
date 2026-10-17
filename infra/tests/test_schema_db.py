@@ -1,4 +1,8 @@
-"""Schema of 001_init.sql against the test PostgreSQL (SPEC-003 §4.1). All tests are marked `db`."""
+"""Schema of infra/migrations against the test PostgreSQL. All tests are marked `db`.
+
+001_init.sql: SPEC-003 §4.1. 002_contract_checks.sql (checks that mirror the contract): SPEC-027
+§4.1, at the end of this file.
+"""
 
 from __future__ import annotations
 
@@ -9,10 +13,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import pydantic
 import pytest
 from psycopg import errors
 
-from qc_contracts import Grade, ObjectType, Source, is_defective
+from qc_contracts import MODEL_VERSION_PATTERN, Grade, ObjectType, Source, is_defective
 
 pytestmark = pytest.mark.db
 
@@ -391,3 +396,104 @@ def test_rls_blocks_role_without_policies(conn: psycopg.Connection, probe_role: 
     assert "row-level security" in str(info.value)
     # The owner still reads everything (no FORCE ROW LEVEL SECURITY).
     assert _count(conn) == 3
+
+
+# ---------- 002_contract_checks (SPEC-027 §4.1) ----------
+
+UUID4_ADAPTER = pydantic.TypeAdapter(pydantic.UUID4)
+HEX = "0123456789abcdef"
+
+
+def _inserted(conn: psycopg.Connection, **overrides: Any) -> bool:
+    """True when the insert works; False on ``CheckViolation`` (SQLSTATE 23514)."""
+    try:
+        with conn.transaction():
+            _insert(conn, **overrides)
+    except errors.CheckViolation as exc:
+        assert exc.sqlstate == "23514"
+        return False
+    return True
+
+
+def _pydantic_uuid4_accepts(text: str) -> bool:
+    try:
+        UUID4_ADAPTER.validate_python(text)
+    except pydantic.ValidationError:
+        return False
+    return True
+
+
+def test_contract_check_constraints_exist(conn: psycopg.Connection) -> None:
+    rows = conn.execute(
+        "select conname, contype from pg_constraint where conrelid = 'inspections'::regclass"
+    ).fetchall()
+    types = dict(rows)
+    for name in (
+        "inspections_model_version_check",
+        "inspections_inspection_id_v4_check",
+        "inspections_inspected_at_range_check",
+        "inspections_received_at_range_check",
+    ):
+        assert types[name] == "c"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"model_version": "MODEL_X"},
+        {"model_version": "ab"},
+        {"model_version": "a" * 41},
+        {"model_version": "sim-v0\n"},
+        {"inspection_id": str(uuid.uuid1())},
+        {"inspection_id": "00000000-0000-0000-0000-000000000000"},
+        {"inspected_at": "infinity"},
+        {"inspected_at": "-infinity"},
+        {"inspected_at": "10000-01-01T00:00:00Z"},
+        {"received_at": "infinity"},
+        {"received_at": "-infinity"},
+        {"received_at": "10000-01-01T00:00:00Z"},
+    ],
+    ids=repr,
+)
+def test_contract_checks_refuse(conn: psycopg.Connection, overrides: dict[str, Any]) -> None:
+    assert not _inserted(conn, **overrides)
+    assert _count(conn) == 0
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"model_version": "partqc-mnv3-v1", "inspection_id": str(uuid.uuid4())},
+        {"inspected_at": "0001-01-01T00:00:00Z"},
+        {"inspected_at": "9999-12-31T23:59:59.999999Z"},
+        {"received_at": "0001-01-01T00:00:00Z"},
+        {"received_at": "9999-12-31T23:59:59.999999Z"},
+        {"inspection_id": "FFFFFFFF-FFFF-4FFF-BFFF-FFFFFFFFFFFF"},
+    ],
+    ids=repr,
+)
+def test_contract_checks_accept_limits(conn: psycopg.Connection, overrides: dict[str, Any]) -> None:
+    assert _inserted(conn, **overrides)
+    assert _count(conn) == 1
+
+
+def test_inspection_id_check_mirrors_pydantic_uuid4(conn: psycopg.Connection) -> None:
+    accepted: set[str] = set()
+    for version in HEX:
+        for variant in HEX:
+            text = f"12345678-1234-{version}234-{variant}234-123456789abc"
+            database = _inserted(conn, inspection_id=text)
+            assert database == _pydantic_uuid4_accepts(text), text
+            if database:
+                accepted.add(version + variant)
+    assert accepted == {"48", "49", "4a", "4b"}
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["abc", "a.b", "...", "a" * 40, "a" * 41, "ab", "ABC", "abc\n", "ab c", "ábc", "a_b"],
+    ids=repr,
+)
+def test_model_version_check_mirrors_contract(conn: psycopg.Connection, value: str) -> None:
+    expected = re.fullmatch(MODEL_VERSION_PATTERN, value) is not None
+    assert _inserted(conn, model_version=value) == expected
