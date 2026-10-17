@@ -64,6 +64,7 @@ testpaths = [
     "dashboard/tests",
     "ml/tests",
     "infra/tests",
+    "scripts/tests",
 ]
 # infra/migrate.py is a script, not a package: `import migrate` in tests and fixtures (SPEC-003).
 pythonpath = ["infra"]

@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Security |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-004, SPEC-006 |
@@ -83,7 +83,7 @@ A chave nunca é impressa nem registrada em log.
 
 Os testes chamam `main([...], transport=MockTransport(...), sleep=<registrador>, now=<fixo>)`. A API falsa implementa a idempotência da SPEC-004 (ids gravados num `dict`; `created`/`duplicate`).
 
-- **CA-01** — *Dado* `--dry-run --seed 42 --lots 3 --lot-size 10 --start 2026-11-01T12:00:00Z --device-id sim-01`, *quando* rodo, *então* o código é 0, o stdout tem 30 linhas, cada uma válida como `InspectionCreate`, todas com `source="simulated"`, `model_version="sim-v0"`, `model_sha256="0"*64`, `device_id="sim-01"`, lotes `SIM-20261101-001`…`003` (10 cada) e `inspected_at` crescente; e a API falsa recebeu 0 requisições.
+- **CA-01** — *Dado* `--dry-run --seed 42 --lots 3 --lot-size 10 --start 2026-10-01T12:00:00Z --device-id sim-01` e `now` fixo em `2026-10-01T13:00:00Z`, *quando* rodo, *então* o código é 0, o stdout tem 30 linhas, cada uma válida como `InspectionCreate`, todas com `source="simulated"`, `model_version="sim-v0"`, `model_sha256="0"*64`, `device_id="sim-01"`, lotes `SIM-20261001-001`…`003` (10 cada) e `inspected_at` crescente; e a API falsa recebeu 0 requisições.
 - **CA-02** — *Dado* o comando do CA-01 rodado duas vezes, *então* os stdouts são idênticos byte a byte; com `--seed 43`, nenhum `inspection_id` coincide; todos os ids têm `version == 4` e são únicos.
 - **CA-03 (R-06)** — *Dado* `--source live` (ou `--source=live`), *quando* rodo, *então* o código é 2 e nada é gerado; e em 1 000 itens gerados com qualquer combinação de argumentos válidos, `source` é sempre `simulated`.
 - **CA-04** — *Dado* `--dry-run --seed 1 --lots 20 --lot-size 500 --defect-rate 0.2 --unknown-rate 0`, *então* a fração de defeituosos (`qc_contracts.is_defective`) está em 0,20 ± 0,02; entre os defeituosos, `poor` está em 0,70 ± 0,04; entre os não defeituosos, `perfect`, `good` e `fair` estão em 0,40, 0,35 e 0,25, cada um ± 0,03.
@@ -130,3 +130,5 @@ Os testes importam o script com `importlib.util.spec_from_file_location` (não h
 |---|---|---|---|
 | 2026-10-12 | §4.1 exige `re.fullmatch` com `DEVICE_ID_PATTERN` e `MODEL_VERSION_PATTERN` de `qc_contracts`. O CA-08 ganhou os casos `"sim-01\n"` e `"sim-v0\n"`. Nenhum outro requisito muda; o `latency_ms` gerado (40 a 180) já respeita o teto do contrato 0.2.0 (SPEC-023). SPEC marcada como "Aguardando reaprovação humana". | RV-04 de `reviews/SPEC-002/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-17 | CA-01 (e, por referência, CA-02): `--start` passa de `2026-11-01T12:00:00Z` para a data passada `2026-10-01T12:00:00Z`, com `now` fixo em `2026-10-01T13:00:00Z`; os lotes esperados passam a `SIM-20261001-001`…`003`. Nenhum comportamento muda (opção (a)): o `InspectionCreate` recusa `inspected_at` mais de 5 min no futuro pelo relógio real, e o último item (12:29:00Z) já está no passado; o `now` fixo fica depois do último item, coerente com o CA-09. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-1 de `reviews/SPEC-014/r1-dev-report.md` | Orquestrador |
+| 2026-10-17 | Correção do SPEC_ISSUE-1 reaprovada; `Blocked` → `In Test`, retomando a r1. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
