@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-003, SPEC-005, SPEC-014 (e SPEC-004, pelo teste de aceite ajustado na §4.4) |
