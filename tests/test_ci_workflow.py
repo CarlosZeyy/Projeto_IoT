@@ -8,6 +8,10 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+COVERAGE_GATE = (
+    'uv run pytest api/tests -q -m "not db" --cov=qc_api.services'
+    " --cov-report=term-missing --cov-fail-under=80"
+)
 EXPECTED_ORDER = [
     "uv sync --all-packages --frozen",
     "uv run ruff check .",
@@ -69,6 +73,13 @@ def test_steps_in_order(job: dict) -> None:
     positions = [runs.index(cmd) for cmd in EXPECTED_ORDER]
     assert positions == sorted(positions)
     assert runs.index("uv python install 3.12") < positions[0]
+
+
+def test_services_coverage_gate_runs_after_pytest(job: dict) -> None:
+    """SPEC-006 section 4.3 (RNF-09): coverage of ``qc_api.services`` >= 80%, without database."""
+    runs = [step["run"].strip() for step in job["steps"] if "run" in step]
+    assert runs.count(COVERAGE_GATE) == 1
+    assert runs.index(COVERAGE_GATE) > runs.index("uv run pytest -q")
 
 
 def test_actions_pinned_and_no_secrets(job: dict) -> None:
