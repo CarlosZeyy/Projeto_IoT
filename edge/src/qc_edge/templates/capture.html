@@ -16,18 +16,58 @@
 <label class="field">Modo
 <select id="mode" name="mode">
 <option value="inspect" selected>inspeção</option>
-<option value="collect" disabled>coleta (em breve)</option>
+<option value="collect">coleta</option>
 </select>
 </label>
+<fieldset id="collect-fields" class="collect" hidden>
+<legend>Coleta do dataset</legend>
+<label class="field">Peça (item_id)
+<input type="text" id="item_id" name="item_id" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="S-001">
+</label>
+<label class="field">Tipo
+<select id="object_type" name="object_type">
+$object_type_options
+</select>
+</label>
+<label class="field">Grau
+<select id="grade" name="grade">
+<option value="">—</option>
+$grade_options
+</select>
+</label>
+<label class="field">Rotulador
+<select id="labeler" name="labeler">
+<option value="a">a</option>
+<option value="b">b</option>
+</select>
+</label>
+<label class="field">Ângulo
+<select id="angle" name="angle">
+<option value="0">0</option>
+<option value="1">1</option>
+<option value="2">2</option>
+<option value="3">3</option>
+<option value="4">4</option>
+</select>
+</label>
+<label class="field">Observações
+<input type="text" id="notes" name="notes" maxlength="200" autocomplete="off">
+</label>
+</fieldset>
+<p class="reminder" id="reminder">Sem pessoas no quadro</p>
 <label class="shoot" id="shoot">Fotografar
 <input type="file" accept="image/*" capture="environment">
 </label>
 <p id="status" class="status" role="status"></p>
 <section id="result" class="card" hidden>
 <p class="verdict" id="verdict"></p>
-<p><span id="object_type"></span> <span id="grade"></span></p>
+<p><span id="object_type_label"></span> <span id="grade_label"></span></p>
 <p class="review" id="review" hidden>Revisar</p>
 <p class="times">Borda: <span id="latency"></span> ms · Total: <span id="total"></span> ms</p>
+</section>
+<section id="saved" class="card saved" hidden>
+<p id="saved-text"></p>
+<p class="complete" id="complete" hidden>Peça completa — troque o item_id</p>
 </section>
 </main>
 <script src="/static/capture.js"></script>

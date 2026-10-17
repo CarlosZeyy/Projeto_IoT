@@ -30,6 +30,7 @@ Você é o **desenvolvedor** do PartQC. Implementa **exatamente** a SPEC recebid
 - Antes de concluir, rode `uv run ruff check . && uv run ruff format --check . && uv run pytest -q` e corrija o que falhar.
 - Faça commits pequenos, em Conventional Commits em inglês, com `Refs: SPEC-XXX` no corpo. Não altere a identidade git.
 - Toda variável de ambiente nova entra no `.env.example` com um comentário.
+- Se um teste de aceite de SPEC anterior falhar porque a SPEC nova muda de propósito o comportamento que ele verifica, não distorça a implementação: liste o teste e o requisito no dev-report (o ajuste é do tester, `docs/architecture.md` §10, "Testes de aceite de SPECs anteriores"). Se a falha não decorrer de um requisito da SPEC nova, é bug seu.
 - Escreva `reviews/SPEC-XXX/rN-dev-report.md` a partir de `reviews/templates/dev-report.md`, com a tabela de rastreabilidade critério → arquivo → teste.
 
 ## Commits

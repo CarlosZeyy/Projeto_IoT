@@ -1,4 +1,7 @@
-"""POST /api/capture in inspect mode (SPEC-007 sections 4.5 to 4.7)."""
+"""POST /api/capture in inspect mode (SPEC-007 sections 4.5 to 4.7).
+
+The collect mode (SPEC-010) is covered by ``test_collect_route.py``.
+"""
 
 from __future__ import annotations
 
@@ -277,10 +280,14 @@ def test_image_sent_as_text_field_is_422(harness: Harness) -> None:
     assert response.status_code == 422
 
 
-def test_collect_mode_is_501(harness: Harness, jpeg_bytes: bytes) -> None:
+def test_collect_mode_without_its_fields_is_422(harness: Harness, jpeg_bytes: bytes) -> None:
+    # SPEC-010 replaced the 501: the collect fields are validated before anything else.
     response = harness.post(jpeg_bytes, mode="collect")
-    assert response.status_code == 501
+    assert response.status_code == 422
+    assert response.json() == {"detail": "missing or invalid item_id"}
     assert harness.captures() == []
+    assert not harness.settings.DATASET_DIR.exists()
+    assert harness.stub is not None and harness.stub.calls == 0
 
 
 @pytest.mark.parametrize(

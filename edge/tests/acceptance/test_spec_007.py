@@ -930,7 +930,9 @@ def test_ca13_console_from_loopback(edge: Edge, lan: Callable[..., None]) -> Non
     assert all(p >= 0 for p in positions), positions
     assert positions == sorted(positions), "most recent first"
     assert "L-001" not in page and "L-002" not in page
-    assert page.count("parafuso") == 10
+    inspection_rows = re.findall(r'<tr class="inspection"[^>]*>.*?</tr>', page, flags=re.S)
+    assert len(inspection_rows) == 10
+    assert sum(row.count("parafuso") for row in inspection_rows) == 10
     assert '<meta http-equiv="refresh" content="5">' in page
 
 
@@ -995,7 +997,7 @@ def test_ca15_capture_page(edge: Edge) -> None:
         assert lot_fields, "no lot field"
 
         collect = [a for t, a in tags if t in {"option", "input"} and a.get("value") == "collect"]
-        assert collect and all("disabled" in a for a in collect)
+        assert collect  # enabled since SPEC-010 (CA-16); see reviews/SPEC-010/r1-test-report.md
         inspect_opt = [
             a for t, a in tags if t in {"option", "input"} and a.get("value") == "inspect"
         ]
@@ -1663,11 +1665,11 @@ def test_extra_lot_id_boundaries(edge: Edge) -> None:
             assert bad not in r.text or bad == ""
 
 
-def test_extra_collect_mode_is_501(edge: Edge) -> None:
+def test_extra_collect_mode_without_collect_fields_is_422(edge: Edge) -> None:
     app, stub, _ = edge.app()
     with TestClient(app) as client:
         r = post_capture(client, edge.token, solid_jpeg(), mode="collect")
-    assert r.status_code == 501
+    assert r.status_code == 422
     assert stub.calls == 0
     assert edge.captures() == []
 
