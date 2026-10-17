@@ -1,4 +1,7 @@
-"""Fixtures of the qc-edge unit tests (SPEC-007). Images are generated in memory, never stored."""
+"""Fixtures of the qc-edge unit tests (SPEC-007, SPEC-010).
+
+Images are generated in memory, never stored in the repository.
+"""
 
 from __future__ import annotations
 
@@ -60,8 +63,16 @@ def data_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def settings(clean_edge_env: None, data_dir: Path) -> EdgeSettings:
-    return EdgeSettings(EDGE_DATA_DIR=data_dir)
+def dataset_dir(tmp_path: Path) -> Path:
+    """``DATASET_DIR`` of the tests; not created (the collect mode creates it)."""
+    return tmp_path / "dataset"
+
+
+@pytest.fixture
+def settings(clean_edge_env: None, data_dir: Path, dataset_dir: Path) -> EdgeSettings:
+    # DATASET_DIR always under tmp_path: the default (ml/data) is relative to the current
+    # directory, which is the repository during the tests.
+    return EdgeSettings(EDGE_DATA_DIR=data_dir, DATASET_DIR=dataset_dir)
 
 
 @pytest.fixture
