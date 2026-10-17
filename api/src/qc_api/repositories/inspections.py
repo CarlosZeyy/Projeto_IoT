@@ -7,8 +7,10 @@
   page item, bucket or lot reaches Python.
 * Every read runs in one ``repeatable read, read only`` transaction, so a page and its
   ``total`` (or a summary and its breakdowns) come from the same snapshot.
-* ``lot_counts`` feeds the SPC (SPEC-006 section 4.2): one row per lot, ``unknown`` objects
-  left out, a single ``source`` (never a mix, R-06).
+* ``lot_selection`` feeds the SPC (SPEC-006 section 4.2, SPEC-026 section 4.3): ``unknown``
+  objects left out, a single ``source`` (never a mix, R-06), and the cut of ADR-017 made in SQL
+  over one aggregation per request, so at most ``baseline_lots + max_points + max_excluded + 1``
+  rows reach Python, whatever the history.
 * The defect rate is ``defective / (total - unknown)`` and ``null`` when the denominator is 0
   (``nullif``), never a division error. ``is_defective`` is the generated column that mirrors
   ``qc_contracts.is_defective`` (ADR-013, SPEC-003).
@@ -27,7 +29,7 @@ from psycopg_pool import ConnectionPool
 
 from qc_api.db import db_connection
 from qc_api.filters import InspectionFilters
-from qc_api.services.spc import LotCounts
+from qc_api.services.spc import LotCounts, LotSelection, validate_selection_parameters
 from qc_contracts import (
     Grade,
     InspectionRead,
@@ -141,17 +143,63 @@ order by started_at desc, lot_id asc
 limit %(limit)s offset %(offset)s
 """
 
-SELECT_LOT_COUNTS = """
+# The SPC cut (SPEC-026 section 4.3, ADR-017). ``lots`` is aggregated once (``materialized``)
+# and each part comes out of it with ``order by ... limit``: the totals row, the first
+# ``baseline_lots`` valid lots, the last ``max_points`` valid lots and the last
+# ``max_excluded`` excluded lots. Ties on ``started_at`` are broken by ``lot_id collate "C"``,
+# the order of a Python ``str`` (ADR-017, item 6). The outer ``order by`` returns every part in
+# ascending order. A ``null`` limit means no limit.
+SELECT_LOT_SELECTION = """
+with lots as materialized (
+    select
+        lot_id,
+        count(*) as n,
+        count(*) filter (where is_defective) as defects,
+        min(inspected_at) as started_at,
+        max(inspected_at) as ended_at
+    from inspections
+    where {where}
+    group by lot_id
+)
 select
-    lot_id,
-    count(*) as n,
-    count(*) filter (where is_defective) as defects,
-    min(inspected_at) as started_at,
-    max(inspected_at) as ended_at
-from inspections
-where {where}
-group by lot_id
-order by started_at, lot_id
+    part, lot_id, n, defects, started_at, ended_at, valid_lots_total, excluded_lots_total
+from (
+    select
+        'totals'::text as part,
+        null::text as lot_id,
+        null::bigint as n,
+        null::bigint as defects,
+        null::timestamptz as started_at,
+        null::timestamptz as ended_at,
+        count(*) filter (where n >= %(min_lot_size)s) as valid_lots_total,
+        count(*) filter (where n < %(min_lot_size)s) as excluded_lots_total
+    from lots
+    union all
+    (
+        select 'baseline', lot_id, n, defects, started_at, ended_at, null, null
+        from lots
+        where n >= %(min_lot_size)s
+        order by started_at, lot_id collate "C"
+        limit %(baseline_lots)s
+    )
+    union all
+    (
+        select 'window', lot_id, n, defects, started_at, ended_at, null, null
+        from lots
+        where n >= %(min_lot_size)s
+        order by started_at desc, lot_id collate "C" desc
+        limit %(max_points)s
+    )
+    union all
+    (
+        select 'excluded', lot_id, n, defects, started_at, ended_at, null, null
+        from lots
+        where n < %(min_lot_size)s
+        order by started_at desc, lot_id collate "C" desc
+        limit %(max_excluded)s
+    )
+) as parts
+order by part, started_at, lot_id collate "C"
 """
 
 
@@ -292,27 +340,75 @@ def list_lots(
     return Page[LotSummary](items=items, total=total, limit=limit, offset=offset)
 
 
-def lot_counts(
-    pool: ConnectionPool, source: Source, object_type: ObjectType | None = None
-) -> list[LotCounts]:
-    """Per-lot ``n`` and ``defects`` of one ``source`` for the SPC, ``unknown`` objects excluded.
+def lot_selection(
+    pool: ConnectionPool,
+    source: Source,
+    object_type: ObjectType | None,
+    *,
+    baseline_lots: int,
+    min_lot_size: int,
+    max_points: int | None,
+    max_excluded: int | None,
+) -> LotSelection:
+    """The lots of the SPC of one ``source``, ``unknown`` objects excluded, cut in SQL.
 
-    ``object_type=None`` keeps every known type; otherwise only that type. Lots come ordered by
-    ``(started_at, lot_id)``.
+    ``object_type=None`` keeps every known type; otherwise only that type. The result is the
+    one ``qc_api.services.spc.select_lots`` gives for every lot of the query: the same parts,
+    each in ascending ``(started_at, lot_id)`` order, and the counts before the cut. ``None``
+    for ``max_points`` or ``max_excluded`` means no cap. Raises ``ValueError`` on invalid
+    parameters, before any query.
     """
+    validate_selection_parameters(
+        baseline_lots, min_lot_size, max_points=max_points, max_excluded=max_excluded
+    )
     conditions = [
         sql.SQL("object_type <> %(unknown)s"),
         sql.SQL("source = %(f_source)s"),
     ]
-    params: dict[str, Any] = {"unknown": _UNKNOWN, "f_source": source.value}
+    params: dict[str, Any] = {
+        "unknown": _UNKNOWN,
+        "f_source": source.value,
+        "baseline_lots": baseline_lots,
+        "min_lot_size": min_lot_size,
+        "max_points": max_points,
+        "max_excluded": max_excluded,
+    }
     if object_type is not None:
         conditions.append(sql.SQL("object_type = %(f_object_type)s"))
         params["f_object_type"] = object_type.value
     where = sql.SQL(" and ").join(conditions)
     with _read_snapshot(pool) as cursor:
-        cursor.execute(sql.SQL(SELECT_LOT_COUNTS).format(where=where), params)
+        cursor.execute(sql.SQL(SELECT_LOT_SELECTION).format(where=where), params)
         rows = cursor.fetchall()
-    return [LotCounts(**row) for row in rows]
+    return _lot_selection(rows)
+
+
+def _lot_selection(rows: list[dict[str, Any]]) -> LotSelection:
+    parts: dict[str, list[LotCounts]] = {"baseline": [], "window": [], "excluded": []}
+    totals: dict[str, Any] | None = None
+    for row in rows:
+        part = row["part"]
+        if part == "totals":
+            totals = row
+            continue
+        parts[part].append(
+            LotCounts(
+                lot_id=row["lot_id"],
+                started_at=row["started_at"],
+                ended_at=row["ended_at"],
+                n=row["n"],
+                defects=row["defects"],
+            )
+        )
+    if totals is None:  # an aggregate without group by always returns one row
+        raise RuntimeError("lot selection query returned no totals row")
+    return LotSelection(
+        baseline=tuple(parts["baseline"]),
+        window=tuple(parts["window"]),
+        excluded=tuple(parts["excluded"]),
+        valid_lots_total=totals["valid_lots_total"],
+        excluded_lots_total=totals["excluded_lots_total"],
+    )
 
 
 def _lot_summary(row: dict[str, Any]) -> LotSummary:
