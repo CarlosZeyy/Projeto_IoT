@@ -6,10 +6,10 @@
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
-| Depende de | SPEC-006 (e SPEC-003, SPEC-004) |
+| Depende de | SPEC-006, SPEC-026 (e SPEC-003, SPEC-004) |
 | Semana alvo | S6 |
 | Requisitos cobertos | RF-17; PRD §4.2 |
-| ADRs relevantes | ADR-013, ADR-006, ADR-008 |
+| ADRs relevantes | ADR-013, ADR-017, ADR-006, ADR-008 |
 
 > **Rascunho.** Precisa de refinamento do `architect` e de aprovação humana antes de virar `Ready`.
 
@@ -36,7 +36,8 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 ## 4. Requisitos-chave (preliminares)
 
 - **Gatilho:** avaliado depois de cada ingestão (`BackgroundTasks` do FastAPI, sem atrasar a resposta) **ou** por um endpoint `POST /api/v1/alerts/check` chamado periodicamente. A escolha está em aberto (§6).
-- **Regra:** usa `compute_p_chart` (SPEC-006) com `source=live` e os parâmetros padrão. Alerta só para o lote recém-concluído com `out_of_control = true` e `n ≥ min_lot_size`.
+- **Regra:** usa a carta da SPEC-006 com `source=live` e os parâmetros padrão. Alerta só para o lote recém-concluído com `out_of_control = true` e `n ≥ min_lot_size`.
+- **Custo limitado (ADR-017):** a verificação usa a seleção limitada da SPEC-026 (`lot_selection` + `build_p_chart`, com um `max_points` pequeno), e nunca carrega nem recalcula a história inteira em Python a cada execução (SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`). Os `LotCounts` já são validados quanto a tipo e fuso desde a SPEC-026 (RV-03 do review da SPEC-006).
 - **Deduplicação:** no máximo 1 mensagem por `(lot_id, source, kind)`, garantida pelo `unique` (`INSERT ... ON CONFLICT DO NOTHING` antes de enviar).
 - **Mensagem** (PT-BR, só texto, **sem imagens** — R-02): `Lote L-007 fora de controle: p = 40,0% (LSC 31,2%), n = 25, defeituosas = 10. Origem: real.`
 - **Envio:** `POST https://api.telegram.org/bot<token>/sendMessage` via `httpx`, timeout de 5 s, sem retry infinito. Falha do Telegram é logada e **nunca** afeta a ingestão.
@@ -59,3 +60,9 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 3. Enquanto houver menos de `baseline_lots` lotes, `p̄` muda a cada lote novo e um lote antigo pode passar a ficar fora de controle. Alertar só o lote recém-concluído, avaliado no momento da conclusão?
 4. Permitir alertas de dados `simulated` na demo, com o selo "SIMULADO" no texto?
 5. Limite global de mensagens por hora para evitar spam em caso de bug.
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-17 | §4: a regra usa a seleção limitada da SPEC-026 (ADR-017) e nunca recalcula a história inteira; depende, na prática, da SPEC-026. A SPEC continua `Draft`. | SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`; RV-03 de `reviews/SPEC-006/r1-review-report.md` | Orquestrador, a pedido do humano |

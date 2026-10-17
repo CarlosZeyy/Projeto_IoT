@@ -6,7 +6,7 @@
 | Rodada atual | — |
 | Autor da implementação | security-devops |
 | Tags | deploy, security |
-| Depende de | SPEC-004, SPEC-013 (e, por elas, SPEC-003, SPEC-005, SPEC-006) |
+| Depende de | SPEC-004, SPEC-013, SPEC-026 (teto da carta p; sem ele, a rota SPC pode derrubar a API de 512 MB), SPEC-027 (migração `002` e simulador corrigido) (e, por elas, SPEC-003, SPEC-005, SPEC-006, SPEC-014) |
 | Semana alvo | S4 |
 | Requisitos cobertos | RNF-01, RNF-06, RNF-10, RF-15 |
 | ADRs relevantes | ADR-006, ADR-007, ADR-008, ADR-010, ADR-015 |
@@ -29,6 +29,13 @@ E fecha três pendências de operação deixadas pela SPEC-004 (`reviews/SPEC-00
 - **SEC-04-03:** `register_device.py --database-url URL` deixa a senha no `argv` (visível em `ps` e em `/proc/<pid>/cmdline`) e no histórico do shell.
 - **SEC-04-05:** com o banco fora do ar, o logger `psycopg.pool` registra em `WARNING` o host, a porta e, numa falha de autenticação, o usuário do pooler, sem a senha.
 
+E fecha as pendências de operação deixadas pelas SPECs 005, 006 e 014 (§4.9):
+
+- **SEC-05-01** (`reviews/SPEC-005/r1-security-report.md`): as consultas da API não têm `statement_timeout`. No Supabase, o papel `postgres` não tem timeout próprio e fica sujeito ao teto global de 2 min (<https://supabase.com/docs/guides/database/postgres/timeouts>, consultado pelo architect em 2026-10-17). Leituras pesadas do dashboard podem ocupar as 5 conexões do pool, e a escrita da borda recebe 503.
+- **INFO-02** (mesmo relatório): geração da `READ_API_KEY`, separada das chaves de dispositivo, e a ordem da troca (API e dashboard juntos).
+- **Limites do Render** (`reviews/SPEC-006/r1-security-report.md`, checklist de deploy): o plano gratuito tem **512 MB de RAM e 0,1 CPU** (<https://render.com/docs/compute-plans>, tabela "Web service plans", linha `free`, consultado pelo architect em 2026-10-17). A linha do Render no `deployment-plan.md` ainda diz "≈ 512 MB, não confirmado". O SEC-06-01 (média) mostrou que a rota SPC sem teto passava desse limite. Ele é corrigido pela SPEC-026, que por isso é dependência desta.
+- **SEC-07 e a mitigação do SEC-01** (`reviews/SPEC-014/r1-security-report.md`): uma execução válida do simulador pode enviar 500 000 itens e consumir a cota do banco gratuito; e, até a SPEC-027, o argparse do simulador repete no stderr uma chave digitada na opção errada.
+
 ## 2. Objetivo
 
 API, banco e dashboard no ar em free tier sem cartão (R-01), sem nenhum segredo no Git (R-03), com o smoke test passando contra produção e o keep-alive agendado.
@@ -48,7 +55,7 @@ API, banco e dashboard no ar em free tier sem cartão (R-01), sem nenhum segredo
 
 ### 3.2 Fora
 
-- Código da API e do dashboard → SPECs 004, 005, 006 e 013. Arquivos de migração (`infra/migrations/*.sql`) → SPEC-003; nenhuma migração nova aqui. Registro de dispositivos → `scripts/register_device.py` (SPEC-004).
+- Código da API e do dashboard → SPECs 004, 005, 006, 013 e 026. Arquivos de migração (`infra/migrations/*.sql`) → SPEC-003 (`001`) e SPEC-027 (`002`); nenhuma migração nova aqui. O `statement_timeout` é configurado no papel do banco (§4.9), não por migração nem no código da API. Registro de dispositivos → `scripts/register_device.py` (SPEC-004).
 - Papel de banco só de DML para a API (SEC-05 da SPEC-003): não adotado no MVP; exigiria rever o ADR-006 (RLS sem `force` depende de a API conectar como dona das tabelas).
 - Rodar migrações no GitHub Actions: proibido nesta SPEC (§7).
 - Deploy no Koyeb (reserva): só documentado; executar exige nova decisão humana.
@@ -103,7 +110,8 @@ Código 0 se todas passarem; 1 se alguma falhar. Nenhuma chave é impressa.
 3. Dispositivos: `register_device.py` para `edge-01` e `sim-01`, com a URL lida do arquivo `.env.migrate` (pooler em modo session, já criado no passo 1): `uv run --env-file .env.migrate --package qc-api python scripts/register_device.py --device-id edge-01` (e o mesmo para `sim-01`). **Nunca** passar a URL de produção por `--database-url`, que a deixaria no `argv` e no histórico do shell (SEC-04-03). Chaves nos `.env` locais.
 4. Streamlit CC: app do repositório público, branch `main`, entrypoint `dashboard/app.py`, Python 3.12, Secrets `API_BASE_URL` e `READ_API_KEY`.
 5. GitHub: secret `KEEPALIVE_URL` = URL base da API; disparar o workflow manualmente.
-6. Rodar `scripts/smoke_test.py` e `scripts/simulate.py --lots 3` contra produção.
+6. Rodar `scripts/smoke_test.py` e `scripts/simulate.py --lots 3` contra produção, este último sempre com `uv run --env-file <arquivo> ...` e dentro dos limites da §4.9, item 4.
+7. Banco: configurar e conferir o `statement_timeout` do papel da API (§4.9, item 1; CA-26).
 
 ### 4.7 Executor de migrações em produção (`infra/migrate.py`)
 
@@ -129,6 +137,25 @@ O autor acrescenta ao `docs/deployment-plan.md` uma seção `## 7. Riscos aceito
 2. **Log do `psycopg.pool` no Render (SEC-04-05).** Com o banco fora do ar, o log do serviço mostra o host, a porta e, numa falha de autenticação, o usuário do pooler do Supabase. Não são segredos (R-03 continua cumprida, e a senha não aparece). No portão `deploy`, esse log não conta como vazamento. É a exceção prevista na regra "Erros de banco no log" de `docs/architecture.md` §4.
 
 E toda menção a `register_device.py` no `deployment-plan.md` (hoje, a §3 "Chaves de dispositivo" e o passo 3 da §4) segue o passo 3 da §4.6 desta SPEC: o comando completo com `--env-file .env.migrate`, nunca `--database-url` com a URL de produção.
+
+### 4.9 Pendências de operação das SPECs 005, 006 e 014
+
+O autor registra no `docs/deployment-plan.md`, com fonte e data de verificação:
+
+1. **`statement_timeout` (SEC-05-01).**
+   - Medir em produção, depois das migrações e do `simulate.py --lots 3`, o tempo das leituras mais pesadas: `EXPLAIN ANALYZE` da agregação de `/api/v1/lots` e da do SPC, pelo SQL Editor. Registrar os tempos.
+   - Escolher o valor: no mínimo 3 vezes a leitura mais lenta medida e no máximo 30 s. O padrão sugerido é `15s`.
+   - Aplicar no papel que a API usa, pelo SQL Editor: `alter role <papel> set statement_timeout = '<valor>';`. O papel é o usuário da `DATABASE_URL` da API, sem o sufixo do projeto (no Supabase, `postgres`). Segundo a documentação do Supabase, uma configuração de sessão não funciona pelo pooler em modo transaction (porta 6543), e a configuração de um papel se confere em `pg_roles.rolconfig`, porque `show statement_timeout` não a reflete (<https://supabase.com/docs/guides/database/postgres/timeouts>, consultado em 2026-10-17). Por isso, a forma é o `alter role`, e não o parâmetro `options` da conexão.
+   - Conferir: `select rolconfig from pg_roles where rolname = '<papel>';` contém `statement_timeout=<valor>`; e uma conexão **pelo mesmo caminho da API** (pooler em modo transaction, porta 6543), aberta com a URL lida de um arquivo local ignorado pelo Git (nunca na linha de comando), devolve o valor em `show statement_timeout`. Se não devolver, parar e registrar `SPEC_ISSUE` para o architect (a alternativa é um `set local statement_timeout` na transação de leitura da API, que exige uma SPEC do developer).
+   - Efeito aceito, registrado em "Riscos aceitos" (§4.8): uma consulta cancelada (`57014`, `QueryCanceled`) responde o 500 genérico, sem a mensagem (SPEC-005 §4.5). As migrações rodam com o mesmo papel; se uma migração futura passar do limite, ela falha e faz `rollback`, e o humano repete com o limite ajustado só naquela sessão.
+2. **`READ_API_KEY` (INFO-02 de `reviews/SPEC-005/r1-security-report.md`).**
+   - Gerada só com `python -c "import secrets; print(secrets.token_urlsafe(32))"`, nunca reaproveitando uma chave do `register_device.py`.
+   - **Troca:** gerar a nova; atualizar a variável no Render e o secret do Streamlit CC na mesma sessão (o dashboard fica com 401 entre as duas trocas); conferir com o `scripts/smoke_test.py` (checagens `read_requires_key` e `read`), que lê a chave do ambiente. **Nunca** conferir com `curl -H "X-API-Key: ..."`, que deixa a chave no `argv`.
+3. **Limites do Render.** A linha do Render na §2 do `deployment-plan.md` passa a dizer **512 MB de RAM e 0,1 CPU**, com a fonte <https://render.com/docs/compute-plans> e a data da conferência do autor, no lugar de "≈ 512 MB, não confirmado".
+4. **Simulador em produção (SEC-07 e mitigação do SEC-01 de `reviews/SPEC-014/r1-security-report.md`).**
+   - Contra produção, só execuções pequenas: `--lots` até 10 e `--lot-size` até 50 (no máximo 500 itens por execução).
+   - A chave vai sempre pelo arquivo de ambiente: `uv run --env-file .env --package qc-api python scripts/simulate.py ...`. **Nunca** `--api-key` em demo gravada, terminal projetado, CI ou workflow. Se for inevitável, usar a forma `--api-key=<valor>` com um espaço no início do comando, para que ele não entre no histórico do shell.
+   - Se uma chave aparecer numa gravação, num log compartilhado ou num print, rotacioná-la com `scripts/register_device.py --device-id sim-01 --rotate` (pelo `--env-file .env.migrate` do passo 3 da §4.6) e atualizar o `.env`.
 
 ## 5. Critérios de aceite
 
@@ -159,14 +186,20 @@ E toda menção a `register_device.py` no `deployment-plan.md` (hoje, a §3 "Cha
 - **CA-25 (SEC-04-02, SEC-04-03, SEC-04-05)** — *Dado* o texto de `docs/deployment-plan.md`, *então*:
   - há uma seção de nível 2 cujo título contém `Riscos aceitos`; no trecho dela até o próximo título de nível 2, uma linha contém `pool` e `503`, outra contém `psycopg.pool`, e o trecho contém `render.com/docs/ddos-protection`;
   - toda linha que contém `register_device.py` contém também `--env-file` e não contém `--database-url`.
+- **CA-26 (manual, SEC-05-01)** — `statement_timeout` em produção: 1. no SQL Editor, rodar `EXPLAIN ANALYZE` das agregações de `/api/v1/lots` e do SPC e anotar os tempos; 2. escolher o valor pela regra da §4.9, item 1; 3. rodar `alter role <papel> set statement_timeout = '<valor>';`; 4. `select rolconfig from pg_roles where rolname = '<papel>';` → contém `statement_timeout=<valor>`; 5. por uma conexão pelo pooler em modo transaction (porta 6543), com a URL lida de um arquivo local, `show statement_timeout` → `<valor>`; 6. registrar no dev-report e no `deployment-plan.md` as saídas dos passos 1, 4 e 5 (sem segredos) e a data.
+- **CA-27 (SEC-05-01, INFO-02, SEC-07, Render)** — *Dado* o texto de `docs/deployment-plan.md`, *então*:
+  - ele contém `statement_timeout`, `rolconfig` e `token_urlsafe(32)`;
+  - a linha da tabela da §2 que começa com `| Render` contém `512 MB`, `0,1 CPU` e `render.com/docs/compute-plans`, e não contém `não confirmado`;
+  - toda linha que contém `simulate.py` contém também `--env-file`;
+  - o trecho da seção `Riscos aceitos` contém `57014`.
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
 | Unitário (autor) | YAML/TOML, requirements, busca de segredos, smoke com `MockTransport`; ajustes do executor (§4.7) | `infra/tests/` |
-| Aceite (tester) | CA-01…CA-12 e CA-20…CA-25 (CA-21 a CA-24 marcados `db`) | `infra/tests/acceptance/test_spec_015.py` |
-| Manual (dupla + autor) | CA-13…CA-19 | produção; resultado no dev-report e no `deployment-plan.md` |
+| Aceite (tester) | CA-01…CA-12, CA-20…CA-25 e CA-27 (CA-21 a CA-24 marcados `db`) | `infra/tests/acceptance/test_spec_015.py` |
+| Manual (dupla + autor) | CA-13…CA-19 e CA-26 | produção; resultado no dev-report e no `deployment-plan.md` |
 
 Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é importado por `importlib.util.spec_from_file_location`. Os testes do executor usam o Postgres de teste da SPEC-003 (fixtures de `conftest.py`, com banco temporário próprio quando precisam de schema vazio), sem mock de banco.
 
@@ -184,7 +217,7 @@ Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é i
 
 ## 8. Definição de pronto
 
-- [ ] Todos os CAs automatizados com teste de aceite passando (test-report PASS) e CA-13…19 registrados
+- [ ] Todos os CAs automatizados com teste de aceite passando (test-report PASS) e CA-13…19 e CA-26 registrados
 - [ ] review-report APPROVED + security-report PASS (feito pelo **reviewer**)
 - [ ] CI verde; `ruff` limpo
 - [ ] `docs/deployment-plan.md` com os valores finais, URLs públicas (sem segredos) e datas; `.env.example` atualizado
@@ -198,3 +231,5 @@ Nenhum teste automatizado acessa a internet nem os serviços reais. O smoke é i
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-13 | Mudanças: (a) §1 com as três pendências de operação da SPEC-004; (b) §4.6, passo 3: registro de dispositivos com `--env-file .env.migrate`, nunca `--database-url` com a URL de produção; (c) §4.8 nova: seção "Riscos aceitos" no `deployment-plan.md` (rajada anônima no pool, com a verificação do Render, e o log do `psycopg.pool`); (d) CA-25 novo; (e) §6 atualizada. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-04-02, SEC-04-03 e SEC-04-05 de `reviews/SPEC-004/r2-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-17 | Mudanças: (a) passa a depender da SPEC-026 (teto da carta p, sem o qual a rota SPC passa dos 512 MB do Render) e da SPEC-027 (migração `002` e simulador corrigido); (b) §1 com as pendências de operação das SPECs 005, 006 e 014; (c) §3.2 cita a migração `002` (SPEC-027), aplicada pelo CA-19 junto com a `001`; (d) §4.6: passo 6 com `--env-file` e os limites do simulador, passo 7 novo (`statement_timeout`); (e) §4.9 nova: `statement_timeout` medido e aplicado por `alter role`, conferido em `pg_roles.rolconfig` e pela porta 6543; geração e troca da `READ_API_KEY`; linha do Render com 512 MB e 0,1 CPU; simulador em produção só com execuções pequenas e a chave pelo arquivo de ambiente; (f) CAs novos: CA-26 (manual) e CA-27; §6 e §8 atualizadas. Nenhum CA existente muda. Fatos externos conferidos pelo architect em 2026-10-17: <https://render.com/docs/compute-plans> e <https://supabase.com/docs/guides/database/postgres/timeouts>. SPEC marcada como "Aguardando reaprovação humana". | SEC-05-01 e INFO-02 de `reviews/SPEC-005/r1-security-report.md`; SEC-06-01 e a pendência de deploy de `reviews/SPEC-006/r1-security-report.md`; SEC-07 e a mitigação do SEC-01 de `reviews/SPEC-014/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-17 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

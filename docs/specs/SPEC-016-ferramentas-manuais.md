@@ -45,6 +45,7 @@ Um modelo `partqc-mnv3-v<N>` que identifica as 5 ferramentas manuais (além de p
   - Workshop Tools (<https://universe.roboflow.com/long-oybdw/workshop-tools-swpfs>): CC BY 4.0, exige atribuição.
 - Imagens públicas: só treino e validação; o teste das ferramentas usa **só fotos próprias** (domínio da demo). Cada imagem pública é tratada como uma peça (`item_id` próprio).
 - A ordem de deploy segue a skill `contrato-api`: contracts → banco → API → dashboard → borda.
+- **Carta p (SPC):** a SPEC diz se os tipos novos entram na carta agregada (hoje, a consulta da SPEC-006 usa `object_type <> 'unknown'`, então um tipo novo entraria sozinho) e no filtro `object_type` da rota. Hoje, o `SpcObjectType` de `qc_api.routers.metrics` deriva de `ObjectType` menos `unknown` e aceitaria um valor novo sem decisão explícita. A SPEC troca esse enum dinâmico por uma classe declarada (`class SpcObjectType(StrEnum)`), com um teste que compara os membros com a lista decidida, e atualiza o CA-13 da SPEC-006 se a lista mudar (RV-01 de `reviews/SPEC-006/r1-review-report.md`).
 
 ## 5. Critérios de aceite (preliminares)
 
@@ -62,3 +63,10 @@ Um modelo `partqc-mnv3-v<N>` que identifica as 5 ferramentas manuais (além de p
 4. `labels_overrides.csv` só corrige grau. Corrigir tipo (ex.: uma imagem `other` que é uma ferramenta) exige coluna nova?
 5. Mapeamento de classes públicas (ex.: "wrench" genérico × chave inglesa) e quantos recortes por imagem usar.
 6. A rubrica §1.1 (dano funcional de ferramentas) precisa de um piloto de concordância como o de parafusos?
+7. As ferramentas entram na carta p junto com parafusos e porcas, em cartas separadas por tipo, ou ficam fora do SPC (§4, "Carta p")?
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-17 | §4 ganha o requisito "Carta p (SPC)" e §6 ganha a pergunta 7: os tipos novos e o filtro `object_type` do SPC precisam de decisão explícita. A SPEC continua `Draft`. | RV-01 de `reviews/SPEC-006/r1-review-report.md` | Orquestrador, a pedido do humano |
