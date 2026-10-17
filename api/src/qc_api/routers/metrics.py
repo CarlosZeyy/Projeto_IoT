@@ -1,9 +1,14 @@
-"""Aggregates for the dashboard (SPEC-005 section 4.3): ``/metrics/summary`` and
-``/metrics/timeseries``. Read key only. The SPC route (``/metrics/spc``) belongs to SPEC-006.
+"""Aggregates for the dashboard. Read key only.
+
+* ``/metrics/summary`` and ``/metrics/timeseries`` (SPEC-005 section 4.3).
+* ``/metrics/spc`` (SPEC-006 section 4.2): the p chart by lot of a single ``source`` (``live``
+  by default, R-06). The route only queries the per-lot counts; the chart itself is the pure
+  ``qc_api.services.spc.compute_p_chart``.
 """
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -13,7 +18,8 @@ from qc_api.errors import DETAIL_TOO_MANY_BUCKETS
 from qc_api.filters import InspectionFilters
 from qc_api.repositories import inspections as repository
 from qc_api.routers import API_PREFIX, READ_ERROR_RESPONSES
-from qc_contracts import MetricsSummary, TimeseriesPoint
+from qc_api.services.spc import compute_p_chart
+from qc_contracts import MetricsSummary, ObjectType, Source, SpcResponse, TimeseriesPoint
 
 router = APIRouter(
     prefix=API_PREFIX,
@@ -23,6 +29,20 @@ router = APIRouter(
 )
 
 Filters = Annotated[InspectionFilters, Depends()]
+
+SPC_DEFAULT_BASELINE_LOTS = 20
+SPC_MIN_BASELINE_LOTS = 2
+SPC_MAX_BASELINE_LOTS = 100
+SPC_DEFAULT_MIN_LOT_SIZE = 5
+SPC_MAX_MIN_LOT_SIZE = 500
+
+# The object types the SPC accepts: every contract type except ``unknown``, which has no grade
+# and never enters the chart (ADR-013). ``unknown`` is then a 422 like any other invalid value,
+# and the OpenAPI schema lists only the accepted values.
+SpcObjectType = StrEnum(
+    "SpcObjectType",
+    {member.name: member.value for member in ObjectType if member is not ObjectType.UNKNOWN},
+)
 
 
 @router.get("/metrics/summary", response_model=MetricsSummary)
@@ -44,3 +64,22 @@ def metrics_timeseries(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=DETAIL_TOO_MANY_BUCKETS
         ) from None
+
+
+@router.get("/metrics/spc", response_model=SpcResponse)
+def metrics_spc(
+    request: Request,
+    source: Annotated[Source, Query()] = Source.LIVE,
+    object_type: Annotated[SpcObjectType | None, Query()] = None,
+    baseline_lots: Annotated[
+        int, Query(ge=SPC_MIN_BASELINE_LOTS, le=SPC_MAX_BASELINE_LOTS)
+    ] = SPC_DEFAULT_BASELINE_LOTS,
+    min_lot_size: Annotated[int, Query(ge=1, le=SPC_MAX_MIN_LOT_SIZE)] = SPC_DEFAULT_MIN_LOT_SIZE,
+) -> SpcResponse:
+    """p chart by lot of one ``source``; ``unknown`` objects never count."""
+    lots = repository.lot_counts(
+        request.app.state.pool,
+        source,
+        ObjectType(object_type.value) if object_type is not None else None,
+    )
+    return compute_p_chart(lots, baseline_lots, min_lot_size, source=source)

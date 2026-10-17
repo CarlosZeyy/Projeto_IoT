@@ -45,3 +45,5 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q
+      # Portão de cobertura de qc_api.services (RNF-09, SPEC-006 §4.3): só os testes sem banco.
+      - run: uv run pytest api/tests -q -m "not db" --cov=qc_api.services --cov-report=term-missing --cov-fail-under=80
