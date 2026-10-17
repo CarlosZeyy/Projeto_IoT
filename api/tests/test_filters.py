@@ -26,6 +26,7 @@ READ_URLS = (
     "/api/v1/metrics/summary",
     "/api/v1/metrics/timeseries",
     "/api/v1/lots",
+    "/api/v1/metrics/spc",
 )
 API_SRC = Path(__file__).resolve().parents[1] / "src" / "qc_api"
 
@@ -101,6 +102,24 @@ def test_validation_does_not_need_the_database(client: TestClient) -> None:
     assert response.status_code == 422
     response = client.get("/api/v1/metrics/timeseries", params={"bucket": "week"}, headers=headers)
     assert response.status_code == 422
+    for params in ({"object_type": "unknown"}, {"baseline_lots": 1}, {"min_lot_size": 501}):
+        response = client.get("/api/v1/metrics/spc", params=params, headers=headers)
+        assert response.status_code == 422, params
+
+
+def test_openapi_documents_the_spc_parameters(client: TestClient) -> None:
+    spec = client.get("/openapi.json").json()
+    operation = spec["paths"]["/api/v1/metrics/spc"]["get"]
+    params = {p["name"]: p for p in operation["parameters"]}
+    assert params["baseline_lots"]["schema"]["minimum"] == 2
+    assert params["baseline_lots"]["schema"]["maximum"] == 100
+    assert params["baseline_lots"]["schema"]["default"] == 20
+    assert params["min_lot_size"]["schema"]["minimum"] == 1
+    assert params["min_lot_size"]["schema"]["maximum"] == 500
+    assert params["min_lot_size"]["schema"]["default"] == 5
+    assert params["source"]["schema"]["default"] == "live"
+    assert spec["components"]["schemas"]["SpcObjectType"]["enum"] == ["screw", "nut"]
+    assert set(operation["responses"]) >= {"200", "401", "422", "503"}
 
 
 def test_read_routes_without_database_are_503(client: TestClient) -> None:
@@ -118,6 +137,7 @@ def test_openapi_documents_the_query_parameters(client: TestClient) -> None:
         "/api/v1/metrics/summary": common,
         "/api/v1/metrics/timeseries": common | {"bucket"},
         "/api/v1/lots": common | {"limit", "offset"},
+        "/api/v1/metrics/spc": {"source", "object_type", "baseline_lots", "min_lot_size"},
     }
     for path, names in expected.items():
         parameters = spec["paths"][path]["get"]["parameters"]
