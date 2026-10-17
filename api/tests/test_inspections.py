@@ -446,3 +446,43 @@ def test_integrity_error_is_422_and_rolls_back(
     assert stricter_lot_check not in caplog.text
     assert not any(r.exc_info for r in caplog.records)
     assert client.post(URL, json=make_payload(), headers=_key(device_keys)).status_code == 201
+
+
+@pytest.mark.parametrize(
+    ("error", "label"),
+    [
+        (psycopg.IntegrityError("x"), "-"),
+        (psycopg.DataError("y"), "-"),
+        (psycopg.errors.CheckViolation(), "23514"),
+    ],
+    ids=["integrity-without-sqlstate", "data-without-sqlstate", "check-violation"],
+)
+def test_write_log_uses_sqlstate_label(
+    client: TestClient,
+    device_keys,
+    make_payload,
+    db,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: psycopg.Error,
+    label: str,
+) -> None:
+    """SPEC-027 section 4.2: same SQLSTATE rule as the middleware (``-`` when missing)."""
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr("qc_api.routers.inspections.insert_inspections", refuse)
+    caplog.set_level(logging.DEBUG)
+    response = client.post(URL, json=make_payload(), headers=_key(device_keys))
+    assert response.status_code == 422
+    assert response.json() == NOT_STORABLE
+    warnings = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "value cannot be stored" in r.getMessage()
+    ]
+    assert warnings == [f"value cannot be stored: route={URL} device_id=edge-01 sqlstate={label}"]
+    assert "sqlstate=None" not in caplog.text
+    assert not any(r.exc_info for r in caplog.records)
+    assert _count(db) == 0

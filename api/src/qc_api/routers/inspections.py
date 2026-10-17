@@ -21,6 +21,7 @@ from qc_api.auth import require_device, require_read_key
 from qc_api.db import insert_inspections
 from qc_api.errors import DETAIL_DEVICE_MISMATCH, DETAIL_VALUE_NOT_STORABLE
 from qc_api.filters import InspectionFilters, Pagination
+from qc_api.middleware import sqlstate_label
 from qc_api.repositories import inspections as repository
 from qc_api.routers import API_PREFIX, READ_ERROR_RESPONSES
 from qc_contracts import (
@@ -62,12 +63,13 @@ def _write(
         return insert_inspections(request.app.state.pool, device_id, items)
     except (psycopg.DataError, psycopg.IntegrityError) as exc:
         # Already rolled back. Log only route, device and SQLSTATE: never values nor the
-        # server message, which may echo them ("Failing row contains (...)").
+        # server message, which may echo them ("Failing row contains (...)"). The SQLSTATE goes
+        # through the same rule as the middleware: ``-`` when missing or malformed (SPEC-027).
         logger.warning(
             "value cannot be stored: route=%s device_id=%s sqlstate=%s",
             request.url.path,
             device_id,
-            exc.sqlstate,
+            sqlstate_label(exc),
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=DETAIL_VALUE_NOT_STORABLE
