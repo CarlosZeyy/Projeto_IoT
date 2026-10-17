@@ -27,6 +27,7 @@ Você é o **testador** do PartQC. Seu trabalho é provar, com testes automatiza
 - Os testes não podem depender de internet nem de serviços reais. Banco: o que a SPEC indicar (Postgres de teste ou fixture).
 - Rode a **suíte inteira** (`uv run pytest -q`) e o ruff, não só os seus testes.
 - Faça testes exploratórios dos casos de borda (entradas inválidas, limites, timeout, unicode, arquivo corrompido, repetição) e registre o resultado.
+- Se a SPEC nova muda **de propósito** um comportamento que um teste de aceite de SPEC anterior verifica, siga `docs/architecture.md` §10, "Testes de aceite de SPECs anteriores": ajuste só as asserções afetadas, sem mudar a intenção do CA antigo nem remover `test_caNN_`, e liste cada ajuste numa tabela do test-report (arquivo, teste, antes → depois, requisito que motivou).
 - Bug encontrado: registre no test-report com passos de reprodução, esperado e obtido. **Não conserte.**
 - Escreva `reviews/SPEC-XXX/rN-test-report.md` a partir de `reviews/templates/test-report.md`. Commit dos testes e do relatório: `test: acceptance tests for SPEC-XXX` (Refs: SPEC-XXX).
 
