@@ -134,7 +134,11 @@ def test_capture_page(settings: EdgeSettings) -> None:
     page = response.text
     assert '<input type="file" accept="image/*" capture="environment">' in page
     assert 'name="lot_id"' in page
-    assert re.search(r'<option value="collect" disabled>', page)
+    # SPEC-010: "coleta" is enabled and the collect fields are on the page.
+    assert re.search(r'<option value="collect">coleta</option>', page)
+    assert "disabled" not in page
+    for name in ("item_id", "object_type", "grade", "labeler", "angle", "notes"):
+        assert f'name="{name}"' in page, name
     assert response.headers["referrer-policy"] == "no-referrer"
     for query in ("", "?t=", "?t=wrong"):
         refused = client.get(f"/capture{query}")

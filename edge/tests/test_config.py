@@ -26,6 +26,9 @@ def test_defaults(clean_edge_env: None, tmp_path: Path, monkeypatch: pytest.Monk
     assert settings.DEVICE_API_KEY is None
     assert settings.MODEL_DIR is None
     assert settings.TYPE_THRESHOLD is None
+    # SPEC-010: default ml/data (docs/dataset-protocol.md section 8), not created by the settings.
+    assert Path("ml/data") == settings.DATASET_DIR
+    assert not (tmp_path / "ml").exists()
 
 
 def test_reads_environment(
@@ -38,6 +41,7 @@ def test_reads_environment(
     monkeypatch.setenv("DEVICE_ID", "edge-02")
     monkeypatch.setenv("EDGE_DATA_DIR", str(tmp_path / "d"))
     monkeypatch.setenv("MODEL_DIR", "ml/models/x")
+    monkeypatch.setenv("DATASET_DIR", str(tmp_path / "dataset"))
     monkeypatch.setenv("TYPE_THRESHOLD", "0.5")
     settings = EdgeSettings()
     assert settings.EDGE_HOST == "127.0.0.1"
@@ -47,6 +51,8 @@ def test_reads_environment(
     assert settings.DEVICE_ID == "edge-02"
     assert tmp_path / "d" == settings.EDGE_DATA_DIR
     assert Path("ml/models/x") == settings.MODEL_DIR
+    assert tmp_path / "dataset" == settings.DATASET_DIR
+    assert not (tmp_path / "dataset").exists()
     assert settings.TYPE_THRESHOLD == 0.5
 
 
@@ -54,9 +60,16 @@ def test_empty_variables_count_as_unset(
     clean_edge_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The blank lines of .env.example (EDGE_SESSION_TOKEN=, DEVICE_API_KEY=, ...).
-    for name in ("EDGE_SESSION_TOKEN", "DEVICE_API_KEY", "MODEL_DIR", "TYPE_THRESHOLD"):
+    for name in (
+        "EDGE_SESSION_TOKEN",
+        "DEVICE_API_KEY",
+        "MODEL_DIR",
+        "TYPE_THRESHOLD",
+        "DATASET_DIR",
+    ):
         monkeypatch.setenv(name, "")
     settings = EdgeSettings(EDGE_DATA_DIR=tmp_path)
+    assert Path("ml/data") == settings.DATASET_DIR
     assert settings.EDGE_SESSION_TOKEN is None
     assert settings.DEVICE_API_KEY is None
     assert settings.MODEL_DIR is None
@@ -119,3 +132,19 @@ def test_data_dir_that_is_a_file_is_invalid(clean_edge_env: None, tmp_path: Path
     with pytest.raises(ValidationError) as excinfo:
         EdgeSettings(EDGE_DATA_DIR=blocker)
     assert _invalid_names(excinfo.value) == {"EDGE_DATA_DIR"}
+
+
+def test_dataset_dir_that_is_a_file_is_invalid(clean_edge_env: None, tmp_path: Path) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    with pytest.raises(ValidationError) as excinfo:
+        EdgeSettings(EDGE_DATA_DIR=tmp_path, DATASET_DIR=blocker)
+    assert _invalid_names(excinfo.value) == {"DATASET_DIR"}
+
+
+def test_existing_dataset_dir_is_accepted_unchanged(clean_edge_env: None, tmp_path: Path) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir(mode=0o755)
+    dataset.chmod(0o755)
+    assert dataset == EdgeSettings(EDGE_DATA_DIR=tmp_path, DATASET_DIR=dataset).DATASET_DIR
+    assert dataset.stat().st_mode & 0o777 == 0o755
