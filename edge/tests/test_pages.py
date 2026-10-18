@@ -1,7 +1,10 @@
-"""Console, phone page, static files and /api/status (SPEC-007 section 4.4)."""
+"""Console, phone page, static files and /api/status (SPEC-007 section 4.4, SPEC-025 section
+4.1)."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,12 +13,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from qc_edge import netinfo
-from qc_edge.app import STATIC_DIR, TEMPLATES_DIR, create_app
+from qc_edge.app import FORBIDDEN_HTML, STATIC_DIR, TEMPLATES_DIR, create_app
 from qc_edge.config import EdgeSettings
 from qc_edge.inference import StubInferencer
 from qc_edge.sink import InMemorySink, SinkStats
 
 LOCAL = ("127.0.0.1", 50000)
+# SPEC-025 section 4.1: the console only answers a loopback Host.
+CONSOLE_URL = "http://127.0.0.1:8000"
 START = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 
 
@@ -54,7 +59,7 @@ def _capture(client: TestClient, token: str, image: bytes, lot_id: str) -> None:
 def test_console_from_loopback(settings: EdgeSettings, lan_ips: list[str], jpeg_bytes: bytes):
     app = _app(settings, clock=_Clock())
     token = app.state.session_token
-    client = TestClient(app, client=LOCAL)
+    client = TestClient(app, client=LOCAL, base_url=CONSOLE_URL)
     for index in range(12):
         _capture(client, token, jpeg_bytes, f"L-{index:03d}")
     response = client.get("/")
@@ -75,7 +80,7 @@ def test_console_from_loopback(settings: EdgeSettings, lan_ips: list[str], jpeg_
 def test_console_ip_parameter_must_be_detected(settings: EdgeSettings, lan_ips: list[str]):
     app = _app(settings)
     token = app.state.session_token
-    client = TestClient(app, client=LOCAL)
+    client = TestClient(app, client=LOCAL, base_url=CONSOLE_URL)
     assert f"http://10.0.0.7:8000/capture?t={token}" in client.get("/?ip=10.0.0.7").text
     page = client.get("/?ip=8.8.8.8").text
     assert f"http://192.168.0.42:8000/capture?t={token}" in page
@@ -87,7 +92,7 @@ def test_console_without_model_and_without_lan(
 ) -> None:
     monkeypatch.setattr(netinfo, "detect_lan_ips", lambda: ["127.0.0.1"])
     app = _app(settings, inferencer=None)
-    page = TestClient(app, client=LOCAL).get("/").text
+    page = TestClient(app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
     assert 'id="no-lan-warning"' in page
     assert "não carregado" in page
     assert "http://127.0.0.1:8000/capture?t=" in page
@@ -98,7 +103,8 @@ def test_console_shows_sink_stats(settings: EdgeSettings, lan_ips: list[str]) ->
         def stats(self) -> SinkStats:
             return SinkStats(pending=7, dead=2, last_success_at=START, connectivity="offline")
 
-    page = TestClient(_app(settings, sink=_Sink()), client=LOCAL).get("/").text
+    client = TestClient(_app(settings, sink=_Sink()), client=LOCAL, base_url=CONSOLE_URL)
+    page = client.get("/").text
     assert re.search(r'id="sink-pending">7<', page)
     assert "offline" in page
 
@@ -117,13 +123,14 @@ def test_console_refuses_non_local_or_proxied(
     settings: EdgeSettings, lan_ips: list[str], client: tuple[str, int], headers: dict[str, str]
 ) -> None:
     app = _app(settings)
-    response = TestClient(app, client=client).get("/", headers=headers)
+    response = TestClient(app, client=client, base_url=CONSOLE_URL).get("/", headers=headers)
     assert response.status_code == 403
     assert app.state.session_token not in response.text
 
 
 def test_console_accepts_ipv6_loopback(settings: EdgeSettings, lan_ips: list[str]) -> None:
-    assert TestClient(_app(settings), client=("::1", 50000)).get("/").status_code == 200
+    client = TestClient(_app(settings), client=("::1", 50000), base_url=CONSOLE_URL)
+    assert client.get("/").status_code == 200
 
 
 def test_capture_page(settings: EdgeSettings) -> None:
@@ -171,7 +178,7 @@ def test_static_files_are_served(settings: EdgeSettings) -> None:
 
 def test_captures_are_never_served(settings: EdgeSettings, jpeg_bytes: bytes) -> None:
     app = _app(settings)
-    client = TestClient(app, client=LOCAL)
+    client = TestClient(app, client=LOCAL, base_url=CONSOLE_URL)
     body = client.post(
         "/api/capture",
         headers={"X-Session-Token": app.state.session_token},
@@ -229,3 +236,160 @@ def test_no_openapi_docs(settings: EdgeSettings) -> None:
     client = TestClient(_app(settings))
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 404
+
+
+# ---------------------------------------------------------------- SPEC-025 section 4.1 (Host)
+
+
+def _raw_get(app: Any, headers: list[tuple[bytes, bytes]]) -> tuple[int, bytes]:
+    """``GET /`` straight through ASGI, with exactly the given headers (no Host added)."""
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 8000),
+    }
+    messages: list[dict[str, Any]] = []
+    sent = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    return start["status"], body
+
+
+@pytest.fixture
+def lan_spy(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    calls: list[int] = []
+
+    def detect() -> list[str]:
+        calls.append(1)
+        return ["192.168.0.42"]
+
+    monkeypatch.setattr(netinfo, "detect_lan_ips", detect)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1:8000", "localhost:8000", "LOCALHOST:8000", "[::1]:8000"]
+)
+def test_console_accepts_loopback_hosts(settings: EdgeSettings, lan_spy: list[int], host: str):
+    response = TestClient(_app(settings), client=LOCAL).get("/", headers={"Host": host})
+    assert response.status_code == 200
+    assert "<svg" in response.text
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "attacker.example:8000",
+        "127.0.0.1",
+        "127.0.0.1:8001",
+        "localhost.:8000",
+        "127.0.0.1.nip.io:8000",
+        "192.168.0.42:8000",
+        "testserver",
+    ],
+)
+def test_console_refuses_other_hosts_before_detecting_ips(
+    settings: EdgeSettings,
+    lan_spy: list[int],
+    caplog: pytest.LogCaptureFixture,
+    host: str,
+) -> None:
+    app = _app(settings)
+    with caplog.at_level(logging.DEBUG):
+        response = TestClient(app, client=LOCAL).get("/", headers={"Host": host})
+    assert response.status_code == 403
+    assert app.state.session_token not in response.text
+    assert response.text == FORBIDDEN_HTML
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert lan_spy == []
+    assert "console refused: host not allowed" in caplog.text
+    if "." in host and not host.startswith("127."):
+        assert host.split(":")[0] not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [],
+        [(b"host", b"")],
+        [(b"host", b"127.0.0.1:8000"), (b"host", b"attacker.example:8000")],
+        [(b"host", b"127.0.0.1:8000"), (b"host", b"127.0.0.1:8000")],
+    ],
+    ids=["no-host", "empty-host", "two-hosts", "duplicated-host"],
+)
+def test_console_needs_exactly_one_host_header(
+    settings: EdgeSettings,
+    lan_spy: list[int],
+    caplog: pytest.LogCaptureFixture,
+    headers: list[tuple[bytes, bytes]],
+) -> None:
+    app = _app(settings)
+    with caplog.at_level(logging.DEBUG):
+        status, body = _raw_get(app, headers)
+    assert status == 403
+    assert app.state.session_token.encode() not in body
+    assert lan_spy == []
+    assert "attacker.example" not in caplog.text
+
+
+def test_raw_asgi_helper_accepts_a_single_loopback_host(
+    settings: EdgeSettings, lan_spy: list[int]
+) -> None:
+    status, body = _raw_get(_app(settings), [(b"host", b"127.0.0.1:8000")])
+    assert status == 200
+    assert b"<svg" in body
+
+
+def test_console_on_port_80(clean_edge_env: None, data_dir: Any, lan_spy: list[int]) -> None:
+    settings = EdgeSettings(EDGE_DATA_DIR=data_dir, EDGE_PORT=80)
+    client = TestClient(_app(settings), client=LOCAL)
+    for host in ("127.0.0.1", "localhost", "[::1]", "127.0.0.1:80"):
+        assert client.get("/", headers={"Host": host}).status_code == 200, host
+    assert client.get("/", headers={"Host": "attacker.example"}).status_code == 403
+
+
+def test_proxy_header_is_still_refused_with_a_loopback_host(
+    settings: EdgeSettings, lan_spy: list[int]
+) -> None:
+    client = TestClient(_app(settings), client=LOCAL, base_url=CONSOLE_URL)
+    assert client.get("/", headers={"X-Forwarded-For": "1.2.3.4"}).status_code == 403
+    assert lan_spy == []
+
+
+def test_token_routes_do_not_check_the_host(settings: EdgeSettings, jpeg_bytes: bytes) -> None:
+    app = _app(settings)
+    token = app.state.session_token
+    client = TestClient(app, client=("192.168.0.50", 50000))
+    page = client.get(f"/capture?t={token}", headers={"Host": "192.168.0.42:8000"})
+    assert page.status_code == 200
+    capture = client.post(
+        "/api/capture",
+        headers={"X-Session-Token": token, "Host": "10.0.0.7:8000"},
+        data={"lot_id": "L-001", "mode": "inspect"},
+        files={"image": ("a.jpg", jpeg_bytes, "image/jpeg")},
+    )
+    assert capture.status_code == 200
+    status = client.get("/api/status", headers={"X-Session-Token": token, "Host": "x.example"})
+    assert status.status_code == 200

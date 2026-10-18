@@ -2,8 +2,8 @@
 
 Written by the tester from the SPEC acceptance criteria (black box), before reading the
 implementation. Covers CA-01 (qc-contracts part), CA-02 (qc-contracts part), CA-03 to CA-06
-and CA-13. Tests named ``test_extra_*`` are exploratory edge cases around SPEC-023 section 4.1
-that no CA spells out.
+(CA-13 is checked by CI and by the test report, docs/architecture.md section 10). Tests named
+``test_extra_*`` are exploratory edge cases around SPEC-023 section 4.1 that no CA spells out.
 """
 
 from __future__ import annotations

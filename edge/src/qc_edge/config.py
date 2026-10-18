@@ -8,6 +8,10 @@ were provided (``hide_input_in_errors``), only the variable names (R-03).
 ``DEVICE_API_KEY``, ``CLOUD_API_URL``, ``MODEL_DIR``, ``OUTBOX_PATH`` and the three thresholds
 are only read here; SPEC-008 and SPEC-009 validate them. ``DATASET_DIR`` (SPEC-010) is not
 created here: the collect mode creates it, with mode ``0700``, on the first capture.
+
+SPEC-025: ``EDGE_HOST`` is an IPv4 literal only (with ``::`` uvicorn listens on IPv6 only, and
+neither the console URL nor the QR code would open), and an ``EDGE_DATA_DIR`` created here gets
+mode ``0700`` (an existing one is left as it is).
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from qc_contracts import DEVICE_ID_PATTERN
+from qc_edge.fsutil import make_private_dirs
 
 DEFAULT_EDGE_HOST = "0.0.0.0"
 DEFAULT_EDGE_PORT = 8000
@@ -63,18 +68,19 @@ class EdgeSettings(BaseSettings):
 
     @field_validator("EDGE_HOST")
     @classmethod
-    def _ip_literal(cls, value: str) -> str:
+    def _ipv4_literal(cls, value: str) -> str:
         try:
-            ipaddress.ip_address(value)
+            ipaddress.IPv4Address(value)
         except ValueError:
-            raise ValueError("must be an IP address literal (e.g. 0.0.0.0)") from None
+            raise ValueError("must be an IPv4 address literal (e.g. 0.0.0.0)") from None
         return value
 
     @field_validator("EDGE_DATA_DIR")
     @classmethod
     def _create_data_dir(cls, value: Path) -> Path:
+        # Only the directories created here get 0700 (SPEC-025 section 4.4), whatever the umask.
         try:
-            value.mkdir(parents=True, exist_ok=True)
+            make_private_dirs(value)
         except OSError as exc:
             raise ValueError(f"cannot create the directory ({exc.strerror})") from None
         if not value.is_dir():

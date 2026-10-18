@@ -1,8 +1,11 @@
-"""POST /api/capture in collect mode, the capture page and the console coverage (SPEC-010)."""
+"""POST /api/capture in collect mode, the capture page and the console coverage (SPEC-010);
+metadata removal and text filters on the route (SPEC-025)."""
 
 from __future__ import annotations
 
+import asyncio
 import csv
+import io
 import logging
 import re
 import threading
@@ -12,21 +15,27 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from qc_edge import app as app_module
+from qc_edge import jpeg as jpeg_module
+from qc_edge import limits as limits_module
 from qc_edge import netinfo
 from qc_edge.app import create_app
 from qc_edge.collect import MANIFEST_COLUMNS
 from qc_edge.config import EdgeSettings
 from qc_edge.inference import StubInferencer
+from qc_edge.jpeg import JpegStructureError, jpeg_private_findings
 from qc_edge.limits import CAPTURE_MAX_BYTES
 from qc_edge.sink import InMemorySink
+from qc_preprocess import load_image
 
 NOW = datetime(2026, 10, 22, 14, 15, 3, tzinfo=UTC)
 LOCAL = ("127.0.0.1", 50000)
+CONSOLE_URL = "http://127.0.0.1:8000"  # SPEC-025 section 4.1: loopback Host
 FIELDS = {
     "mode": "collect",
     "item_id": "S-012",
@@ -237,15 +246,16 @@ def test_collect_uses_the_decode_limiter(
     edge = Edge(settings, max_concurrent_decodes=1, decode_wait_s=0.2)
     inside = threading.Event()
     release = threading.Event()
-    original = app_module.load_capture_image
+    original = limits_module.load_capture_image
 
     def slow_load(data: bytes) -> Image.Image:
         inside.set()
         release.wait(timeout=10)
         return original(data)
 
-    monkeypatch.setattr(app_module, "load_capture_image", slow_load)
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    monkeypatch.setattr(limits_module, "load_capture_image", slow_load)
+    # One event loop for both threads (the limiter semaphore binds to a single loop).
+    with edge.client, ThreadPoolExecutor(max_workers=1) as pool:
         first = pool.submit(edge.post, jpeg_bytes)
         assert inside.wait(timeout=5)
         busy = edge.post(jpeg_bytes, angle="3")
@@ -326,7 +336,7 @@ def _coverage_table(page: str) -> str:
 
 
 def test_console_coverage_without_manifest(edge: Edge, lan: None) -> None:
-    page = TestClient(edge.app, client=LOCAL).get("/").text
+    page = TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
     table = _coverage_table(page)
     assert table.count("<tr><td>") == 11
     assert table.count("0/120") == 10 and table.count("0/12<") == 10
@@ -340,7 +350,7 @@ def test_console_coverage_after_collecting(
     edge = Edge(settings, clock=_Clock(timedelta(seconds=1)))
     for angle in range(5):
         assert edge.post(jpeg_bytes, angle=str(angle), grade="perfect").status_code == 200
-    page = TestClient(edge.app, client=LOCAL).get("/").text
+    page = TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
     table = _coverage_table(page)
     assert "<tr><td>parafuso</td><td>perfeito</td><td>5/120</td><td>1/12</td></tr>" in table
     assert 'id="coverage-total">5<' in table
@@ -354,7 +364,7 @@ def test_console_highlights_complete_cells(edge: Edge, lan: None) -> None:
         for i in range(150):
             item_id = f"O-{i % 30:03d}"
             writer.writerow((f"raw/other/_/{item_id}__0__{i}.jpg", item_id, "other", "", "a"))
-    table = _coverage_table(TestClient(edge.app, client=LOCAL).get("/").text)
+    table = _coverage_table(TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/").text)
     assert '<tr class="complete"><td>outro</td><td>—</td><td>150/150</td><td>30/30</td></tr>' in (
         table
     )
@@ -363,7 +373,183 @@ def test_console_highlights_complete_cells(edge: Edge, lan: None) -> None:
 def test_console_survives_an_unreadable_manifest(edge: Edge, lan: None) -> None:
     edge.root.mkdir()
     (edge.root / "manifest.csv").write_bytes(b"\xff\xfe\x00broken")
-    response = TestClient(edge.app, client=LOCAL).get("/")
+    response = TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/")
     assert response.status_code == 200
     assert 'id="coverage-warning"' in response.text
     assert 'id="coverage-total">0<' in _coverage_table(response.text)
+
+
+# ------------------------------------------------------ SPEC-025 sections 4.8 and 4.11
+
+
+def test_metadata_is_removed_from_the_stored_jpeg(edge: Edge, jpeg_tools: Any) -> None:
+    data, marker = jpeg_tools.with_metadata()
+    response = edge.post(data)
+    assert response.status_code == 200
+    stored = (edge.root / response.json()["image_path"]).read_bytes()
+    for needle in (b"Exif\x00\x00", b"http://ns.adobe.com/xap/1.0/", b"Photoshop 3.0", marker):
+        assert needle not in stored
+    assert b"ftypmp42" not in stored
+    assert stored.endswith(b"\xff\xd9")
+    assert len(Image.open(io.BytesIO(stored)).getexif()) == 0
+    assert (jpeg_tools.pixels(stored) == jpeg_tools.pixels(data)).all()
+
+
+def test_unsupported_structure_is_415_and_releases_the_slot(
+    settings: EdgeSettings, jpeg_bytes: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(data: bytes) -> bytes:
+        raise JpegStructureError("unsupported")
+
+    monkeypatch.setattr("qc_edge.jpeg.strip_private_segments", broken)
+    edge = Edge(
+        settings,
+        inferencer=StubInferencer(),
+        clock=app_module.utc_now,  # the inspection needs a current inspected_at
+        max_concurrent_decodes=1,
+        decode_wait_s=1,
+    )
+    response = edge.post(jpeg_bytes)
+    assert response.status_code == 415
+    assert response.json() == {"detail": "invalid image: unsupported JPEG structure"}
+    assert not (edge.root / "manifest.csv").exists()
+    assert list(edge.root.rglob("*.jpg")) == []
+    inspect = edge.client.post(
+        "/api/capture",
+        headers={"X-Session-Token": edge.token},
+        data={"lot_id": "L-001", "mode": "inspect"},
+        files={"image": ("a.jpg", jpeg_bytes, "image/jpeg")},
+    )
+    assert inspect.status_code == 200
+
+
+def test_exif_rotated_jpeg_is_415_and_the_inspect_mode_keeps_it(
+    settings: EdgeSettings, jpeg_tools: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    # INFO, as in production: Pillow's own DEBUG records (PIL.TiffImagePlugin) are not emitted.
+    caplog.set_level(logging.INFO)
+    rot6 = jpeg_tools.rotated_jpeg(6)
+    edge = Edge(
+        settings,
+        inferencer=StubInferencer(),
+        clock=app_module.utc_now,  # the inspection needs a current inspected_at
+        max_concurrent_decodes=1,
+        decode_wait_s=1,
+    )
+    response = edge.post(rot6)
+    assert response.status_code == 415
+    assert response.json() == {"detail": "invalid image: EXIF orientation not supported"}
+    assert edge.files() == []
+    assert any(
+        r.levelno == logging.WARNING and "EXIF orientation not supported" in r.getMessage()
+        for r in caplog.records
+    )
+    assert not any("30.21" in r.getMessage() or "3021" in r.getMessage() for r in caplog.records)
+    inspect = edge.client.post(
+        "/api/capture",
+        headers={"X-Session-Token": edge.token},
+        data={"lot_id": "L-001", "mode": "inspect"},
+        files={"image": ("a.jpg", rot6, "image/jpeg")},
+    )
+    assert inspect.status_code == 200  # the slot was released after the 415
+    [stored] = (settings.EDGE_DATA_DIR / "captures").rglob("*.jpg")
+    assert stored.read_bytes() == rot6
+
+
+def test_orientation_1_is_stored_without_metadata(edge: Edge, jpeg_tools: Any) -> None:
+    rot1 = jpeg_tools.rotated_jpeg(1)
+    response = edge.post(rot1)
+    assert response.status_code == 200
+    stored = (edge.root / response.json()["image_path"]).read_bytes()
+    assert jpeg_private_findings(stored) == frozenset()
+    assert load_image(stored).size == load_image(rot1).size
+    assert (np.asarray(load_image(stored)) == np.asarray(load_image(rot1))).all()
+
+
+def test_orientation_check_runs_in_the_worker_thread(
+    edge: Edge, jpeg_tools: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = jpeg_module.has_exif_rotation
+    loop_running: list[bool] = []
+
+    def spy(data: bytes) -> bool:
+        try:
+            asyncio.get_running_loop()
+            loop_running.append(True)
+        except RuntimeError:
+            loop_running.append(False)
+        return original(data)
+
+    monkeypatch.setattr(jpeg_module, "has_exif_rotation", spy)
+    assert edge.post(jpeg_tools.rotated_jpeg(6)).status_code == 415
+    assert edge.post(jpeg_tools.pillow_jpeg()).status_code == 200
+    assert loop_running == [False, False]
+
+
+@pytest.mark.parametrize("char", [" ", " ", "‮", "⁦", "‏", "­"])
+def test_notes_with_separators_or_bidi_are_422(edge: Edge, jpeg_bytes: bytes, char: str) -> None:
+    response = edge.post(jpeg_bytes, notes=f"dúvida{char}fair")
+    assert response.status_code == 422
+    assert response.json() == {"detail": "missing or invalid notes"}
+    assert edge.files() == []
+
+
+def test_raw_user_agent_controls_become_spaces(settings: EdgeSettings, jpeg_bytes: bytes) -> None:
+    edge = Edge(settings)
+    boundary = "partqcboundary"
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'
+        for name, value in FIELDS.items()
+    ]
+    body = (
+        "".join(parts).encode()
+        + f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="a.jpg"\r\n'
+        "Content-Type: image/jpeg\r\n\r\n".encode()
+        + jpeg_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    headers = [
+        (b"host", b"192.168.0.42:8000"),
+        (b"x-session-token", edge.token.encode()),
+        (b"content-type", f"multipart/form-data; boundary={boundary}".encode()),
+        (b"content-length", str(len(body)).encode()),
+        (b"user-agent", b"Phone\x85X\tY" + b"z" * 70),
+    ]
+    status = _asgi_post(edge.app, headers, body)
+    assert status == 200
+    [row] = edge.rows()
+    assert row["capture_device"] == "Phone X Y" + "z" * 51
+    assert len((edge.root / "manifest.csv").read_text(encoding="utf-8").splitlines()) == 2
+
+
+def _asgi_post(app: Any, headers: list[tuple[bytes, bytes]], body: bytes) -> int:
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/capture",
+        "raw_path": b"/api/capture",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("192.168.0.50", 50000),
+        "server": ("192.168.0.42", 8000),
+    }
+    messages: list[dict[str, Any]] = []
+    sent = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await asyncio.sleep(3600)
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    return next(m["status"] for m in messages if m["type"] == "http.response.start")

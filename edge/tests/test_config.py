@@ -116,8 +116,24 @@ def test_error_never_shows_the_value(
     assert secret_like not in str(excinfo.value)
 
 
-def test_ipv6_host_literal_is_accepted(clean_edge_env: None, tmp_path: Path) -> None:
-    assert EdgeSettings(EDGE_DATA_DIR=tmp_path, EDGE_HOST="::").EDGE_HOST == "::"
+@pytest.mark.parametrize(
+    "value", ["::", "::1", "fe80::1", "::ffff:127.0.0.1", "localhost", "", "01.2.3.4", "1.2.3"]
+)
+def test_edge_host_must_be_an_ipv4_literal(
+    clean_edge_env: None, tmp_path: Path, value: str
+) -> None:
+    # SPEC-025 section 4.3: with "::" uvicorn listens on IPv6 only and the console URL fails.
+    with pytest.raises(ValidationError) as excinfo:
+        EdgeSettings(EDGE_DATA_DIR=tmp_path, EDGE_HOST=value)
+    assert _invalid_names(excinfo.value) == {"EDGE_HOST"}
+    assert "IPv4" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("value", ["0.0.0.0", "127.0.0.1", "192.168.0.10"])
+def test_edge_host_ipv4_literals_are_accepted(
+    clean_edge_env: None, tmp_path: Path, value: str
+) -> None:
+    assert value == EdgeSettings(EDGE_DATA_DIR=tmp_path, EDGE_HOST=value).EDGE_HOST
 
 
 def test_data_dir_is_created(clean_edge_env: None, tmp_path: Path) -> None:

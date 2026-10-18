@@ -1,10 +1,14 @@
-"""POST /api/capture in inspect mode (SPEC-007 sections 4.5 to 4.7).
+"""POST /api/capture in inspect mode (SPEC-007 sections 4.5 to 4.7; SPEC-025 section 4.4).
 
 The collect mode (SPEC-010) is covered by ``test_collect_route.py``.
 """
 
 from __future__ import annotations
 
+import logging
+import os
+import stat
+import types
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
@@ -423,3 +427,111 @@ def test_sink_put_happens_before_the_response(settings: EdgeSettings, jpeg_bytes
     assert harness.post(jpeg_bytes).status_code == 200
     assert seen == [True]
     assert len(harness.sink.items) == 1
+
+
+# ------------------------------------------------- SPEC-025 section 4.4 (permissions of captures)
+
+
+@pytest.fixture
+def restore_umask() -> Iterator[Callable[[int], None]]:
+    original = os.umask(0o022)
+    os.umask(original)
+    try:
+        yield os.umask
+    finally:
+        os.umask(original)
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.lstat().st_mode)
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o077, 0o000, 0o277])
+def test_capture_modes_are_exact_whatever_the_umask(
+    clean_edge_env: None,
+    tmp_path: Path,
+    restore_umask: Callable[[int], None],
+    make_image: Callable[..., bytes],
+    mask: int,
+) -> None:
+    restore_umask(mask)
+    data_dir = tmp_path / "missing" / "edge-data"
+    settings = EdgeSettings(EDGE_DATA_DIR=data_dir, DATASET_DIR=tmp_path / "dataset")
+    assert _mode(data_dir) == 0o700
+    harness = Harness(settings)
+    with harness.client:
+        assert _mode(data_dir / "captures") == 0o700  # created at startup
+        assert harness.post(make_image()).status_code == 200
+        assert harness.post(make_image(fmt="PNG")).status_code == 200
+    files = harness.captures()
+    assert len(files) == 2
+    assert {path.parent for path in files} == {data_dir / "captures" / "2026-10-01"}
+    assert _mode(data_dir / "captures" / "2026-10-01") == 0o700
+    assert [_mode(path) for path in files] == [0o600, 0o600]
+
+
+def test_existing_data_dir_is_kept_and_captures_becomes_0700(
+    clean_edge_env: None, tmp_path: Path, restore_umask: Callable[[int], None]
+) -> None:
+    restore_umask(0o022)
+    data_dir = tmp_path / "edge-data"
+    (data_dir / "captures").mkdir(parents=True)
+    data_dir.chmod(0o755)
+    (data_dir / "captures").chmod(0o755)
+    settings = EdgeSettings(EDGE_DATA_DIR=data_dir, DATASET_DIR=tmp_path / "dataset")
+    with TestClient(create_app(settings, None, InMemorySink())):
+        pass
+    assert _mode(data_dir / "captures") == 0o700
+    assert _mode(data_dir) == 0o755
+
+
+def test_without_lifespan_the_first_capture_creates_captures_0700(
+    settings: EdgeSettings, jpeg_bytes: bytes, restore_umask: Callable[[int], None]
+) -> None:
+    restore_umask(0o022)
+    harness = Harness(settings)  # no ``with``: the lifespan does not run
+    assert not (settings.EDGE_DATA_DIR / "captures").exists()
+    assert harness.post(jpeg_bytes).status_code == 200
+    assert _mode(settings.EDGE_DATA_DIR / "captures") == 0o700
+
+
+def test_chmod_failure_on_a_capture_is_a_warning(
+    harness: Harness,
+    jpeg_bytes: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def failing(*args: Any) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "chmod", failing)
+    monkeypatch.setattr(os, "fchmod", failing)
+    with caplog.at_level(logging.WARNING, logger="qc_edge"):
+        response = harness.post(jpeg_bytes)
+    assert response.status_code == 200
+    [photo] = harness.captures()
+    assert photo.read_bytes() == jpeg_bytes
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(str(photo) in w and "Operation not permitted" in w for w in warnings)
+
+
+def test_inspect_mode_keeps_the_jpeg_as_received(
+    harness: Harness, jpeg_tools: types.SimpleNamespace
+) -> None:
+    data, _ = jpeg_tools.with_metadata()
+    assert harness.post(data).status_code == 200
+    [photo] = harness.captures()
+    assert photo.read_bytes() == data
+
+
+def test_an_existing_photo_is_never_overwritten(
+    harness: Harness, jpeg_bytes: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixed = uuid.UUID("12345678-1234-4234-8234-123456789abc")
+    day = harness.settings.EDGE_DATA_DIR / "captures" / "2026-10-01"
+    day.mkdir(parents=True)
+    (day / f"{fixed}.jpg").write_bytes(b"old")
+    monkeypatch.setattr(uuid, "uuid4", lambda: fixed)
+    response = harness.post(jpeg_bytes)
+    assert response.status_code == 500
+    assert (day / f"{fixed}.jpg").read_bytes() == b"old"

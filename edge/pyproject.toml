@@ -13,6 +13,8 @@ dependencies = [
     "httpx",
     "python-multipart",
     "pydantic-settings>=2",
+    # SPEC-025 section 4.2: decode limiter (anyio.Semaphore, created outside an event loop).
+    "anyio>=4.15",
 ]
 
 [project.scripts]
