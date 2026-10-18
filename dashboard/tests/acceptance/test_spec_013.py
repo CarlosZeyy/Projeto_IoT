@@ -1754,13 +1754,18 @@ def test_extra_real_api_end_to_end(
     assert contains(values(at.main.warning), BADGE)
     assert ORIGIN_CAPTIONS["Todos"] in values(at.main.caption)
 
-    # Step 3: with 'Todos', the badge is on every page.
+    # Step 3: with 'Todos', the badge is on every page but the p chart one, whose chart stays
+    # 'Real' (SPEC-028 section 4.3: there the badge follows only the chart origin).
     for path in (SPC_PAGE, HISTORY, MODEL_PAGE):
         st.cache_data.clear()
         at = run(page(path))
         at.sidebar.radio(key="flt_source").set_value("Todos")
         run(at)
-        assert contains(values(at.main.warning), BADGE), path.stem
+        if path == SPC_PAGE:
+            assert not contains(values(at.main.warning), BADGE), path.stem
+            assert "Origem da carta: real" in values(at.main.caption), path.stem
+        else:
+            assert contains(values(at.main.warning), BADGE), path.stem
 
     # Step 4: the live p chart has one red, annotated point (L-005).
     st.cache_data.clear()
