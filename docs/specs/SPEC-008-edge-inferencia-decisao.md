@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked (SPEC_ISSUE-01 da r1 corrigido) — **Aguardando reaprovação humana** |
-| Rodada atual | r1 |
+| Status | In Dev |
+| Rodada atual | r2 |
 | Autor da implementação | developer |
 | Tags | — |
 | Depende de | SPEC-002, SPEC-007 |
@@ -168,3 +168,4 @@ O modelo dummy é montado com `onnx.helper` (opset 17): `ReduceMean` da entrada 
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-18 | Correção do SPEC_ISSUE-01 da r1 com a opção (a): (a) §4.1, item 6 novo: depois das comparações, `type_confidence` e `grade_confidence` são limitados a `[0, 1]` e `grade_score` a `[0, 4]`, e as comparações continuam com os valores brutos; (b) §4.2, item 3: `model_version` = nome do diretório **resolvido** (link simbólico → nome do alvo), e os arquivos são lidos do diretório resolvido; (c) §4.2, item 7: aquecimento com `[1, 3, crop, crop]` do `preprocessing.json`, em vez de `[1,3,224,224]` fixo; (d) §4.4: `MODEL_DIR` não é aparado, e só com espaços sai com código 2; (e) CAs novos CA-19 a CA-23; §6 e §7 atualizadas. Nenhum CA anterior muda. `docs/architecture.md` §6.2 passo 4 recebe o limite. Opção (b) do relatório (recusar a saída) descartada: em 34% das saídas `Softmax` com `unusable` dominante, a peça claramente inutilizável viraria 500. Sem ADR, porque o contrato, as regras negociáveis e as tecnologias não mudam: a decisão só faz a borda cumprir as faixas que o contrato 0.3.0 já define. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 e T-01 de `reviews/SPEC-008/r1-test-report.md` (itens b a d: observações sem bloqueio do mesmo relatório e do dev-report) | Orquestrador |
+| 2026-10-18 | Correção do SPEC_ISSUE-01 (opção a, mais os itens b a d) reaprovada; `Blocked` → `In Dev` na r2. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
