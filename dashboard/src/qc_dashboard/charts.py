@@ -78,6 +78,24 @@ BUCKET_MS: Mapping[str, int] = MappingProxyType(
 # would repeat the same text on neighboring ticks.
 MAX_PINNED_TICKS = 10
 
+# ``config`` of every ``st.plotly_chart`` (SPEC-028 §4.5): no Plotly mode bar. On touch devices
+# Streamlit shows it all the time, over the figure title (RV-08 of
+# reviews/SPEC-013/r2-review-report.md). Zoom and PNG export are not required; the full-screen
+# button belongs to the Streamlit element toolbar and stays.
+PLOTLY_CONFIG: Mapping[str, bool] = MappingProxyType({"displayModeBar": False})
+
+
+def plotly_config() -> dict[str, bool]:
+    """A fresh copy of ``PLOTLY_CONFIG`` for ``st.plotly_chart(config=...)``."""
+    return dict(PLOTLY_CONFIG)
+
+
+# Right margins in px. The series needs room for half of its last ``dd/mm/aaaa HH:MM`` label,
+# which is centered on the last tick (RV-09 of reviews/SPEC-013/r2-review-report.md, SPEC-028
+# §4.5); the other figures keep the base margin.
+MARGIN_RIGHT = 10
+SERIES_MARGIN_RIGHT = 60
+
 
 def _base_layout(fig: go.Figure, title: str) -> go.Figure:
     """Title on top and legend at the bottom of the figure, so the legend never covers the title.
@@ -89,7 +107,7 @@ def _base_layout(fig: go.Figure, title: str) -> go.Figure:
     fig.update_layout(
         title={"text": title},
         separators=SEPARATORS,
-        margin={"l": 10, "r": 10, "t": 50, "b": 10},
+        margin={"l": 10, "r": MARGIN_RIGHT, "t": 50, "b": 10},
         legend={
             "orientation": "h",
             "xref": "paper",
@@ -190,7 +208,9 @@ def volume_and_defect_rate(points: Sequence[TimeseriesPoint], bucket: str) -> go
         title={"text": "Taxa de defeito (%)"}, tickformat=".0%", rangemode="tozero", row=2, col=1
     )
     title = f"Volume e taxa de defeito {BUCKET_TITLES.get(bucket, '')}".strip()
-    return _base_layout(fig, title)
+    _base_layout(fig, title)
+    fig.update_layout(margin={"r": SERIES_MARGIN_RIGHT})
+    return fig
 
 
 def _pinned_dtick(points: Sequence[TimeseriesPoint], bucket: str) -> int | None:

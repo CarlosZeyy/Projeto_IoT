@@ -194,3 +194,27 @@ def test_legend_never_shares_the_title_band(factory) -> None:
     for fig in figures:
         _assert_legend_below(fig)
         assert fig.layout.title.text
+
+
+# ---------- SPEC-028 §4.5 ----------
+
+
+def test_series_right_margin_fits_the_last_date_label(factory) -> None:
+    points = [
+        TimeseriesPoint(bucket_start=_utc(hour), total=1, defective=0, defect_rate=0.0)
+        for hour in (1, 2, 3)
+    ]
+    for bucket in ("minute", "hour", "day"):
+        fig = charts.volume_and_defect_rate(points, bucket)
+        assert fig.layout.margin.r == 60
+        assert (fig.layout.margin.l, fig.layout.margin.t, fig.layout.margin.b) == (10, 50, 10)
+    assert charts.grade_distribution({}).layout.margin.r == 10
+    assert charts.by_object_type({}).layout.margin.r == 10
+    assert charts.p_chart(factory.spc_response()).layout.margin.r == 10
+
+
+def test_plotly_config_hides_the_mode_bar() -> None:
+    config = charts.plotly_config()
+    assert config == {"displayModeBar": False}
+    config["displayModeBar"] = True  # a copy: the constant does not change
+    assert charts.plotly_config() == {"displayModeBar": False}

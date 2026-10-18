@@ -1,4 +1,4 @@
-"""Global sidebar, simulated-data badge and error messages (SPEC-013 sections 4.1 and 4.2).
+"""Global sidebar, simulated-data badge and error messages (SPEC-013 §4.1, §4.2; SPEC-028).
 
 ``render_sidebar()`` is called at the top of every page. Widget values are kept in
 ``st.session_state`` across pages: Streamlit gives a widget on another page a different
@@ -16,10 +16,15 @@ from typing import Any, NoReturn
 
 import streamlit as st
 
-from qc_contracts import LOT_ID_PATTERN, ObjectType, Source
+from qc_contracts import LOT_ID_PATTERN, SOURCE_LABELS_PT, ObjectType, Source
 from qc_dashboard import data
 from qc_dashboard.api import ApiAuthError, ApiError, ApiUnavailable, Filters
-from qc_dashboard.config import CONFIG_MISSING_MESSAGE, ConfigError
+from qc_dashboard.config import (
+    CONFIG_MISSING_MESSAGE,
+    INSECURE_API_URL_MESSAGE,
+    ConfigError,
+    InsecureApiUrlError,
+)
 from qc_dashboard.formatting import LOCAL_TZ, object_type_label
 
 __all__ = [
@@ -29,8 +34,11 @@ __all__ = [
     "period_to_utc",
     "render_api_error",
     "render_badge",
+    "render_badge_or_error",
+    "render_chart_badge",
     "render_sidebar",
     "source_caption",
+    "spc_origin_caption",
 ]
 
 # Widget keys of the sidebar (also used by the tests).
@@ -64,6 +72,9 @@ INVALID_LOT_TEXT = "Lote inválido"
 API_WAKING_TEXT = "API acordando (free tier), tente em ~1 min"
 RETRY_LABEL = "Tentar novamente"
 AUTH_ERROR_TEXT = "Chave de leitura inválida ou ausente (READ_API_KEY)."
+
+# Errors the API pages turn into a PT-BR message (``api_guard``).
+API_ERRORS: tuple[type[Exception], ...] = (ConfigError, ApiUnavailable, ApiAuthError, ApiError)
 
 SOURCE_CAPTIONS: dict[Source | None, str] = {
     Source.LIVE: "Origem dos dados: real",
@@ -206,25 +217,61 @@ def needs_simulated_badge(filters: Filters) -> bool:
     return False
 
 
+def show_badge() -> None:
+    """The badge itself: a warning on the page and the legend in the sidebar."""
+    st.warning(BADGE_TEXT)
+    st.sidebar.caption(BADGE_TEXT)
+
+
 def render_badge(filters: Filters, *, simulated: bool = False) -> bool:
     """Show the badge (page top and sidebar) when needed; ``simulated`` forces it."""
     show = simulated or needs_simulated_badge(filters)
     if show:
-        st.warning(BADGE_TEXT)
-        st.sidebar.caption(BADGE_TEXT)
+        show_badge()
     return show
+
+
+def render_badge_or_error(filters: Filters) -> bool:
+    """``render_badge`` for a page that does not need the API ("Sobre o modelo", SPEC-028 §4.4).
+
+    When the badge check fails, the error message of ``api_guard`` is shown **and** the badge
+    (conservative, R-06), and the page goes on: nothing here calls ``st.stop()``.
+    """
+    try:
+        return render_badge(filters)
+    except API_ERRORS as exc:
+        show_error(exc)
+        show_badge()
+        return True
+
+
+def render_chart_badge(chart_source: Source) -> bool:
+    """Badge of the p chart page: if, and only if, the chart origin is ``simulated``.
+
+    It does not depend on the sidebar and makes no request (SPEC-028 §4.3).
+    """
+    show = chart_source is Source.SIMULATED
+    if show:
+        show_badge()
+    return show
+
+
+def spc_origin_caption(chart_source: Source | str) -> str:
+    """``Origem da carta: real`` or ``Origem da carta: simulado``, shown outside the figure."""
+    return f"Origem da carta: {SOURCE_LABELS_PT[Source(chart_source)]}"
 
 
 # ---------- errors ----------
 
 
 def _retry() -> None:
-    st.cache_data.clear()
+    """Only a rerun (SPEC-028 §4.2): errors are not cached, so the new attempt reaches the API,
+    and the successful reads of every session stay in the cache."""
     st.rerun()
 
 
-def render_api_error(exc: Exception) -> NoReturn:
-    """PT-BR message for an API error, without stack trace, then ``st.stop()``."""
+def show_api_error(exc: Exception) -> None:
+    """PT-BR message for an API error, without stack trace (the page goes on)."""
     if isinstance(exc, ApiUnavailable):
         st.warning(API_WAKING_TEXT)
         if st.button(RETRY_LABEL, key=KEY_RETRY):
@@ -235,20 +282,42 @@ def render_api_error(exc: Exception) -> NoReturn:
         st.error(f"Erro da API (HTTP {exc.status}).")
     else:
         st.error("Erro inesperado ao ler a API.")
+
+
+def render_api_error(exc: Exception) -> NoReturn:
+    """``show_api_error``, then ``st.stop()``."""
+    show_api_error(exc)
     st.stop()
 
 
-def render_config_error() -> NoReturn:
-    st.error(CONFIG_MISSING_MESSAGE)
+def show_config_error(exc: ConfigError) -> None:
+    """``Configuração inválida`` for an insecure ``API_BASE_URL``; ``Configuração ausente``
+    otherwise. Neither names the value (R-03)."""
+    if isinstance(exc, InsecureApiUrlError):
+        st.error(INSECURE_API_URL_MESSAGE)
+    else:
+        st.error(CONFIG_MISSING_MESSAGE)
+
+
+def render_config_error(exc: ConfigError) -> NoReturn:
+    show_config_error(exc)
     st.stop()
+
+
+def show_error(exc: Exception) -> None:
+    """The message of ``api_guard`` for ``exc``, without stopping the page."""
+    if isinstance(exc, ConfigError):
+        show_config_error(exc)
+    else:
+        show_api_error(exc)
 
 
 @contextmanager
 def api_guard() -> Iterator[None]:
-    """Turn a missing configuration or an API error into its message and stop the page."""
+    """Turn a missing or invalid configuration or an API error into its message and stop."""
     try:
         yield
-    except ConfigError:
-        render_config_error()
+    except ConfigError as exc:
+        render_config_error(exc)
     except (ApiUnavailable, ApiAuthError, ApiError) as exc:
         render_api_error(exc)

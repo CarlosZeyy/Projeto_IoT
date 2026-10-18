@@ -1,4 +1,7 @@
-"""``qc_dashboard.model_info``: ``metrics.json`` and the PRD targets (SPEC-013 §4.6)."""
+"""``qc_dashboard.model_info``: ``metrics.json`` and the PRD targets.
+
+SPEC-013 §4.6 and SPEC-028 §4.4.
+"""
 
 from __future__ import annotations
 
@@ -140,3 +143,142 @@ def test_report_image(monkeypatch, tmp_path) -> None:
     )
     assert model_info.report_image("../etc", "type_confusion.png") is None
     assert model_info.report_image(None, "type_confusion.png") is None
+
+
+# ---------- SPEC-028 §4.4: display rule (RV-07) ----------
+
+
+def test_lower_is_better_list_matches_architecture() -> None:
+    assert {
+        "grade_mae",
+        "false_unknown_rate",
+        "needs_review_rate",
+        "latency_ms_p50",
+        "latency_ms_p95",
+    } == model_info.LOWER_IS_BETTER
+    targets = {t.key: t.op for t in model_info.PRD_TARGETS}
+    # Every "<=" target is a lower-is-better metric, and vice versa for the targets.
+    assert {k for k, op in targets.items() if op == "<="} == (
+        model_info.LOWER_IS_BETTER & targets.keys()
+    )
+
+
+@pytest.mark.parametrize("key", sorted(model_info.LOWER_IS_BETTER))
+def test_lower_is_better_metrics_round_up(key: str) -> None:
+    assert model_info.fmt_metric(0.12341, key) == "0,1235"
+    assert model_info.fmt_metric(0.1234, key) == "0,1234"
+
+
+@pytest.mark.parametrize(
+    "key", ["type_accuracy", "grade_qwk", "unusable_recall", "unknown_rate_on_other", None]
+)
+def test_higher_is_better_metrics_round_down(key) -> None:
+    assert model_info.fmt_metric(0.93127, key) == "0,9312"
+
+
+def test_interval_is_never_narrower() -> None:
+    assert model_info.fmt_metric([0.61239, 0.78761], "grade_qwk_ci95") == "[0,6123; 0,7877]"
+    assert model_info.fmt_metric((0.61239, 0.78761), "grade_mae") == "[0,6123; 0,7877]"
+    assert model_info.fmt_metric([0.6, 0.78]) == "[0,6000; 0,7800]"
+
+
+def test_rows_use_the_direction_of_each_metric(factory) -> None:
+    document = factory.metrics_document(
+        type_accuracy=0.93127,
+        grade_qwk=0.75,
+        grade_mae=0.12341,
+        latency_ms_p95=120.00001,
+        latency_ms_p50=40.00001,
+        false_unknown_rate=0.02,
+        needs_review_rate=0.10001,
+        unusable_precision=0.85559,
+        grade_qwk_ci95=[0.61239, 0.78761],
+    )
+    targets = {row["Métrica"]: row for row in model_info.target_rows(document)}
+    assert (targets["Acurácia de tipo"]["Valor"], targets["Acurácia de tipo"]["Status"]) == (
+        "0,9312",
+        "Abaixo da meta",
+    )
+    assert (targets["QWK do grau"]["Valor"], targets["QWK do grau"]["Status"]) == (
+        "0,7500",
+        "Atingida",
+    )
+    latency = targets["Latência p95 (ms)"]
+    assert (latency["Valor"], latency["Status"]) == ("120,0001", "Atingida")
+    others = {r["Métrica"]: r["Valor"] for r in model_info.other_metric_rows(document)}
+    assert others["Erro absoluto médio do grau"] == "0,1235"
+    assert others["Latência p50 (ms)"] == "40,0001"
+    assert others["Taxa de falso desconhecido"] == "0,0200"
+    assert others["Taxa de revisão"] == "0,1001"
+    assert others["Precisão de inutilizável"] == "0,8555"
+    assert others["IC 95% do QWK do grau"] == "[0,6123; 0,7877]"
+    assert others["Medições de latência"] == "100"
+
+
+def test_status_uses_the_raw_value() -> None:
+    latency = next(t for t in model_info.PRD_TARGETS if t.key == "latency_ms_p95")
+    # Shown as 300,0000 after rounding up, but the raw value is above the target.
+    assert model_info.fmt_metric(300.00001, "latency_ms_p95") == "300,0001"
+    assert latency.status(300.00001) == "Abaixo da meta"
+    qwk = next(t for t in model_info.PRD_TARGETS if t.key == "grade_qwk")
+    assert model_info.fmt_metric(0.74999, "grade_qwk") == "0,7499"
+    assert qwk.status(0.74999) == "Abaixo da meta"
+
+
+# ---------- SPEC-028 §4.4: path in the message (SEC-13-03) ----------
+
+
+def test_display_path_relative_inside_the_repository() -> None:
+    relative = "ml/models/nao-existe-v0/metrics.json"
+    assert model_info.display_path(relative) == relative
+    assert model_info.display_path(config.REPO_ROOT / relative) == relative
+    assert model_info.display_path("ml/models/../models/x/metrics.json") == (
+        "ml/models/x/metrics.json"
+    )
+
+
+def test_display_path_absolute_outside_the_repository(tmp_path) -> None:
+    outside = tmp_path / "metrics.json"
+    assert model_info.display_path(outside) == str(outside)
+    assert model_info.display_path("../fora/metrics.json").startswith("/")
+
+
+def test_display_path_follows_the_patched_root(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+    assert model_info.display_path(tmp_path / "ml" / "m.json") == "ml/m.json"
+
+
+# ---------- SPEC-028 §4.4: report_image inside ml/reports (SEC-13-08) ----------
+
+
+def _report(folder: Path, name: str = "type_confusion.png") -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    image = folder / name
+    image.write_bytes(b"\x89PNG")
+    return image
+
+
+def test_report_image_refuses_links_out_of_reports(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path / "repo")
+    reports = tmp_path / "repo" / "ml" / "reports"
+    ok = _report(reports / "partqc-ok-v1")
+    _report(tmp_path / "outside")
+    (reports / "partqc-link-v1").symlink_to(tmp_path / "outside", target_is_directory=True)
+    (reports / "partqc-alias-v1").symlink_to(reports / "partqc-ok-v1", target_is_directory=True)
+
+    assert model_info.report_image("partqc-ok-v1", "type_confusion.png") == ok
+    assert model_info.report_image("partqc-link-v1", "type_confusion.png") is None
+    # A link that stays inside ml/reports is accepted.
+    assert model_info.report_image("partqc-alias-v1", "type_confusion.png") is not None
+    for version in ("...", "....", "../x", "..", ".", "ab", "Partqc-ok-v1", "partqc-ok-v1\n"):
+        assert model_info.report_image(version, "type_confusion.png") is None, version
+    assert model_info.report_image("partqc-ok-v1", "grade_confusion.png") is None
+
+
+def test_report_image_refuses_a_file_link_out_of_reports(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path / "repo")
+    folder = tmp_path / "repo" / "ml" / "reports" / "partqc-ok-v1"
+    folder.mkdir(parents=True)
+    outside = _report(tmp_path / "outside")
+    (folder / "type_confusion.png").symlink_to(outside)
+    assert model_info.report_image("partqc-ok-v1", "type_confusion.png") is None

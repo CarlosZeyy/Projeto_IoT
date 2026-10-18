@@ -449,3 +449,306 @@ def test_model_page_simulated_badge(factory, mock_api, monkeypatch, tmp_path) ->
     assert_clean(at)
     assert BADGE in texts(at.warning)
     assert mock_api.requests == []
+
+
+# =============================================================================================
+# SPEC-028
+# =============================================================================================
+
+WAKING = "API acordando (free tier), tente em ~1 min"
+INSECURE = (
+    "Configuração inválida: API_BASE_URL precisa usar https:// (http:// só em localhost ou "
+    "127.0.0.1)."
+)
+API_PAGES = ("visao_geral", "controle_estatistico", "historico")
+
+
+def _plotly_config(element) -> dict:
+    return json.loads(element.proto.config)
+
+
+# ---------- §4.1: https:// only ----------
+
+
+@pytest.fixture
+def recorded_sends(monkeypatch) -> list[httpx.Request]:
+    """Requests that reached the real ``httpx`` client (none expected)."""
+    sent: list[httpx.Request] = []
+
+    def send(self, request, **kwargs):
+        sent.append(request)
+        raise AssertionError("no request expected")
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    return sent
+
+
+@pytest.mark.parametrize("name", API_PAGES)
+def test_insecure_url_stops_api_pages(factory, no_config_env, monkeypatch, recorded_sends, name):
+    monkeypatch.setenv("API_BASE_URL", "http://api.example.org")
+    monkeypatch.setenv("READ_API_KEY", factory.new_key())
+    at = run(page(factory, name))
+    assert_clean(at)
+    assert texts(at.error) == [INSECURE]
+    assert recorded_sends == []
+    assert charts(at) == []
+    assert not at.dataframe
+    assert not any("example.org" in text for text in texts(at.error))
+
+
+def test_insecure_url_on_the_app(factory, no_config_env, monkeypatch, recorded_sends) -> None:
+    monkeypatch.setenv("API_BASE_URL", "ftp://api.example.org")
+    monkeypatch.setenv("READ_API_KEY", factory.new_key())
+    at = run(factory.app)
+    assert_clean(at)
+    assert texts(at.error) == [INSECURE]
+    assert recorded_sends == []
+
+
+def test_localhost_http_is_accepted_by_the_pages(factory, no_config_env, monkeypatch) -> None:
+    mock = factory.MockApi()
+    monkeypatch.setenv("API_BASE_URL", "http://localhost:8001")
+    monkeypatch.setenv("READ_API_KEY", factory.new_key())
+    original = httpx.Client.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(mock.handler)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "__init__", init)
+    at = run(page(factory, "visao_geral"))
+    assert_clean(at)
+    assert not at.error
+    assert {r.url.host for r in mock.requests} == {"localhost"}
+
+
+# ---------- §4.2: retry without clearing the cache ----------
+
+
+def test_retry_keeps_the_cache(factory, mock_api, monkeypatch) -> None:
+    import streamlit as st
+
+    clears: list[None] = []
+    original = st.cache_data.clear
+
+    def spy() -> None:
+        clears.append(None)
+        original()
+
+    monkeypatch.setattr(st.cache_data, "clear", spy)
+    mock_api.timing_out = {"/metrics/timeseries"}
+    at = run(page(factory, "visao_geral"))
+    assert_clean(at)
+    assert WAKING in texts(at.warning)
+    assert len(charts(at)) == 2  # the two summary figures; the series failed
+    mock_api.timing_out = set()
+    mock_api.requests.clear()
+    at.button(key=filters.KEY_RETRY).click().run()
+    assert_clean(at)
+    assert clears == []
+    assert mock_api.to("/metrics/summary") == []
+    assert len(mock_api.to("/metrics/timeseries")) == 1
+    assert WAKING not in texts(at.warning)
+    assert len(charts(at)) == 3
+
+
+# ---------- §4.3: badge and origin of the p chart ----------
+
+
+def _spc_page(factory, sidebar: str) -> AppTest:
+    return run(page(factory, "controle_estatistico"), **{filters.KEY_SOURCE: sidebar})
+
+
+def test_spc_badge_ignores_all_sources_sidebar(factory, mock_api) -> None:
+    mock_api.summary_simulated = factory.summary(total=12)
+    at = _spc_page(factory, "Todos")
+    assert_clean(at)
+    assert BADGE not in texts(at.warning)
+    assert BADGE not in texts(at.sidebar.caption)
+    assert "Origem da carta: real" in texts(at.caption)
+    assert [r.url.params["source"] for r in mock_api.to("/metrics/spc")] == ["live"]
+    assert mock_api.to("/metrics/summary") == []
+
+
+def test_spc_badge_with_simulated_chart(factory, mock_api) -> None:
+    mock_api.summary_simulated = factory.summary(total=12)
+    at = _spc_page(factory, "Simulado")
+    assert_clean(at)
+    assert BADGE in texts(at.warning)
+    assert BADGE in texts(at.sidebar.caption)
+    assert "Origem da carta: simulado" in texts(at.caption)
+    assert [r.url.params["source"] for r in mock_api.to("/metrics/spc")] == ["simulated"]
+    assert mock_api.to("/metrics/summary") == []
+
+    # The chart switched back to Real with the sidebar still in Simulado: no badge.
+    at.radio(key="spc_source").set_value("Real").run()
+    assert_clean(at)
+    assert BADGE not in texts(at.warning)
+    assert BADGE not in texts(at.sidebar.caption)
+    assert "Origem da carta: real" in texts(at.caption)
+    assert mock_api.to("/metrics/spc")[-1].url.params["source"] == "live"
+    assert mock_api.to("/metrics/summary") == []
+
+
+def test_spc_origin_caption_is_right_under_the_title(factory, mock_api) -> None:
+    at = run(page(factory, "controle_estatistico"))
+    assert_clean(at)
+    assert at.main.children[0].value == "Controle estatístico"
+    assert at.main.children[1].value == "Origem da carta: real"
+    assert texts(at.caption).count("Origem da carta: real") == 1
+
+
+def test_spc_origin_caption_stays_when_the_api_fails(factory, mock_api) -> None:
+    mock_api.failure = _timeout
+    at = run(page(factory, "controle_estatistico"), **{filters.KEY_SOURCE: "Simulado"})
+    assert_clean(at)
+    assert WAKING in texts(at.warning)
+    assert BADGE in texts(at.warning)
+    assert "Origem da carta: simulado" in texts(at.caption)
+
+
+# ---------- §4.5: no Plotly mode bar ----------
+
+
+def test_every_chart_hides_the_mode_bar(factory, mock_api) -> None:
+    overview = run(page(factory, "visao_geral"))
+    spc = run(page(factory, "controle_estatistico"))
+    elements = [*charts(overview), *charts(spc)]
+    assert (len(charts(overview)), len(charts(spc))) == (3, 1)
+    for element in elements:
+        assert _plotly_config(element)["displayModeBar"] is False
+
+
+# ---------- §4.4: Sobre o modelo ----------
+
+
+@pytest.fixture
+def metrics_path(factory, monkeypatch, tmp_path) -> Path:
+    path = tmp_path / "metrics.json"
+    path.write_text(json.dumps(factory.metrics_document()), encoding="utf-8")
+    monkeypatch.setenv("MODEL_METRICS_PATH", str(path))
+    return path
+
+
+def _assert_model_tables(at: AppTest) -> None:
+    targets = at.dataframe[0].value.set_index("Métrica")
+    assert targets.loc["Acurácia de tipo", "Status"] == "Atingida"
+    assert len(at.dataframe[2].value) == 5
+    assert any(text.startswith("**Versão**") for text in texts(at.markdown))
+
+
+def test_model_page_without_api_timeout(factory, mock_api, metrics_path) -> None:
+    mock_api.failure = _timeout
+    at = run(page(factory, "sobre_o_modelo"), **{filters.KEY_SOURCE: "Todos"})
+    assert_clean(at)
+    assert WAKING in texts(at.warning)
+    assert [b.label for b in at.button] == ["Tentar novamente"]
+    assert BADGE in texts(at.warning)
+    assert BADGE in texts(at.sidebar.caption)
+    _assert_model_tables(at)
+    assert len(mock_api.requests) == 1
+
+    # Retry with the API back and no simulated data: no warning, no badge.
+    mock_api.failure = None
+    at.button(key=filters.KEY_RETRY).click().run()
+    assert_clean(at)
+    assert WAKING not in texts(at.warning)
+    assert BADGE not in texts(at.warning)
+    _assert_model_tables(at)
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (401, "Chave de leitura inválida ou ausente (READ_API_KEY)."),
+        (500, "Erro da API (HTTP 500)."),
+    ],
+)
+def test_model_page_without_api_errors(factory, mock_api, metrics_path, status, message) -> None:
+    mock_api.failure = lambda request: httpx.Response(status, json={"detail": "x"})
+    at = run(page(factory, "sobre_o_modelo"), **{filters.KEY_SOURCE: "Todos"})
+    assert_clean(at)
+    assert texts(at.error) == [message]
+    assert BADGE in texts(at.warning)
+    _assert_model_tables(at)
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        (None, "Configuração ausente: defina API_BASE_URL e READ_API_KEY."),
+        ("http://api.example.org", INSECURE),
+    ],
+)
+def test_model_page_without_configuration(
+    factory, no_config_env, monkeypatch, recorded_sends, metrics_path, url, message
+) -> None:
+    if url is not None:
+        monkeypatch.setenv("API_BASE_URL", url)
+        monkeypatch.setenv("READ_API_KEY", factory.new_key())
+    at = run(page(factory, "sobre_o_modelo"), **{filters.KEY_SOURCE: "Todos"})
+    assert_clean(at)
+    assert texts(at.error) == [message]
+    assert BADGE in texts(at.warning)
+    _assert_model_tables(at)
+    assert recorded_sends == []
+
+
+@pytest.mark.parametrize("source", ["Real", "Simulado"])
+def test_model_page_real_or_simulated_needs_no_api(
+    factory, no_config_env, recorded_sends, metrics_path, source
+) -> None:
+    at = run(page(factory, "sobre_o_modelo"), **{filters.KEY_SOURCE: source})
+    assert_clean(at)
+    assert not at.error
+    assert (BADGE in texts(at.warning)) is (source == "Simulado")
+    _assert_model_tables(at)
+    assert recorded_sends == []
+
+
+def test_model_page_display_rule(factory, no_config_env, monkeypatch, tmp_path) -> None:
+    path = tmp_path / "metrics.json"
+    document = factory.metrics_document(
+        type_accuracy=0.93127,
+        grade_qwk=0.75,
+        grade_mae=0.12341,
+        latency_ms_p95=120.00001,
+        false_unknown_rate=0.02,
+        grade_qwk_ci95=[0.61239, 0.78761],
+    )
+    path.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setenv("MODEL_METRICS_PATH", str(path))
+    at = run(page(factory, "sobre_o_modelo"))
+    assert_clean(at)
+    targets = at.dataframe[0].value.set_index("Métrica")
+    assert list(targets.loc["Acurácia de tipo", ["Valor", "Status"]]) == [
+        "0,9312",
+        "Abaixo da meta",
+    ]
+    assert list(targets.loc["QWK do grau", ["Valor", "Status"]]) == ["0,7500", "Atingida"]
+    assert list(targets.loc["Latência p95 (ms)", ["Valor", "Status"]]) == ["120,0001", "Atingida"]
+    others = at.dataframe[1].value.set_index("Métrica")["Valor"]
+    assert others["Erro absoluto médio do grau"] == "0,1235"
+    assert others["Taxa de falso desconhecido"] == "0,0200"
+    assert others["IC 95% do QWK do grau"] == "[0,6123; 0,7877]"
+
+
+def test_model_page_missing_file_relative_path(factory, no_config_env, monkeypatch) -> None:
+    from qc_dashboard import config
+
+    relative = "ml/models/nao-existe-v0/metrics.json"
+    monkeypatch.setenv("MODEL_METRICS_PATH", relative)
+    at = run(page(factory, "sobre_o_modelo"))
+    assert_clean(at)
+    expected = f"Nenhum modelo avaliado ainda: metrics.json não encontrado em {relative}."
+    assert texts(at.info) == [expected]
+    assert not any(str(config.REPO_ROOT) in text for text in texts(at.info))
+
+
+def test_model_page_missing_file_absolute_path(factory, no_config_env, monkeypatch, tmp_path):
+    missing = tmp_path / "fora" / "metrics.json"
+    monkeypatch.setenv("MODEL_METRICS_PATH", str(missing))
+    at = run(page(factory, "sobre_o_modelo"))
+    assert_clean(at)
+    expected = f"Nenhum modelo avaliado ainda: metrics.json não encontrado em {missing}."
+    assert texts(at.info) == [expected]

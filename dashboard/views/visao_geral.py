@@ -1,4 +1,7 @@
-"""Visão geral: KPIs, grade and type distribution, volume and defect rate (SPEC-013 §4.3)."""
+"""Visão geral: KPIs, grade and type distribution, volume and defect rate (SPEC-013 §4.3).
+
+The figures have no Plotly mode bar (SPEC-028 §4.5).
+"""
 
 from __future__ import annotations
 
@@ -34,8 +37,12 @@ columns[4].metric(
 )
 
 left, right = st.columns(2)
-left.plotly_chart(charts.grade_distribution(summary.by_grade), key="vg_grades")
-right.plotly_chart(charts.by_object_type(summary.by_object_type), key="vg_types")
+left.plotly_chart(
+    charts.grade_distribution(summary.by_grade), key="vg_grades", config=charts.plotly_config()
+)
+right.plotly_chart(
+    charts.by_object_type(summary.by_object_type), key="vg_types", config=charts.plotly_config()
+)
 
 bucket_option = st.radio(
     "Granularidade",
@@ -50,4 +57,6 @@ bucket = BUCKET_BY_OPTION[bucket_option]
 with filters.api_guard():
     points = data.fetch_timeseries(selected, bucket)
 
-st.plotly_chart(charts.volume_and_defect_rate(points, bucket), key="vg_series")
+st.plotly_chart(
+    charts.volume_and_defect_rate(points, bucket), key="vg_series", config=charts.plotly_config()
+)
