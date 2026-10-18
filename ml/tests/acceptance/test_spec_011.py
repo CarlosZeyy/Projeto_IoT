@@ -39,7 +39,7 @@ from qc_ml import split as split_mod
 from qc_ml.augment import train_transform
 from qc_ml.data import build_data_report, load_exclusions, load_manifest
 from qc_ml.errors import ManifestError, ManifestProblem, SplitError, SplitIntegrityError
-from qc_ml.split import load_split, make_split, rows_for
+from qc_ml.split import item_history, load_split, make_split, rows_for
 from qc_ml.synthetic import make_synthetic_dataset
 from qc_preprocess import PreprocessParams, load_image, preprocess
 
@@ -973,6 +973,153 @@ def test_ca32_excluded_test_image_leaves_the_split(ds: Path, tmp_path: Path, cap
 
 
 # --------------------------------------------------------------------------------------------
+# §4.4 split history (r3: SPEC_ISSUE-01 of r2, T-02)
+# --------------------------------------------------------------------------------------------
+
+
+def _write_hash(splits: Path, name: str) -> None:
+    body = (splits / f"{name}.csv").read_bytes()
+    (splits / f"{name}.sha256").write_text(
+        f"{hashlib.sha256(body).hexdigest()}  {name}.csv\n", encoding="utf-8"
+    )
+
+
+def test_ca33_rephoto_after_an_intermediate_split(ds_large: Path, tmp_path: Path, capsys) -> None:
+    ds = ds_large
+    splits = tmp_path / "splits"
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 0, out
+    v1 = read_split_csv(splits / "split_v1.csv")
+    p_t = first_item_in(v1, "test", "screw")
+    p_v = first_item_in(v1, "val", "nut")
+    old_t = exclude_item(ds, p_t)
+    old_v = exclude_item(ds, p_v)
+
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 0, out
+    v2 = read_split_csv(splits / "split_v2.csv")
+    assert not {item_of(p) for p in v2} & {p_t, p_v}
+
+    new_t = [
+        add_image(ds, p_t, "screw", old_t[0]["grade"], a, f"20261201T10000{a}Z") for a in (0, 1)
+    ]
+    new_v = [add_image(ds, p_v, "nut", old_v[0]["grade"], a, f"20261201T11000{a}Z") for a in (0, 1)]
+    assert not set(new_t + new_v) & {r["image_path"] for r in old_t + old_v}
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 0, out
+    assert (splits / "split_v3.csv").exists()
+    v3 = read_split_csv(splits / "split_v3.csv")
+    assert [v3[p] for p in new_t] == ["test", "test"]
+    assert [v3[p] for p in new_v] == ["val", "val"]
+    for path, which in v2.items():
+        assert v3[path] == which, path
+    test_items = lambda v: {item_of(p) for p, w in v.items() if w == "test"}  # noqa: E731
+    assert test_items(v3) == test_items(v1)
+
+
+@pytest.fixture
+def history_state(ds_large: Path, tmp_path: Path, capsys) -> tuple[Path, Path]:
+    """CA-34 state: split_v1, split_v2 (5 new screw/fair items), then 1 more new item."""
+    ds = ds_large
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    for k, item in enumerate(f"S-{n}" for n in range(201, 206)):
+        for a in (0, 1):
+            add_image(ds, item, "screw", "fair", a, f"20261202T10{k:02d}0{a}Z")
+    assert split_cli(ds, splits, capsys)[0] == 0
+    assert (splits / "split_v2.csv").exists()
+    for a in (0, 1):
+        add_image(ds, "S-206", "screw", "fair", a, f"20261202T11000{a}Z")
+    return ds, splits
+
+
+def _run_case(ds: Path, splits: Path, capsys) -> tuple[int, str]:
+    before = tree_snapshot(splits)
+    rc, out = split_cli(ds, splits, capsys)
+    assert tree_snapshot(splits) == before  # names and bytes unchanged
+    assert not list(splits.glob("split_v3.*"))
+    return rc, out
+
+
+def test_ca34_history_gap(history_state: tuple[Path, Path], capsys) -> None:
+    ds, splits = history_state
+    safe_unlink(splits, "split_v1.csv")  # .sha256 and .json kept
+    rc, out = _run_case(ds, splits, capsys)
+    assert rc == 2
+    assert "split history incomplete" in out
+    assert "split_v1.csv" in out
+
+
+def test_ca34_hash_mismatch_in_an_old_version(history_state: tuple[Path, Path], capsys) -> None:
+    ds, splits = history_state
+    path = splits / "split_v1.csv"
+    path.write_text(path.read_text(encoding="utf-8").replace(",test\n", ",train\n", 1), "utf-8")
+    rc, out = _run_case(ds, splits, capsys)
+    assert rc == 2
+    assert "split_v1.csv" in out
+
+
+def test_ca34_conflict_in_the_history(history_state: tuple[Path, Path], capsys) -> None:
+    ds, splits = history_state
+    path = splits / "split_v1.csv"
+    v1 = read_split_csv(path)
+    item = first_item_in(v1, "test")
+    lines = path.read_text(encoding="utf-8").split("\n")
+    lines = [
+        ln[: -len("test")] + "val" if ln.endswith(",test") and item_of(ln) == item else ln
+        for ln in lines
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    _write_hash(splits, "split_v1")  # re-hashed by hand: load_split accepts it
+    assert (
+        read_split_csv(splits / "split_v2.csv")[sorted(p for p in v1 if item_of(p) == item)[0]]
+        == "test"
+    )
+    rc, out = _run_case(ds, splits, capsys)
+    assert rc == 2
+    assert item in out
+    assert "split_v1.csv" in out
+    assert "split_v2.csv" in out
+    with pytest.raises(SplitIntegrityError, match=item):
+        item_history(
+            [load_split(splits / "split_v1.csv"), load_split(splits / "split_v2.csv")],
+            load_manifest(ds),
+        )
+
+
+def test_ca35_make_split_with_history(ds_large: Path) -> None:
+    df = load_manifest(ds_large)
+    v1 = make_split(df, seed=42).frame
+    mapping = dict(zip(v1["image_path"], v1["split"], strict=True))
+    test_items = sorted({item_of(p) for p, w in mapping.items() if w == "test"})
+    p_item, q_item = test_items[0], test_items[1]
+    e_paths = set(df.loc[df["item_id"] == p_item, "image_path"])
+    v2 = make_split(
+        df[~df["image_path"].isin(e_paths)], seed=42, previous=v1, excluded=frozenset(e_paths)
+    ).frame
+    assert not set(v2["image_path"]) & e_paths
+    p_rows = df[df["item_id"] == p_item].head(2).copy()
+    p_rows["image_path"] = [
+        f"{Path(p).parent.as_posix()}/{p_item}__{k}__20261203T10000{k}Z.jpg"
+        for k, p in enumerate(p_rows["image_path"])
+    ]
+    df3 = pd.concat([df[~df["image_path"].isin(e_paths)], p_rows], ignore_index=True)
+
+    result = make_split(df3, seed=42, previous=v2, history={p_item: "test"})
+    got = dict(zip(result.frame["image_path"], result.frame["split"], strict=True))
+    assert [got[p] for p in p_rows["image_path"]] == ["test", "test"]
+    for path, which in zip(v2["image_path"], v2["split"], strict=True):
+        assert got[path] == which
+
+    with pytest.raises(SplitIntegrityError, match=q_item):
+        make_split(df3, seed=42, previous=v2, history={p_item: "test", q_item: "train"})
+    with pytest.raises(SplitError):
+        make_split(df3, seed=42, previous=v2, history={p_item: "holdout"})
+    with pytest.raises(SplitError):
+        make_split(df3, seed=42, history={p_item: "test"})
+
+
+# --------------------------------------------------------------------------------------------
 # Exploratory (no CA): edge cases around the SPEC
 # --------------------------------------------------------------------------------------------
 
@@ -1032,12 +1179,13 @@ def test_extra_make_split_is_deterministic(ds_large: Path) -> None:
 
 
 def test_extra_split_versions_use_numeric_order(ds: Path, tmp_path: Path, capsys) -> None:
+    """Versions 1..10 complete (r3: a gap exits 2, §4.4 step 3); v10 is the latest, not v9."""
     splits = tmp_path / "splits"
     rc, out = split_cli(ds, splits, capsys)
     assert rc == 0, out
     body = (splits / "split_v1.csv").read_bytes()
     meta = json.loads((splits / "split_v1.json").read_text(encoding="utf-8"))
-    for n in (9, 10):
+    for n in range(2, 11):
         (splits / f"split_v{n}.csv").write_bytes(body)
         digest = hashlib.sha256(body).hexdigest()
         (splits / f"split_v{n}.sha256").write_text(f"{digest}  split_v{n}.csv\n", encoding="utf-8")
@@ -1639,12 +1787,7 @@ def test_extra_small_stratum_of_new_items_has_scope(ds: Path, tmp_path: Path, ca
     assert first and all(w.get("scope") != "new_items" for w in first)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="T-02: a test item excluded, then a split version written, then re-photographed "
-    "goes to train (the item is no longer in the latest split)",
-)
-def test_bug_t02_rephoto_after_an_intermediate_split_keeps_test(
+def test_extra_t02_rephoto_after_an_intermediate_split_keeps_test(
     ds: Path, tmp_path: Path, capsys
 ) -> None:
     splits = tmp_path / "splits"
@@ -1680,3 +1823,176 @@ def test_extra_parts_dataset_train_mode(ds: Path) -> None:
     assert np.array_equal(dataset[i][0].numpy(), first)  # same epoch, same item -> same tensor
     dataset.set_epoch(1)
     assert not np.array_equal(dataset[i][0].numpy(), first)
+
+
+# ---- r3: split history (§4.4), exploratory -----------------------------------------------
+
+
+def _clone_version(splits: Path, src: int, dst: int, edit: Callable[[str], str] | None = None):
+    """Write split_v<dst> from split_v<src> (optionally edited), with a matching .sha256."""
+    text = (splits / f"split_v{src}.csv").read_text(encoding="utf-8")
+    (splits / f"split_v{dst}.csv").write_text(edit(text) if edit else text, encoding="utf-8")
+    _write_hash(splits, f"split_v{dst}")
+    meta = json.loads((splits / f"split_v{src}.json").read_text(encoding="utf-8"))
+    meta["parent"] = f"split_v{dst - 1}"
+    (splits / f"split_v{dst}.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_extra_history_gap_in_the_middle(ds: Path, tmp_path: Path, capsys) -> None:
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    _clone_version(splits, 1, 2)
+    _clone_version(splits, 1, 3)
+    safe_unlink(splits, "split_v2.csv")
+    add_image(ds, "S-501", "screw", "good", 0, "20261204T100000Z")
+    before = tree_snapshot(splits)
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 2
+    assert "split history incomplete" in out and "split_v2.csv" in out
+    assert tree_snapshot(splits) == before
+
+
+def test_extra_history_old_version_without_sha256(ds: Path, tmp_path: Path, capsys) -> None:
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    _clone_version(splits, 1, 2)
+    safe_unlink(splits, "split_v1.sha256")
+    before = tree_snapshot(splits)
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 2
+    assert "split_v1" in out
+    assert tree_snapshot(splits) == before
+
+
+def test_extra_history_conflict_is_never_resolved(ds: Path, tmp_path: Path, capsys) -> None:
+    """Item in test in v1 and v2, val in v3: the majority (and the newest) are not chosen."""
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v1 = read_split_csv(splits / "split_v1.csv")
+    item = first_item_in(v1, "test")
+    _clone_version(splits, 1, 2)
+
+    def to_val(text: str) -> str:
+        return "\n".join(
+            ln[: -len("test")] + "val" if ln.endswith(",test") and item_of(ln) == item else ln
+            for ln in text.split("\n")
+        )
+
+    _clone_version(splits, 1, 3, to_val)
+    before = tree_snapshot(splits)
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 2
+    assert item in out and "split_v3.csv" in out
+    assert tree_snapshot(splits) == before
+
+
+def test_extra_item_history_conflict_inside_one_frame_without_attrs(ds: Path) -> None:
+    df = load_manifest(ds)
+    frame = make_split(df, seed=42).frame.copy()
+    item = item_of(frame.loc[0, "image_path"])
+    sibling = frame.index[(frame["image_path"].map(item_of) == item) & (frame.index != 0)][0]
+    frame.loc[sibling, "split"] = "test" if frame.loc[0, "split"] != "test" else "train"
+    frame.attrs = {}
+    with pytest.raises(SplitIntegrityError) as excinfo:
+        item_history([frame], df)
+    assert item in str(excinfo.value)
+    assert "#" in str(excinfo.value)  # position in the list when there is no split_file
+
+
+def test_extra_item_history_values_and_unresolvable_images(ds: Path) -> None:
+    df = load_manifest(ds)
+    frame = make_split(df, seed=42).frame
+    foreign = pd.DataFrame({"image_path": ["raw/screw/good/legacy-photo.jpg"], "split": ["test"]})
+    history = item_history([frame, pd.concat([frame, foreign], ignore_index=True)], df)
+    expected = {item_of(p): w for p, w in zip(frame["image_path"], frame["split"], strict=True)}
+    assert history == expected
+    assert item_history([], df) == {}
+
+
+def test_extra_history_entry_without_images_is_ignored(ds: Path) -> None:
+    df = load_manifest(ds)
+    v1 = make_split(df, seed=42).frame
+    result = make_split(df, seed=42, previous=v1, history={"S-999": "test"})
+    pd.testing.assert_frame_equal(
+        result.frame.reset_index(drop=True), v1[["image_path", "split"]].reset_index(drop=True)
+    )
+    assert make_split(df, seed=42, history={}).frame.shape[0] == 88  # empty history, no previous
+
+
+@pytest.mark.parametrize("item_id", ["bogus", "S-1", "", "s-001"])
+def test_extra_rv06_invalid_excluded_item_id_falls_back_to_the_file_name(
+    ds: Path, item_id: str
+) -> None:
+    df = load_manifest(ds)
+    v1 = make_split(df, seed=42).frame
+    mapping = dict(zip(v1["image_path"], v1["split"], strict=True))
+    item = first_item_in(mapping, "test")
+    old = sorted(p for p in mapping if item_of(p) == item)
+    rest = df[df["item_id"] != item].copy()
+    new = df[df["item_id"] == item].head(1).copy()
+    new["image_path"] = [f"{Path(old[0]).parent.as_posix()}/{item}__4__20261205T100000Z.jpg"]
+    df2 = pd.concat([rest, new], ignore_index=True)
+    df2.attrs["excluded_items"] = dict.fromkeys(old, item_id)
+    result = make_split(df2, seed=42, previous=v1, excluded=frozenset(old))
+    got = dict(zip(result.frame["image_path"], result.frame["split"], strict=True))
+    assert got[new["image_path"].iloc[0]] == "test"
+
+
+def test_extra_valid_excluded_item_id_wins_over_the_file_name(ds: Path) -> None:
+    """Source 2 (excluded manifest row) has precedence over source 3 (file name)."""
+    df = load_manifest(ds)
+    v1 = make_split(df, seed=42).frame
+    mapping = dict(zip(v1["image_path"], v1["split"], strict=True))
+    item = first_item_in(mapping, "test")
+    old = sorted(p for p in mapping if item_of(p) == item)
+    rest = df[df["item_id"] != item].copy()
+    new = df[df["item_id"] == item].head(1).copy()
+    new["image_path"] = [f"{Path(old[0]).parent.as_posix()}/{item}__4__20261205T110000Z.jpg"]
+    df2 = pd.concat([rest, new], ignore_index=True)
+    df2.attrs["excluded_items"] = dict.fromkeys(old, "S-098")  # valid id, but another item
+    result = make_split(df2, seed=42, previous=v1, excluded=frozenset(old))
+    got = dict(zip(result.frame["image_path"], result.frame["split"], strict=True))
+    assert got[new["image_path"].iloc[0]] in ("train", "val")  # the item counts as new
+
+
+def test_extra_rv06_through_the_cli(ds: Path, tmp_path: Path, capsys) -> None:
+    """Excluded rows with a broken item_id in the manifest: the file name still finds the item."""
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v1 = read_split_csv(splits / "split_v1.csv")
+    item = first_item_in(v1, "test")
+    old_rows = exclude_item(ds, item)
+    rows = read_rows(ds)
+    for r in rows:
+        if r["item_id"] == item:
+            r["item_id"] = "X-1"  # excluded rows skip the row checks
+    write_rows(ds, rows)
+    load_manifest(ds)
+    assert split_cli(ds, splits, capsys)[0] == 0
+    new = add_image(ds, item, "screw", old_rows[0]["grade"], 0, "20261206T100000Z")
+    assert split_cli(ds, splits, capsys)[0] == 0
+    assert read_split_csv(splits / "split_v3.csv")[new] == "test"
+
+
+def test_extra_stray_files_and_leading_zero_are_ignored(ds: Path, tmp_path: Path, capsys) -> None:
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    (splits / "split_v2.sha256").write_text("0" * 64 + "  split_v2.csv\n", encoding="utf-8")
+    (splits / "split_v2.json").write_text("{}", encoding="utf-8")
+    (splits / "split_v01.csv").write_bytes((splits / "split_v1.csv").read_bytes())
+    (splits / "split_v0.csv").write_bytes((splits / "split_v1.csv").read_bytes())
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 0, out
+    assert "split unchanged: split_v1" in out
+
+
+def test_extra_unchanged_with_a_longer_history(ds: Path, tmp_path: Path, capsys) -> None:
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    add_image(ds, "S-601", "screw", "good", 0, "20261207T100000Z")
+    assert split_cli(ds, splits, capsys)[0] == 0
+    before = tree_snapshot(splits)
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 0
+    assert "split unchanged: split_v2" in out
+    assert tree_snapshot(splits) == before
