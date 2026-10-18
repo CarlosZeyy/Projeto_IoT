@@ -2,7 +2,9 @@
 
 Written by the tester from the SPEC acceptance criteria (black box), before reading the
 implementation. One test per CA (``test_caNN_*``, CA-07 to CA-11); ``test_extra_*`` tests are
-exploratory edge cases around SPEC-027 section 4.3.
+exploratory edge cases around SPEC-027 section 4.3. Round r2 adds the ``test_extra_ca11_sec01_*``
+extras (SEC-01 of ``reviews/SPEC-027/r1-security-report.md``) and pins the exit code of the
+visible-ASCII URL extras of r1.
 
 As in SPEC-014, the script is loaded with ``importlib.util.spec_from_file_location`` and driven
 through ``main([...], transport=MockTransport(...), sleep=<recorder>, now=<fixed>)``. No real
@@ -17,15 +19,18 @@ variables are removed.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import logging
 import secrets
+import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
+from typing import NoReturn
 
 import httpx
 import pytest
@@ -572,30 +577,274 @@ def test_extra_cloud_api_url_env_is_checked_too(
     assert api.requests == []
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://xn--zz.com",
-        "https://-bad-.example.org",
-        "https://exa..mple.com",
-        "https://[::1",
-        "https://[zz]/",
-        "https://example.com:99999",
-        "https://example.com:-1",
-        "https://example.com:",
-        "https://" + "a" * 64 + ".com",
-        "https://" + "a." * 200 + "com",
-        "https://.example.com",
-    ],
-)
+# Visible-ASCII URLs that ``_api_url`` already refused in r1 (code 2) and the ones that are
+# valid for the HTTP client and for the socket codec (sent normally: code 0 with the fake API).
+# r1 accepted ``0`` or ``2`` here; r2 pins the code of each case (OBS-04 of r1, RV-02).
+ASCII_URLS_EXIT_2 = [
+    "https://xn--zz.com",
+    "https://[::1",
+    "https://[zz]/",
+    "https://example.com:99999",
+    "https://example.com:-1",
+]
+ASCII_URLS_SENT = [
+    "https://-bad-.example.org",
+    "https://example.com:",
+    "https://" + "a." * 200 + "com",
+]
+
+
+@pytest.mark.parametrize("url", ASCII_URLS_EXIT_2)
 def test_extra_ascii_urls_that_httpx_rejects_exit_2(run: Callable[..., Run], url: str) -> None:
     """Exploratory: visible-ASCII URLs that the HTTP client cannot use give code 2, not 1."""
     key = new_key()
     api = FakeApi(key)
     result = run(send_argv(url, key), api=api)
-    assert result.code in (0, 2), (result.code, result.err)
-    assert result.code != 1
-    assert "Traceback" not in result.err
+    assert_clean_usage_error(result, key)
+    assert INVALID_URL in result.err
+    assert api.requests == []
+
+
+@pytest.mark.parametrize("url", ASCII_URLS_SENT)
+def test_extra_odd_but_usable_ascii_urls_still_send(run: Callable[..., Run], url: str) -> None:
+    """Exploratory: hosts the httpx parser and the ``idna`` codec both accept are not refused."""
+    key = new_key()
+    api = FakeApi(key)
+    result = run(send_argv(url, key), api=api)
+    assert result.code == 0, result.err
+    assert len(api.batches()) == 1
+
+
+# --------------------------------------------------------------------------- extras of CA-11 (r2)
+#
+# SEC-01 of reviews/SPEC-027/r1-security-report.md (= RV-01 of r1-review-report.md): a visible
+# ASCII host with an empty label or a label longer than 63 characters passed ``_api_url``; the
+# socket's ``idna`` codec then raised ``UnicodeError`` on the first request: traceback and code 1.
+# These are extras of CA-11 (the CA text does not change). ``httpx.MockTransport`` never reaches
+# the socket, so the "real path" tests below run ``main`` with the real httpx transport and fake
+# only ``socket.create_connection`` (the network boundary). The fake first runs the real
+# ``socket.getaddrinfo`` with ``AI_NUMERICHOST``: it applies the same C-level ``idna`` encoding
+# as a real connection (``UnicodeError`` for the bad hosts) and never queries DNS. Then it
+# refuses the connection, so an accepted host ends in a network error (code 5).
+
+LABEL_63 = "a" * 63
+LABEL_64 = "a" * 64
+
+SEC01_REFUSED = [
+    "https://exa..mple.com",
+    "https://.example.com",
+    "https://example.com..",
+    "https://" + LABEL_64 + ".example.com",
+    "https://" + LABEL_64,
+]
+SEC01_REFUSED_IDS = [
+    "double-dot",
+    "leading-dot",
+    "two-trailing-dots",
+    "label-64",
+    "single-label-64",
+]
+SEC01_ACCEPTED = [
+    "https://example.com.",
+    "https://" + LABEL_63 + ".example.com",
+    "https://" + LABEL_63,
+    "https://[::1]",
+    "https://[::1]:8443",
+    "https://xn--nxasmq6b.com",
+    # "א1.com" (IDNA 2008): its Unicode form (httpx ``.host``) fails the IDNA 2003 bidi rule of
+    # the codec, but the socket only sees this ASCII form: it must not be refused.
+    "https://xn--1-zhc.com",
+    "http://localhost:8001",
+    "http://localhost",
+    "https://localhost",
+    "http://127.0.0.1:8001",
+    "http://127.0.0.1",
+]
+SEC01_ACCEPTED_IDS = [
+    "trailing-dot",
+    "label-63",
+    "single-label-63",
+    "ipv6-loopback",
+    "ipv6-loopback-port",
+    "xn-label",
+    "xn-label-rtl-digit",
+    "localhost-port",
+    "localhost",
+    "localhost-https",
+    "ipv4-loopback-port",
+    "ipv4-loopback",
+]
+
+
+def _marker() -> str:
+    return "m" + secrets.token_hex(6)
+
+
+def sec01_marked_hosts(m: str) -> list[str]:
+    """SEC-01 hosts that carry a generated marker, to check that nothing is echoed."""
+    return [
+        f"exa..{m}.invalid",
+        f".{m}.invalid",
+        f"{m}.invalid..",
+        f"{m}{'q' * (64 - len(m))}.invalid",
+        f"{m}{'q' * (64 - len(m))}",
+        f"x.{m}..",
+        f"1.2.3..{m}",
+    ]
+
+
+@dataclass
+class SocketGuard:
+    """Fake ``socket.create_connection``: real codec, no DNS, no connection."""
+
+    hosts: list[str] = field(default_factory=list)
+
+    def create_connection(
+        self, address: tuple[str, int], *args: object, **kwargs: object
+    ) -> NoReturn:
+        host, port = address[0], address[1]
+        self.hosts.append(host)
+        # gaierror: a name, not a numeric address; encoded by the codec, never resolved.
+        with contextlib.suppress(socket.gaierror):
+            REAL_GETADDRINFO(host, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)
+        raise ConnectionRefusedError("socket guard: no network in tests")
+
+
+REAL_GETADDRINFO = socket.getaddrinfo
+
+
+@pytest.fixture
+def socket_guard(monkeypatch: pytest.MonkeyPatch) -> SocketGuard:
+    guard = SocketGuard()
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+    monkeypatch.setattr(socket, "create_connection", guard.create_connection)
+    return guard
+
+
+def run_real(argv: list[str], capsys: pytest.CaptureFixture[str]) -> Run:
+    """``main`` with the real httpx transport (``transport`` not given)."""
+    capsys.readouterr()
+    sleeps: list[float] = []
+    code = sim.main(argv, sleep=sleeps.append, now=NOW)
+    out, err = capsys.readouterr()
+    return Run(code, out, err, "", sleeps)
+
+
+@pytest.mark.parametrize("url", SEC01_REFUSED, ids=SEC01_REFUSED_IDS)
+def test_extra_ca11_sec01_hosts_are_refused_with_code_2(run: Callable[..., Run], url: str) -> None:
+    key = new_key()
+    api = FakeApi(key)
+
+    result = run(send_argv(url, key), api=api)
+
+    assert_clean_usage_error(result, key, "mple", LABEL_64)
+    assert INVALID_URL in result.err
+    assert api.requests == []
+
+
+@pytest.mark.parametrize("index", range(7))
+def test_extra_ca11_sec01_marked_hosts_are_refused_without_echo(
+    run: Callable[..., Run], index: int
+) -> None:
+    m = _marker()
+    path = _marker()
+    url = f"https://{sec01_marked_hosts(m)[index]}/{path}"
+    key = new_key()
+    api = FakeApi(key)
+
+    result = run(send_argv(url, key), api=api)
+
+    assert_clean_usage_error(result, key, m, path)
+    assert INVALID_URL in result.err
+    assert api.requests == []
+
+
+@pytest.mark.parametrize("url", SEC01_REFUSED, ids=SEC01_REFUSED_IDS)
+def test_extra_ca11_sec01_hosts_in_cloud_api_url_are_refused(
+    run: Callable[..., Run], monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    key = new_key()
+    api = FakeApi(key)
+    monkeypatch.setenv("CLOUD_API_URL", url)
+    argv = send_argv("placeholder", key)
+    del argv[argv.index("--api-url") : argv.index("--api-url") + 2]
+
+    result = run(argv, api=api)
+
+    assert_clean_usage_error(result, key, "mple", LABEL_64)
+    assert INVALID_URL in result.err
+    assert api.requests == []
+
+
+@pytest.mark.parametrize("url", SEC01_ACCEPTED, ids=SEC01_ACCEPTED_IDS)
+def test_extra_ca11_sec01_valid_hosts_still_send(run: Callable[..., Run], url: str) -> None:
+    key = new_key()
+    api = FakeApi(key)
+
+    result = run(send_argv(url, key), api=api)
+
+    assert result.code == 0, result.err
+    assert len(api.batches()) == 1
+    expected = httpx.URL(url)
+    assert {(r.url.raw_host, r.url.port) for r in api.requests} == {
+        (expected.raw_host, expected.port)
+    }
+
+
+@pytest.mark.parametrize("url", SEC01_REFUSED, ids=SEC01_REFUSED_IDS)
+def test_extra_ca11_sec01_real_path_refuses_before_the_socket(
+    socket_guard: SocketGuard, capsys: pytest.CaptureFixture[str], url: str
+) -> None:
+    """Real httpx transport: without the r2 check this path ends in ``UnicodeError`` (code 1)."""
+    key = new_key()
+
+    result = run_real(send_argv(url, key), capsys)
+
+    assert result.code == 2, result.err
+    assert INVALID_URL in result.err
+    assert "Traceback" not in result.err + result.out
+    assert key not in result.err + result.out
+    assert socket_guard.hosts == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [*SEC01_ACCEPTED, *ASCII_URLS_SENT],
+    ids=[*SEC01_ACCEPTED_IDS, "bad-hyphens", "empty-port", "host-403-chars"],
+)
+def test_extra_ca11_sec01_real_path_valid_hosts_reach_the_socket(
+    socket_guard: SocketGuard, capsys: pytest.CaptureFixture[str], url: str
+) -> None:
+    """Real transport: a valid host passes the codec and ends in a network error (code 5)."""
+    key = new_key()
+
+    result = run_real(send_argv(url, key), capsys)
+
+    assert result.code == 5, result.err
+    assert "Traceback" not in result.err + result.out
+    assert key not in result.err + result.out
+    assert socket_guard.hosts == [httpx.URL(url).raw_host.decode("ascii")]
+
+
+@pytest.mark.parametrize(
+    ("url", "refused"),
+    [*((u, True) for u in SEC01_REFUSED), *((u, False) for u in SEC01_ACCEPTED)],
+    ids=[*SEC01_REFUSED_IDS, *SEC01_ACCEPTED_IDS],
+)
+def test_extra_ca11_sec01_premise_the_socket_codec_decides(url: str, refused: bool) -> None:
+    """The real ``getaddrinfo`` (numeric only, no DNS) raises ``UnicodeError`` exactly for the
+    refused hosts, so the r2 check refuses what the socket would refuse and nothing else."""
+    host = httpx.URL(url).raw_host.decode("ascii")
+    try:
+        REAL_GETADDRINFO(host, 443, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)
+        codec_refused = False
+    except UnicodeError:
+        codec_refused = True
+    except socket.gaierror:
+        codec_refused = False
+    assert codec_refused is refused
 
 
 @pytest.mark.parametrize(
@@ -608,10 +857,10 @@ def test_extra_ascii_urls_that_httpx_rejects_exit_2(run: Callable[..., Run], url
         "fullwidth-digit",
         "arabic-digit",
         "empty-item",
-        "trailing-space",
         "plus",
         "minus",
         "underscore",
+        "inner-space",
     ],
 )
 def test_extra_more_bad_lot_lists_exit_2(run: Callable[..., Run], lots: str) -> None:
