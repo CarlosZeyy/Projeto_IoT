@@ -12,6 +12,10 @@ Rules followed (``reviews/checklist.md`` and ``docs/architecture.md`` §10):
 * every token is built at run time (no credential literal in a URL or header);
 * no test runs the test suite in a subprocess; CA-17 runs pytest on explicit file paths only
   (the author's decision tests and the decision CAs of this file, never itself);
+* r2: the ``test_bug_t01_*`` of r1 were replaced by CA-19 and CA-20 (stricter: exact clamped
+  values) and by a property test over real onnxruntime ``Softmax`` outputs; the r1
+  ``test_extra_symlinked_model_dir_uses_the_link_name``, invalidated by §4.2 item 3, was
+  rewritten as ``test_extra_symlinked_model_dir_uses_the_target_name`` (SPEC §6);
 * the only boundaries replaced are ``uvicorn.run`` (spy), the LAN socket and, in CA-16, nothing:
   CA-16 is manual (``slow``) and is skipped without ``QC_REAL_MODEL_DIR``.
 """
@@ -32,14 +36,17 @@ import subprocess
 import sys
 import threading
 import types
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import FrozenInstanceError, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 import numpy as np
 import onnx
+import onnxruntime as ort
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -96,6 +103,9 @@ DUMMY_TYPE = [0.9, 0.05, 0.05]
 DUMMY_GRADE = [0.05, 0.8, 0.05, 0.05, 0.05]
 NEUTRAL_GRADE = [0.0, 0.7, 0.1, 0.1, 0.1]
 
+FIXED_INPUT_SHAPE: tuple[int | str, ...] = ("N", 3, 224, 224)  # SPEC §6, default dummy input
+DYNAMIC_INPUT_SHAPE: tuple[int | str, ...] = ("N", 3, "H", "W")  # CA-22 variant
+
 
 # =========================================================================== dummy models
 
@@ -107,15 +117,18 @@ def build_dummy_onnx(
     input_name: str = "image",
     type_name: str = "type_probs",
     grade_name: str = "grade_probs",
+    input_shape: Sequence[int | str] = FIXED_INPUT_SHAPE,
 ) -> bytes:
     """Dummy model of SPEC §6: ReduceMean(input) → Reshape [N,1] → Mul 0 → Add constants.
 
     The outputs are the constants ``[1,T]`` and ``[1,5]`` broadcast over the batch, whatever the
-    input. ``ir_version`` 8 (opset 17) is fixed so the locked ``onnxruntime`` accepts it (§7).
+    input (``ReduceMean`` works with any H×W, so the dynamic input of CA-22 is accepted). The
+    constants are float32. ``ir_version`` 8 (opset 17) is fixed so the locked ``onnxruntime``
+    accepts it (§7).
     """
     t = len(type_probs)
     g = len(grade_probs)
-    inp = helper.make_tensor_value_info(input_name, TensorProto.FLOAT, ["N", 3, 224, 224])
+    inp = helper.make_tensor_value_info(input_name, TensorProto.FLOAT, list(input_shape))
     out_t = helper.make_tensor_value_info(type_name, TensorProto.FLOAT, ["N", t])
     out_g = helper.make_tensor_value_info(grade_name, TensorProto.FLOAT, ["N", g])
     inits = [
@@ -155,11 +168,16 @@ def make_model_dir(
     sha_text: str | None = None,
     preprocessing: str | None = None,
     skip: Sequence[str] = (),
+    input_shape: Sequence[int | str] = FIXED_INPUT_SHAPE,
 ) -> Path:
     """Model directory of ``architecture.md`` §7 (``model.onnx`` and the four JSON/hash files)."""
     d = root / name
     d.mkdir(parents=True, exist_ok=False)
-    data = model_bytes if model_bytes is not None else build_dummy_onnx(type_probs, grade_probs)
+    data = (
+        model_bytes
+        if model_bytes is not None
+        else build_dummy_onnx(type_probs, grade_probs, input_shape=input_shape)
+    )
     files = {
         "model.onnx": data,
         "model.sha256": (
@@ -781,9 +799,9 @@ def test_ca17_decision_coverage_at_least_80(tmp_path: Path) -> None:
     """Coverage of ``qc_edge.decision`` from the author's decision tests plus the decision CAs.
 
     Runs pytest on explicit file paths only (``architecture.md`` §10): the author's
-    ``test_decision.py`` and the CA-01 to CA-07 tests of this file, never this test. A subset
-    of the two suites gives a lower bound of the CA's coverage, so ≥ 80% here implies ≥ 80%
-    for the full suites.
+    ``test_decision.py`` and the CA-01 to CA-07 and CA-19 tests of this file, never this test.
+    A subset of the two suites gives a lower bound of the CA's coverage, so ≥ 80% here implies
+    ≥ 80% for the full suites.
     """
     report = tmp_path / "cov.json"
     this = Path(__file__).relative_to(ROOT).as_posix()
@@ -798,6 +816,9 @@ def test_ca17_decision_coverage_at_least_80(tmp_path: Path) -> None:
         "test_ca05_unusable_threshold_is_inclusive",
         "test_ca06_grade_review_threshold",
         "test_ca07_invalid_outputs_raise",
+        "test_ca19_a_softmax_unusable_score_is_clamped_to_4",
+        "test_ca19_b_type_confidence_above_1_is_clamped",
+        "test_ca19_c_grade_confidence_above_1_and_negative_score_are_clamped",
     ]
     cmd = [
         sys.executable,
@@ -1116,13 +1137,6 @@ def test_extra_hash_checked_over_the_whole_file(models: Path) -> None:
         OnnxInferencer(d)
 
 
-def test_extra_symlinked_model_dir_uses_the_link_name(models: Path) -> None:
-    d = make_model_dir(models, "dummy-v1")
-    link = models / "partqc-link-v2"
-    link.symlink_to(d, target_is_directory=True)
-    assert OnnxInferencer(link).model_info.model_version == "partqc-link-v2"
-
-
 @pytest.mark.parametrize(
     ("value", "expected"), [(" 0.55 ", 0.55), ("1e-1", 0.1), ("0", 0.0), ("1", 1.0)]
 )
@@ -1160,60 +1174,398 @@ def test_extra_invalid_env_threshold_formats_exit_2(
     assert "GRADE_REVIEW_THRESHOLD" in captured_text(caplog, capsys)
 
 
-# =========================================================================== bug T-01
+# =========================================================================== CA-19
 
-# Real ``onnxruntime`` Softmax output (float32) for a very confident "unusable" grade, measured
-# with an ONNX Softmax node on the locked onnxruntime (see the test report, T-01): the values
-# are in [0, 1] and sum to 1 within 1e-3, so §4.1 item 1 accepts them, but
-# Σ i·p_i = 4.00000018 > 4, the contract maximum of ``grade_score``.
-SOFTMAX_CONFIDENT_UNUSABLE = [
-    2.5060348241012775e-10,
-    2.2349629091866774e-10,
-    7.390128092810144e-11,
-    5.8990508478018455e-08,
-    1.0,
-]
+# Real float32 ``Softmax`` output for a very confident "unusable" grade, as written in CA-19 (a):
+# p4 is exactly 1.0 and p3 > 0, so the raw Σ i·p_i is above 4 (the contract maximum).
+CA19_SOFTMAX_UNUSABLE = [2.506e-10, 2.235e-10, 7.39e-11, 5.899e-08, 1.0]
 
 
-@pytest.mark.parametrize(
-    ("type_probs", "grade_probs"),
-    [
-        ([0.98, 0.01, 0.01], SOFTMAX_CONFIDENT_UNUSABLE),
-        ([1.0000009, 0.0, 0.0], NEUTRAL_GRADE),
-    ],
-    ids=["softmax-unusable-score-above-4", "type-confidence-above-1-within-tolerance"],
-)
-def test_bug_t01_decision_stays_inside_the_contract(
-    type_probs: list[float], grade_probs: list[float]
-) -> None:
-    """An output that ``decide`` accepts must give values the contract accepts (T-01).
-
-    Neutral to the fix: ``decide`` may refuse the output (``InvalidModelOutputError``) or
-    return a decision; it must never return ``grade_score`` outside [0, 4] or a confidence
-    outside [0, 1], which ``InspectionCreate`` refuses (an unhandled 500 in the route).
-    """
-    try:
-        d = ca_decide(type_probs, grade_probs)
-    except InvalidModelOutputError:
-        return
-    assert 0.0 <= d.type_confidence <= 1.0, d
-    if d.grade is not None:
-        assert d.grade_score is not None and 0.0 <= d.grade_score <= 4.0, d
-        assert d.grade_confidence is not None and 0.0 <= d.grade_confidence <= 1.0, d
+def raw_grade_score(grade_probs: Sequence[float]) -> float:
+    return sum(i * float(p) for i, p in enumerate(grade_probs))
 
 
-def test_bug_t01_capture_with_a_confident_unusable_output(edge: Edge, models: Path) -> None:
-    """Via ``POST /api/capture``: 200, or 500 ``inference failed``; never another 500 (T-01)."""
+def inspection_from(d: Decision) -> InspectionCreate:
+    """``InspectionCreate`` built with the fields of the ``Decision`` plus a valid base payload."""
+    return InspectionCreate(
+        inspection_id=uuid.uuid4(),
+        device_id="edge-acc-01",
+        lot_id="L-001",
+        inspected_at=datetime.now(UTC),
+        object_type=d.object_type,
+        grade=d.grade,
+        grade_score=d.grade_score,
+        type_confidence=d.type_confidence,
+        grade_confidence=d.grade_confidence,
+        needs_review=d.needs_review,
+        model_version="dummy-v1",
+        model_sha256=sha256_hex(b"acceptance model"),
+        latency_ms=7,
+        source="live",
+    )
+
+
+def test_ca19_a_softmax_unusable_score_is_clamped_to_4() -> None:
+    assert raw_grade_score(CA19_SOFTMAX_UNUSABLE) > 4.0  # the case really goes past the range
+    d = ca_decide([0.98, 0.01, 0.01], CA19_SOFTMAX_UNUSABLE)
+    assert d.object_type == ObjectType.SCREW
+    assert d.grade == Grade.UNUSABLE
+    assert d.grade_score == 4.0
+    assert d.grade_confidence == 1.0
+    assert d.needs_review is False
+    assert d.type_confidence == 0.98
+    insp = inspection_from(d)
+    assert insp.grade_score == 4.0 and insp.grade == Grade.UNUSABLE
+
+
+def test_ca19_b_type_confidence_above_1_is_clamped() -> None:
+    d = ca_decide([1.0000009, 0.0, 0.0], [0.05, 0.8, 0.05, 0.05, 0.05])
+    assert d.object_type == ObjectType.SCREW
+    assert d.type_confidence == 1.0
+    assert d.grade == Grade.GOOD
+    assert d.grade_confidence == 0.8
+    assert d.needs_review is False
+    insp = inspection_from(d)
+    assert insp.type_confidence == 1.0
+
+
+def test_ca19_c_grade_confidence_above_1_and_negative_score_are_clamped() -> None:
+    assert raw_grade_score([1.0000005, -5e-7, 0.0, 0.0, 0.0]) < 0.0
+    d = ca_decide([0.9, 0.05, 0.05], [1.0000005, -5e-7, 0.0, 0.0, 0.0])
+    assert d.object_type == ObjectType.SCREW
+    assert d.grade == Grade.PERFECT
+    assert d.grade_confidence == 1.0
+    assert d.grade_score == 0.0
+    assert d.needs_review is False
+    insp = inspection_from(d)
+    assert insp.grade_score == 0.0 and insp.grade_confidence == 1.0
+
+
+# =========================================================================== CA-20
+
+
+def test_ca20_confident_unusable_output_through_the_route(edge: Edge, models: Path) -> None:
+    # Precondition of SPEC §6: in float32, p4 stays exactly 1.0 and p3 > 0 (raw score > 4).
+    as_f32 = np.asarray(CA19_SOFTMAX_UNUSABLE, dtype=np.float32)
+    assert as_f32[4] == 1.0 and as_f32[3] > 0
+    assert raw_grade_score(as_f32.astype(np.float64)) > 4.0
+
     d = make_model_dir(
-        models, "dummy-v1", type_probs=[0.98, 0.01, 0.01], grade_probs=SOFTMAX_CONFIDENT_UNUSABLE
+        models, "dummy-v1", type_probs=[0.98, 0.01, 0.01], grade_probs=CA19_SOFTMAX_UNUSABLE
     )
     sink = InMemorySink()
     app = create_app(EdgeSettings(), OnnxInferencer(d), sink)
     with TestClient(app, raise_server_exceptions=False) as client:
-        r = post_capture(client, edge.token, synthetic_jpeg(320, 240))
-    if r.status_code == 200:
-        assert r.json()["inspection"]["grade"] == "unusable"
-        assert len(sink.items) == 1
+        r = post_capture(client, edge.token, synthetic_jpeg(1280, 960))
+    assert r.status_code == 200, r.text
+    insp = r.json()["inspection"]
+    assert insp["grade"] == "unusable"
+    assert insp["grade_score"] == 4.0
+    assert insp["object_type"] == "screw"
+    assert insp["model_version"] == "dummy-v1"
+    assert len(sink.items) == 1
+    assert sink.items[0].grade_score == 4.0
+    assert len(edge.captures()) == 1
+
+
+# =========================================================================== CA-21
+
+
+def test_ca21_symlink_gives_the_name_of_the_target(models: Path) -> None:
+    d = make_model_dir(models, "dummy-v1")
+    sha = sha256_hex((d / "model.onnx").read_bytes())
+    link = models / "atual"
+    link.symlink_to(d, target_is_directory=True)
+    inf = OnnxInferencer(link)
+    assert inf.model_info.model_version == "dummy-v1"
+    assert inf.model_info == ModelInfo("dummy-v1", sha)
+
+
+def test_ca21_symlink_to_a_target_with_an_invalid_name(tmp_path: Path) -> None:
+    root = tmp_path / "models-invalid"
+    root.mkdir()
+    d = make_model_dir(root, "Dummy_V1")
+    link = root / "atual"  # a valid name: only the target name decides
+    link.symlink_to(d, target_is_directory=True)
+    with pytest.raises(ModelLoadError):
+        OnnxInferencer(link)
+
+
+# =========================================================================== CA-22
+
+CA22_PREPROCESSING = json.dumps(
+    {
+        "resize_shorter": 288,
+        "crop": 256,
+        "mean": list(PreprocessParams().mean),
+        "std": list(PreprocessParams().std),
+    }
+)
+
+
+def test_ca22_crop_incompatible_with_a_fixed_input_fails_at_load(models: Path) -> None:
+    d = make_model_dir(models, "dummy-v1", preprocessing=CA22_PREPROCESSING)
+    with pytest.raises(ModelLoadError) as exc:
+        OnnxInferencer(d)
+    assert "model.onnx" in str(exc.value)
+
+
+def test_ca22_dynamic_input_accepts_the_crop(models: Path) -> None:
+    d = make_model_dir(
+        models, "dummy-v1", preprocessing=CA22_PREPROCESSING, input_shape=DYNAMIC_INPUT_SHAPE
+    )
+    inf = OnnxInferencer(d)
+    res = inf.infer(open_jpeg(synthetic_jpeg(1280, 960)))
+    assert res.object_type == ObjectType.SCREW
+    assert res.grade == Grade.GOOD
+    assert res.type_confidence == pytest.approx(0.9, abs=1e-6)
+    assert res.grade_confidence == pytest.approx(0.8, abs=1e-6)
+
+
+# =========================================================================== CA-23
+
+
+def test_ca23_blank_model_dir_exits_2(
+    edge: Edge,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.chdir(tmp_path)  # no "   " directory in the working directory
+    monkeypatch.setenv("MODEL_DIR", "   ")
+    spy = UvicornSpy()
+    monkeypatch.setattr(uvicorn, "run", spy)
+    caplog.set_level(logging.DEBUG)
+    assert run_main(monkeypatch) == 2
+    assert spy.calls == []
+    assert "MODEL_DIR" in caplog.text
+
+
+# =========================================================================== extras (r2)
+
+
+def test_extra_clamp_also_applies_to_an_unknown_type_confidence() -> None:
+    """§4.1 item 6 has no exception for ``unknown``: ``type_confidence`` is clamped too."""
+    d = ca_decide([0.0, 0.0, 1.0000009], NEUTRAL_GRADE)
+    assert d.object_type == ObjectType.UNKNOWN
+    assert d.type_confidence == 1.0
+    assert (d.grade, d.grade_score, d.grade_confidence) == (None, None, None)
+    inspection_from(d)
+
+
+def test_extra_review_margin_compares_the_raw_type_confidence() -> None:
+    """With ``type_threshold + REVIEW_MARGIN`` between 1.0 and the raw value, only the raw
+    comparison gives ``needs_review = false`` (clamping first would give ``true``)."""
+    thresholds = Thresholds(
+        type_threshold=0.9000005, unusable_threshold=0.4, grade_review_threshold=0.6
+    )
+    limit = thresholds.type_threshold + REVIEW_MARGIN
+    assert 1.0 < limit < 1.0000009
+    d = decide([1.0000009, 0.0, 0.0], DUMMY_GRADE, CA_LABELS, thresholds)
+    assert d.type_confidence == 1.0
+    assert d.needs_review is False
+
+
+def test_extra_unusable_threshold_compares_the_raw_probability() -> None:
+    """``unusable_threshold = 0`` and a raw p4 of -5e-7: raw comparison → not ``unusable``."""
+    thresholds = Thresholds(type_threshold=0.5, unusable_threshold=0.0, grade_review_threshold=0.6)
+    d = decide([0.9, 0.05, 0.05], [1.0000005, 0.0, 0.0, 0.0, -5e-7], CA_LABELS, thresholds)
+    assert d.grade == Grade.PERFECT
+    assert d.grade_confidence == 1.0
+    assert d.grade_score == 0.0
+
+
+def _softmax_session() -> ort.InferenceSession:
+    inp = helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["N", "K"])
+    out = helper.make_tensor_value_info("probs", TensorProto.FLOAT, ["N", "K"])
+    node = helper.make_node("Softmax", ["logits"], ["probs"], axis=-1)
+    graph = helper.make_graph([node], "acc-softmax", [inp], [out])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.ir_version = 8
+    return ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"])
+
+
+def _confident_logits(rng: np.random.Generator, n: int, k: int) -> np.ndarray:
+    logits = rng.normal(0.0, 1.0, (n, k)).astype(np.float32)
+    dominant = rng.integers(0, k, n)
+    logits[np.arange(n), dominant] += rng.uniform(0.0, 25.0, n).astype(np.float32)
+    return logits
+
+
+def test_extra_onnxruntime_softmax_outputs_always_fit_the_contract() -> None:
+    """3000 real float32 ``Softmax`` outputs of the locked onnxruntime (type and grade heads),
+    many of them very confident: every one passes ``decide`` and ``InspectionCreate``."""
+    session = _softmax_session()
+    rng = np.random.default_rng(2026)
+    n = 3000
+    type_rows = session.run(["probs"], {"logits": _confident_logits(rng, n, 3)})[0]
+    grade_rows = session.run(["probs"], {"logits": _confident_logits(rng, n, 5)})[0]
+    above_4 = 0
+    for type_probs, grade_probs in zip(type_rows, grade_rows, strict=True):
+        if raw_grade_score(grade_probs.astype(np.float64)) > 4.0:
+            above_4 += 1
+        d = ca_decide(type_probs, grade_probs)
+        assert 0.0 <= d.type_confidence <= 1.0
+        if d.grade is not None:
+            assert d.grade_score is not None and 0.0 <= d.grade_score <= 4.0
+            assert d.grade_confidence is not None and 0.0 <= d.grade_confidence <= 1.0
+        inspection_from(d)
+    assert above_4 > 0  # the T-01 case of r1 really happens in the sample
+
+
+def test_extra_symlinked_model_dir_uses_the_target_name(
+    edge: Edge, models: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rewrite of the r1 ``test_extra_symlinked_model_dir_uses_the_link_name``, invalidated by
+    §4.2 item 3: through ``main()``, a link ``partqc-link-v2 → dummy-v1`` sends ``dummy-v1``."""
+    d = make_model_dir(models, "dummy-v1")
+    link = models / "partqc-link-v2"
+    link.symlink_to(d, target_is_directory=True)
+    monkeypatch.setenv("MODEL_DIR", str(link))
+    seen: dict[str, Any] = {}
+
+    def drive(app: Any) -> None:
+        with TestClient(app) as client:
+            seen["capture"] = post_capture(client, edge.token, synthetic_jpeg(320, 240))
+            seen["status"] = client.get("/api/status", headers={SESSION_HEADER: edge.token})
+
+    monkeypatch.setattr(uvicorn, "run", UvicornSpy(drive))
+    assert run_main(monkeypatch) == 0
+    assert seen["capture"].status_code == 200, seen["capture"].text
+    assert seen["capture"].json()["inspection"]["model_version"] == "dummy-v1"
+    assert seen["status"].json()["model"]["model_version"] == "dummy-v1"
+
+
+def test_extra_swapping_the_link_changes_the_version(models: Path) -> None:
+    """The motivation of §4.2 item 3: a fixed link name pointing to two models gives two names."""
+    v1 = make_model_dir(models, "partqc-mnv3-v1")
+    v2 = make_model_dir(models, "partqc-mnv3-v2", grade_probs=[0.8, 0.05, 0.05, 0.05, 0.05])
+    link = models / "current"
+    link.symlink_to(v1, target_is_directory=True)
+    first = OnnxInferencer(link)
+    link.unlink()
+    link.symlink_to(v2, target_is_directory=True)
+    second = OnnxInferencer(link)
+    assert first.model_info.model_version == "partqc-mnv3-v1"
+    assert second.model_info.model_version == "partqc-mnv3-v2"
+    assert first.model_info.model_sha256 != second.model_info.model_sha256
+    img = open_jpeg(synthetic_jpeg(320, 240))
+    assert first.infer(img).grade == Grade.GOOD  # the first session keeps its own model
+    assert second.infer(img).grade == Grade.PERFECT
+
+
+def test_extra_chain_and_relative_links(models: Path) -> None:
+    make_model_dir(models, "dummy-v1")
+    rel = models / "rel-link"
+    rel.symlink_to("dummy-v1", target_is_directory=True)  # relative target
+    chain = models / "Chain_Link"  # invalid name: only the final target counts
+    chain.symlink_to(rel, target_is_directory=True)
+    assert OnnxInferencer(rel).model_info.model_version == "dummy-v1"
+    assert OnnxInferencer(chain).model_info.model_version == "dummy-v1"
+    assert OnnxInferencer(Path(str(chain) + "/")).model_info.model_version == "dummy-v1"
+
+
+def test_extra_dot_dot_components_are_resolved(models: Path) -> None:
+    d = make_model_dir(models, "dummy-v1")
+    (d / "sub").mkdir()
+    assert OnnxInferencer(d / "sub" / "..").model_info.model_version == "dummy-v1"
+    assert OnnxInferencer(d / ".." / "dummy-v1").model_info.model_version == "dummy-v1"
+
+
+@pytest.mark.parametrize("case", ["broken-link", "link-to-a-file", "plain-file"])
+def test_extra_model_dir_that_is_not_a_directory(models: Path, case: str) -> None:
+    target = models / "target-file"
+    target.write_text("not a model", encoding="utf-8")
+    path = models / "model-link"
+    if case == "broken-link":
+        path.symlink_to(models / "missing-dir", target_is_directory=True)
+    elif case == "link-to-a-file":
+        path.symlink_to(target)
     else:
-        assert (r.status_code, r.json()) == (500, {"detail": "inference failed"}), r.text
-        assert sink.items == [] and edge.captures() == []
+        path = target
+    with pytest.raises(ModelLoadError) as exc:
+        OnnxInferencer(path)
+    assert "MODEL_DIR" in str(exc.value)
+
+
+def test_extra_link_loop_is_a_load_error(models: Path) -> None:
+    a = models / "loop-a"
+    b = models / "loop-b"
+    a.symlink_to(b, target_is_directory=True)
+    b.symlink_to(a, target_is_directory=True)
+    with pytest.raises(ModelLoadError) as exc:
+        OnnxInferencer(a)
+    assert "MODEL_DIR" in str(exc.value)
+
+
+def test_extra_fixed_input_of_256_loads_with_crop_256(models: Path) -> None:
+    """Warm-up with the ``crop`` of ``preprocessing.json`` (§4.2 item 7): a fixed 256 input
+    with ``crop=256`` loads and infers (with a fixed 224 warm-up it would fail at load)."""
+    d = make_model_dir(
+        models, "dummy-v1", preprocessing=CA22_PREPROCESSING, input_shape=("N", 3, 256, 256)
+    )
+    res = OnnxInferencer(d).infer(open_jpeg(synthetic_jpeg(1280, 960)))
+    assert (res.object_type, res.grade) == (ObjectType.SCREW, Grade.GOOD)
+
+
+def test_extra_fixed_input_of_256_fails_at_load_with_the_default_crop(models: Path) -> None:
+    """The opposite case: input ``[N,3,256,256]`` with the default ``crop=224`` fails at load
+    (in r1 it loaded and then failed every ``infer``)."""
+    d = make_model_dir(models, "dummy-v1", input_shape=("N", 3, 256, 256))
+    with pytest.raises(ModelLoadError) as exc:
+        OnnxInferencer(d)
+    assert "model.onnx" in str(exc.value)
+
+
+def test_extra_crop_mismatch_exits_2_through_the_cli(
+    edge: Edge,
+    models: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    d = make_model_dir(models, "dummy-v1", preprocessing=CA22_PREPROCESSING)
+    monkeypatch.setenv("MODEL_DIR", str(d))
+    spy = UvicornSpy()
+    monkeypatch.setattr(uvicorn, "run", spy)
+    caplog.set_level(logging.DEBUG)
+    assert run_main(monkeypatch) == 2
+    assert spy.calls == []
+    assert "model.onnx" in caplog.text
+
+
+@pytest.mark.parametrize("value", [" ", "\t", " \n "], ids=["1-space", "tab", "newline"])
+def test_extra_whitespace_model_dir_values_exit_2(
+    edge: Edge,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    value: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MODEL_DIR", value)
+    spy = UvicornSpy()
+    monkeypatch.setattr(uvicorn, "run", spy)
+    caplog.set_level(logging.DEBUG)
+    assert run_main(monkeypatch) == 2
+    assert spy.calls == []
+    assert "MODEL_DIR" in caplog.text
+
+
+@pytest.mark.parametrize("pad", ["leading", "trailing"])
+def test_extra_model_dir_with_spaces_around_a_valid_path_is_not_stripped(
+    edge: Edge,
+    models: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    pad: str,
+) -> None:
+    """§4.4: the value is not stripped, so ``" <valid dir>"`` is another path (exit 2)."""
+    d = make_model_dir(models, "dummy-v1")
+    value = f" {d}" if pad == "leading" else f"{d} "
+    monkeypatch.setenv("MODEL_DIR", value)
+    spy = UvicornSpy()
+    monkeypatch.setattr(uvicorn, "run", spy)
+    caplog.set_level(logging.DEBUG)
+    assert run_main(monkeypatch) == 2
+    assert spy.calls == []
+    assert "MODEL_DIR" in caplog.text
