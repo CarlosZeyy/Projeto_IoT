@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked — **Aguardando reaprovação humana** |
-| Rodada atual | r1 |
+| Status | In Dev |
+| Rodada atual | r2 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-007, SPEC-010 (`Done`) |
@@ -309,3 +309,4 @@ Contexto comum: `EdgeSettings` com `EDGE_PORT=8000` e `EDGE_DATA_DIR` e `DATASET
 | 2026-10-17 | Mudanças: (a) título e cabeçalho (depende da SPEC-010, já `Done`; prazo também antes do primeiro backup do dataset no Drive); (b) §1 com as pendências de código da SPEC-010; (c) §3 com os arquivos novos e o que fica fora; (d) §4.2: ordem sem o 501 e o limitador assíncrono valendo para os dois modos; (e) §4.7: ajustes em testes antigos pela regra de `architecture.md` §10, com o item 4 (`test_spec_010.py`); (f) §4.8 nova: o modo coleta grava o JPEG sem APP1, APP13, COM e dados depois do EOI, sem reencodar (415 em erro estrutural; o modo `inspect` não muda); (g) §4.9 nova: CLI `python -m qc_edge.privacy` (varredura e `--fix`); (h) §4.10 nova: `fsync` dos diretórios na coleta; (i) §4.11 nova: `notes` recusa `Cf`, `Zl` e `Zp`, e `capture_device` troca controles por espaço antes do corte; (j) §4.12 nova: README do modo coleta; (k) CA-08 inclui uma coleta, CA-09 ganha os umasks `0o000` e `0o277`, CA-11 confere o README; CAs novos CA-13 a CA-18; §6, §7 e §8 atualizadas. Nenhum outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-10-01, SEC-10-02 e SEC-10-03 de `reviews/SPEC-010/r1-security-report.md`; RV-02 (O-01), RV-03 e RV-04 de `reviews/SPEC-010/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-18 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-18 | Mudanças: (a) §4.8: um JPEG com rotação EXIF (`Orientation` de 2 a 8, pela função nova `has_exif_rotation`) recebe 415 `invalid image: EXIF orientation not supported` na coleta, em vez de perder o APP1, e a frase sobre os pixels passa a valer também para o `qc_preprocess.load_image`; (b) §4.2: a chamada única inclui essa checagem; (c) §4.9: achado `orientation`, que o `--fix` não reescreve (código 1); (d) §4.12: item 4 do README; (e) CA-11 confere `orientation` no README; CA-13 e CA-15 conferem os pixels também pelo `load_image`; CA-19 novo; §3.1, §6 e §7 atualizadas. Nenhum ajuste novo em testes antigos (§4.7). SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 (RV-01) de `reviews/SPEC-025/r1-review-report.md`: a remoção do APP1 apagava a tag `Orientation`, que o `load_image` aplica (paridade de entrada, ADR-004) | Orquestrador |
+| 2026-10-18 | Correção do SPEC_ISSUE-01 (opção c) reaprovada; `Blocked` → `In Dev` na r2. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
