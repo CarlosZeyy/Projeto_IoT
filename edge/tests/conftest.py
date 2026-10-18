@@ -4,7 +4,8 @@ Images are generated in memory, never stored in the repository (R-14). The JPEG 
 SPEC-025 (``jpeg_tools``) insert, right after the SOI of a Pillow JPEG, an EXIF APP1 with a GPS
 IFD, an XMP APP1, an IPTC APP13 and a COM, and append a Motion-Photo-like trailer after the EOI;
 the rotated samples carry an EXIF (or XMP) ``Orientation``. The ``dummy_model`` fixture
-(SPEC-008) gives the helper that builds dummy ONNX models and model directories.
+(SPEC-008) gives the helper that builds dummy ONNX models and model directories, and
+``fake_cloud`` (SPEC-009) the fake cloud, the manual clock and an inspection factory.
 """
 
 from __future__ import annotations
@@ -25,17 +26,27 @@ from PIL import Image, TiffImagePlugin
 from qc_edge.config import EdgeSettings
 
 
-def _load_dummy_model() -> types.ModuleType:
-    """``edge/tests/dummy_model.py`` loaded by path (SPEC-008; not on ``sys.path``)."""
-    name = "qc_edge_tests_dummy_model"
+def _load_helper(file_name: str) -> types.ModuleType:
+    """A helper module of ``edge/tests`` loaded by path (not on ``sys.path``)."""
+    name = "qc_edge_tests_" + file_name.removesuffix(".py")
     if name in sys.modules:
         return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("dummy_model.py"))
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(file_name))
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_dummy_model() -> types.ModuleType:
+    """``edge/tests/dummy_model.py`` (SPEC-008)."""
+    return _load_helper("dummy_model.py")
+
+
+def load_fake_cloud() -> types.ModuleType:
+    """``edge/tests/fake_cloud.py`` (SPEC-009): fake cloud, manual clock, inspection factory."""
+    return _load_helper("fake_cloud.py")
 
 
 XMP_PREFIX = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -256,3 +267,9 @@ def dummy_model() -> types.ModuleType:
     """The ``edge/tests/dummy_model.py`` helper (SPEC-008): ``build_model``, ``write_model_dir``,
     ``sha256_of`` and the default constants."""
     return _load_dummy_model()
+
+
+@pytest.fixture
+def fake_cloud() -> types.ModuleType:
+    """The ``edge/tests/fake_cloud.py`` helper (SPEC-009)."""
+    return load_fake_cloud()

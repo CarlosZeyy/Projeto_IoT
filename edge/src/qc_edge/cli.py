@@ -10,14 +10,31 @@ overrides of the environment; unset or empty (``""``) -> no model (inspect mode 
 The value is not stripped: ``MODEL_DIR`` with only spaces is set, is not a directory and exits
 with code 2 (a typo in ``.env`` must not start the gateway without a model).
 ``--stub-model`` takes precedence over ``MODEL_DIR`` (a warning is logged and the directory is not
-loaded): the gateway answers with ``StubInferencer`` results. Nothing is ever published to the
-cloud in that mode (R-06): the sink is ``InMemorySink``, which sends nothing anywhere.
+loaded): the gateway answers with ``StubInferencer`` results. Nothing is ever stored on disk nor
+published to the cloud in that mode (R-06).
+
+Outbox and cloud (SPEC-009 section 4.4):
+
+* without ``--stub-model``: the sink is ``SqliteOutbox(OUTBOX_PATH)`` (default
+  ``EDGE_DATA_DIR/outbox.sqlite3``; one that cannot be opened exits with code 2 naming
+  ``OUTBOX_PATH``), and a ``PublishLoop`` with ``HttpPublisher`` runs only when ``DEVICE_API_KEY``
+  and ``CLOUD_API_URL`` are both set; otherwise ``connectivity`` is ``disabled``;
+* with ``--stub-model``: the sink is ``InMemorySink`` and there is no loop, whatever the key and
+  the URL. ``OUTBOX_PATH`` is never opened, created or validated, so a stub result (``stub-v0``,
+  ``source=live``) never reaches a durable file and no later start can publish it (R-06). A
+  ``WARNING`` naming ``--stub-model`` (and no value) says so.
+
+An invalid ``CLOUD_API_URL`` (``EdgeSettings``) or a set ``DEVICE_API_KEY`` that is not visible
+ASCII exits with code 2 naming the variable, never its value, with or without the flag. The loop
+stops with the app (lifespan); the outbox stays open until the process ends (every ``put`` is
+already committed, so nothing is lost).
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
 from collections.abc import Sequence
 from typing import TextIO
@@ -31,7 +48,10 @@ from qc_edge.argv import ArgumentsError, QuietArgumentParser, describe_arguments
 from qc_edge.config import EdgeSettings
 from qc_edge.inference import Inferencer, StubInferencer, short_sha
 from qc_edge.onnx_inferencer import THRESHOLD_ENV_VARS, ModelLoadError, OnnxInferencer
-from qc_edge.sink import InMemorySink, InspectionSink
+from qc_edge.outbox import OUTBOX_FILE_NAME, SqliteOutbox
+from qc_edge.publish_loop import ConnectivityState, PublishLoop
+from qc_edge.publisher import HttpPublisher, check_api_key
+from qc_edge.sink import BackgroundService, InMemorySink, InspectionSink
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 EXIT_RUNTIME_ERROR = 1
@@ -58,6 +78,57 @@ def configure_logging() -> None:
         handler = _StderrHandler()
         handler.setFormatter(logging.Formatter(LOG_FORMAT))
         logger.addHandler(handler)
+
+
+def _open_outbox(settings: EdgeSettings, connectivity: ConnectivityState | None) -> SqliteOutbox:
+    """``SqliteOutbox`` at ``OUTBOX_PATH``; exits with code 2 when it cannot be opened."""
+    path = settings.OUTBOX_PATH or settings.EDGE_DATA_DIR / OUTBOX_FILE_NAME
+    try:
+        return SqliteOutbox(path, connectivity=connectivity)
+    except (OSError, sqlite3.Error) as exc:
+        logger.error("invalid configuration: OUTBOX_PATH: cannot open the outbox (%s)", exc)
+        sys.exit(EXIT_CONFIG_ERROR)
+
+
+def _build_sink(
+    settings: EdgeSettings, stub_model: bool
+) -> tuple[InspectionSink, list[BackgroundService]]:
+    """Sink and background services (SPEC-009 section 4.4)."""
+    api_key = settings.DEVICE_API_KEY.get_secret_value() if settings.DEVICE_API_KEY else None
+    url = settings.CLOUD_API_URL  # already checked by EdgeSettings, with or without the flag
+    if api_key:
+        try:
+            check_api_key(api_key)
+        except ValueError as exc:
+            logger.error("invalid configuration: DEVICE_API_KEY: %s", exc)
+            sys.exit(EXIT_CONFIG_ERROR)
+
+    if stub_model:
+        # R-06: OUTBOX_PATH is not opened, created or validated; stub results stay in memory.
+        logger.warning(
+            "--stub-model: inspections are kept only in memory and are never written to the "
+            "outbox nor sent to the cloud"
+        )
+        return InMemorySink(), []
+
+    if not api_key or not url:
+        missing = [
+            name
+            for name, value in (("DEVICE_API_KEY", api_key), ("CLOUD_API_URL", url))
+            if not value
+        ]
+        logger.warning(
+            "cloud publishing disabled (%s not set): inspections stay in the outbox",
+            " and ".join(missing),
+        )
+        return _open_outbox(settings, None), []
+
+    connectivity = ConnectivityState()
+    outbox = _open_outbox(settings, connectivity)
+    publisher = HttpPublisher(url, api_key)
+    loop = PublishLoop(outbox, publisher, connectivity)
+    logger.info("cloud publishing enabled (outbox: %s)", outbox.path)
+    return outbox, [loop]
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -146,7 +217,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         sys.exit(EXIT_CONFIG_ERROR)
 
     inferencer = _load_inferencer(settings, args.stub_model)
-    sink: InspectionSink = InMemorySink()
+    sink, background = _build_sink(settings, args.stub_model)
 
     # SEC-04: checked after every edge module and onnxruntime are imported (and the model is
     # loaded) and before the server starts. No qc_edge module changes the flag.
@@ -157,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         sys.exit(EXIT_RUNTIME_ERROR)
 
-    app = create_app(settings, inferencer, sink)
+    app = create_app(settings, inferencer, sink, background=background)
     if args.stub_model:
         logger.warning("stub model enabled: results are fake and nothing is published")
     elif inferencer is None:

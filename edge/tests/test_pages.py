@@ -1,5 +1,5 @@
 """Console, phone page, static files and /api/status (SPEC-007 section 4.4, SPEC-025 section
-4.1)."""
+4.1, SPEC-009 section 3.1)."""
 
 from __future__ import annotations
 
@@ -108,6 +108,33 @@ def test_console_shows_sink_stats(settings: EdgeSettings, lan_ips: list[str]) ->
     page = client.get("/").text
     assert re.search(r'id="sink-pending">7<', page)
     assert "offline" in page
+
+
+@pytest.mark.parametrize(
+    ("connectivity", "label"),
+    [
+        ("online", ">online<"),
+        ("offline", ">offline<"),
+        ("auth_error", "erro de autenticação (envio pausado: confira o DEVICE_API_KEY"),
+        ("disabled", "desativada (nada é enviado à nuvem)"),
+    ],
+)
+def test_console_connectivity_label_and_code(
+    settings: EdgeSettings, lan_ips: list[str], connectivity: Any, label: str
+) -> None:
+    """SPEC-009: PT-BR label, the code in ``data-connectivity`` and the outbox counts."""
+
+    class _Sink(InMemorySink):
+        def stats(self) -> SinkStats:
+            return SinkStats(pending=3, dead=1, last_success_at=None, connectivity=connectivity)
+
+    client = TestClient(_app(settings, sink=_Sink()), client=LOCAL, base_url=CONSOLE_URL)
+    page = client.get("/").text
+    assert f'data-connectivity="{connectivity}"' in page
+    assert label in page
+    assert re.search(r'id="sink-pending">3<', page)
+    assert re.search(r'id="sink-dead">1<', page)
+    assert re.search(r'id="sink-last-success">—<', page)
 
 
 @pytest.mark.parametrize(
