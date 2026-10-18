@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 import threading
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -18,12 +19,23 @@ from migrate import (
     DEFAULT_DIR,
     MigrationError,
     apply_migrations,
+    load_migrations,
     pending_migrations,
 )
 
 pytestmark = pytest.mark.db
 
 INIT_SQL = DEFAULT_DIR / "001_init.sql"
+CHECKS_SQL = DEFAULT_DIR / "002_contract_checks.sql"
+# Every version of infra/migrations, computed (not hard-coded) so a new migration does not
+# break these tests (SPEC-027 section 3.1).
+ALL_VERSIONS = [migration.version for migration in load_migrations()]
+CONTRACT_CHECKS = {
+    "inspections_model_version_check",
+    "inspections_inspection_id_v4_check",
+    "inspections_inspected_at_range_check",
+    "inspections_received_at_range_check",
+}
 
 
 def _reset(conninfo: str) -> None:
@@ -91,31 +103,65 @@ def _copy_init(directory: Path) -> Path:
     return target
 
 
+def _check_constraints(conninfo: str) -> set[str]:
+    rows = _query(
+        conninfo,
+        "select conname from pg_constraint "
+        "where conrelid = 'inspections'::regclass and contype = 'c'",
+    )
+    return {row[0] for row in rows}
+
+
+def test_default_dir_starts_with_init_and_contract_checks() -> None:
+    assert ALL_VERSIONS[:2] == ["001", "002"]
+
+
 def test_apply_on_empty_schema(empty_schema: str) -> None:
-    assert pending_migrations(empty_schema) == ["001"]
-    assert apply_migrations(empty_schema) == ["001"]
+    assert pending_migrations(empty_schema) == ALL_VERSIONS
+    assert apply_migrations(empty_schema) == ALL_VERSIONS
     assert {"devices", "inspections", "schema_migrations"} <= _tables(empty_schema)
-    rows = _query(empty_schema, "select version, filename, checksum from schema_migrations")
-    assert rows == [("001", "001_init.sql", hashlib.sha256(INIT_SQL.read_bytes()).hexdigest())]
+    rows = _query(
+        empty_schema,
+        "select version, filename, checksum from schema_migrations order by version",
+    )
+    assert rows == [
+        (m.version, m.filename, hashlib.sha256(m.path.read_bytes()).hexdigest())
+        for m in load_migrations()
+    ]
+    assert rows[1] == (
+        "002",
+        "002_contract_checks.sql",
+        hashlib.sha256(CHECKS_SQL.read_bytes()).hexdigest(),
+    )
     assert pending_migrations(empty_schema) == []
 
 
 def test_apply_is_idempotent(migrated_db: str) -> None:
     assert apply_migrations(migrated_db) == []
-    assert _query(migrated_db, "select count(*) from schema_migrations") == [(1,)]
+    assert _query(migrated_db, "select count(*) from schema_migrations") == [(len(ALL_VERSIONS),)]
 
 
-def test_running_sql_file_again_changes_nothing(migrated_db: str) -> None:
+@pytest.mark.parametrize("migration", load_migrations(), ids=lambda m: m.filename)
+def test_running_sql_file_again_changes_nothing(migrated_db: str, migration) -> None:
     before = _schema_snapshot(migrated_db)
     with psycopg.connect(migrated_db, autocommit=True) as conn:
-        conn.execute(INIT_SQL.read_text(encoding="utf-8"))
+        conn.execute(migration.read_sql())
+        conn.execute(migration.read_sql())
     assert _schema_snapshot(migrated_db) == before
 
 
 def test_manual_then_runner_does_not_fail(empty_schema: str) -> None:
     with psycopg.connect(empty_schema, autocommit=True) as conn:
         conn.execute(INIT_SQL.read_text(encoding="utf-8"))
-    assert apply_migrations(empty_schema) == ["001"]
+    assert apply_migrations(empty_schema) == ALL_VERSIONS
+
+
+def test_manual_001_and_002_then_runner_does_not_fail(empty_schema: str) -> None:
+    with psycopg.connect(empty_schema, autocommit=True) as conn:
+        conn.execute(INIT_SQL.read_text(encoding="utf-8"))
+        conn.execute(CHECKS_SQL.read_text(encoding="utf-8"))
+    assert apply_migrations(empty_schema) == ALL_VERSIONS
+    assert _check_constraints(empty_schema) >= CONTRACT_CHECKS
 
 
 def test_failed_migration_is_rolled_back(empty_schema: str, tmp_path: Path) -> None:
@@ -142,7 +188,7 @@ def test_checksum_mismatch_applies_nothing(migrated_db: str, tmp_path: Path) -> 
     with pytest.raises(MigrationError, match="checksum mismatch for 001"):
         pending_migrations(migrated_db, tmp_path)
     assert "t_more" not in _tables(migrated_db)
-    assert _query(migrated_db, "select count(*) from schema_migrations") == [(1,)]
+    assert _query(migrated_db, "select count(*) from schema_migrations") == [(len(ALL_VERSIONS),)]
 
 
 def test_invalid_filename_touches_nothing(empty_schema: str, tmp_path: Path) -> None:
@@ -215,8 +261,8 @@ def test_concurrent_runs_apply_once(empty_schema: str) -> None:
     for thread in threads:
         thread.join(timeout=60)
     assert errors == []
-    assert sorted(results) == [[], [], [], ["001"]]
-    assert _query(empty_schema, "select count(*) from schema_migrations") == [(1,)]
+    assert sorted(results) == [[], [], [], ALL_VERSIONS]
+    assert _query(empty_schema, "select count(*) from schema_migrations") == [(len(ALL_VERSIONS),)]
 
 
 def test_advisory_lock_is_released(migrated_db: str) -> None:
@@ -224,3 +270,123 @@ def test_advisory_lock_is_released(migrated_db: str) -> None:
     assert _query(migrated_db, "select count(*) from pg_locks where locktype = 'advisory'") == [
         (0,)
     ]
+
+
+# ---------- 002_contract_checks: check of the existing rows (SPEC-027 section 4.1) ----------
+
+
+def _copy_init_and_checks(directory: Path) -> None:
+    _copy_init(directory)
+    shutil.copyfile(CHECKS_SQL, directory / CHECKS_SQL.name)
+
+
+def _insert_raw(conninfo: str, **overrides: object) -> None:
+    """One inspection written by plain SQL (as the SQL Editor would), bypassing the API."""
+    row: dict[str, object] = {
+        "inspection_id": str(uuid.uuid4()),
+        "device_id": "edge-01",
+        "lot_id": "L-001",
+        "inspected_at": "2026-10-12T12:00:00Z",
+        "object_type": "screw",
+        "grade": "fair",
+        "grade_score": 2.0,
+        "type_confidence": 0.9,
+        "grade_confidence": 0.8,
+        "needs_review": False,
+        "model_version": "partqc-mnv3-v1",
+        "model_sha256": "a" * 64,
+        "latency_ms": 100,
+        "source": "live",
+    }
+    row.update(overrides)
+    columns = ", ".join(row)
+    placeholders = ", ".join(f"%({name})s" for name in row)
+    with psycopg.connect(conninfo, autocommit=True) as conn:
+        conn.execute(
+            "insert into devices (device_id, api_key_hash) values ('edge-01', %s) "
+            "on conflict do nothing",
+            ("b" * 64,),
+        )
+        conn.execute(f"insert into inspections ({columns}) values ({placeholders})", row)
+
+
+@pytest.fixture
+def only_001(empty_schema: str, tmp_path: Path) -> Path:
+    """Schema with only 001 applied; ``tmp_path`` holds copies of 001 and 002."""
+    _copy_init(tmp_path)
+    assert apply_migrations(empty_schema, tmp_path) == ["001"]
+    shutil.copyfile(CHECKS_SQL, tmp_path / CHECKS_SQL.name)
+    return tmp_path
+
+
+def test_002_creates_the_four_check_constraints(migrated_db: str) -> None:
+    rows = _query(
+        migrated_db,
+        "select conname, contype from pg_constraint "
+        "where conrelid = 'inspections'::regclass and conname = any(%s)",
+        (sorted(CONTRACT_CHECKS),),
+    )
+    assert sorted(rows) == sorted((name, "c") for name in CONTRACT_CHECKS)
+
+
+def test_002_applies_over_valid_rows(empty_schema: str, only_001: Path) -> None:
+    for _ in range(3):
+        _insert_raw(empty_schema)
+    assert apply_migrations(empty_schema, only_001) == ["002"]
+    assert _check_constraints(empty_schema) >= CONTRACT_CHECKS
+    assert _query(empty_schema, "select count(*) from inspections") == [(3,)]
+
+
+def test_002_refuses_invalid_rows_with_counts_only(empty_schema: str, only_001: Path) -> None:
+    v1 = str(uuid.uuid1())
+    _insert_raw(empty_schema, model_version="MODEL_X")
+    _insert_raw(empty_schema, inspection_id=v1)
+    _insert_raw(empty_schema, inspected_at="infinity")
+    # One row breaking two rules counts once in the total.
+    _insert_raw(empty_schema, model_version="BAD", received_at="-infinity")
+    with pytest.raises(MigrationError) as info:
+        apply_migrations(empty_schema, only_001)
+    message = str(info.value)
+    assert (
+        "migration 002: 4 row(s) of inspections violate the new checks (model_version=2, "
+        "inspection_id=1, inspected_at=1, received_at=1); fix or delete them before migrating"
+    ) in message
+    for value in ("MODEL_X", "BAD", v1, "infinity"):
+        assert value not in message
+    assert _query(empty_schema, "select version from schema_migrations") == [("001",)]
+    assert CONTRACT_CHECKS.isdisjoint(_check_constraints(empty_schema))
+    assert _query(empty_schema, "select count(*) from inspections") == [(4,)]
+
+    with psycopg.connect(empty_schema, autocommit=True) as conn:
+        conn.execute("delete from inspections")
+    assert apply_migrations(empty_schema, only_001) == ["002"]
+    assert _check_constraints(empty_schema) >= CONTRACT_CHECKS
+
+
+def test_002_file_run_by_hand_also_refuses_invalid_rows(empty_schema: str, only_001: Path) -> None:
+    _insert_raw(empty_schema, inspected_at="infinity")
+    with (
+        psycopg.connect(empty_schema, autocommit=True) as conn,
+        pytest.raises(psycopg.errors.RaiseException, match=r"migration 002: 1 row\(s\)"),
+    ):
+        conn.execute(CHECKS_SQL.read_text(encoding="utf-8"))
+    # One DO block: the refusal leaves no constraint behind, even without a transaction.
+    assert CONTRACT_CHECKS.isdisjoint(_check_constraints(empty_schema))
+
+
+def test_002_keeps_an_existing_constraint_with_the_same_name(
+    empty_schema: str, only_001: Path
+) -> None:
+    with psycopg.connect(empty_schema, autocommit=True) as conn:
+        conn.execute(
+            "alter table inspections add constraint inspections_model_version_check "
+            "check (length(model_version) > 0)"
+        )
+    assert apply_migrations(empty_schema, only_001) == ["002"]
+    (definition,) = _query(
+        empty_schema,
+        "select pg_get_constraintdef(oid) from pg_constraint "
+        "where conrelid = 'inspections'::regclass and conname = 'inspections_model_version_check'",
+    )
+    assert "length" in definition[0]
+    assert _check_constraints(empty_schema) >= CONTRACT_CHECKS

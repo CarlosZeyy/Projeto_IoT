@@ -868,3 +868,308 @@ def test_real_api_refuses_another_device(
     assert sim.main(argv, transport=app_transport, sleep=lambda _s: None, now=NOW) == 3
     assert online_env not in "".join(capsys.readouterr())
     assert _count(clean_db) == []
+
+
+# ---------------------------------------------------------------------------------------------
+# SPEC-027: usage errors without echo, key starting with "-", URL characters, lot numbers
+# ---------------------------------------------------------------------------------------------
+
+README = Path(__file__).resolve().parents[2] / "README.md"
+
+
+@pytest.fixture
+def typed() -> str:
+    """A value typed by the operator (it could be the key); never printed."""
+    return "Z" + secrets.token_urlsafe(32)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "unrecognized arguments: --api-keyy SECRET",
+            "unrecognized arguments: 2 value(s) (not shown)",
+        ),
+        (
+            "unrecognized arguments: 3 value(s) (not shown)",
+            "unrecognized arguments: 3 value(s) (not shown)",
+        ),
+        (
+            "argument --lots: invalid int value: 'SECRET'",
+            "argument --lots: invalid int value (not shown)",
+        ),
+        (
+            'argument --lots: invalid int value: "it\'s SECRET"',
+            "argument --lots: invalid int value (not shown)",
+        ),
+        (
+            "argument --lots: invalid int value: 'a\\'b\"SECRET'",
+            "argument --lots: invalid int value (not shown)",
+        ),
+        (
+            "argument --dry-run: ignored explicit argument 'SECRET'",
+            "argument --dry-run: ignored explicit argument (not shown)",
+        ),
+        (
+            "argument --x: invalid choice: 'SECRET' (choose from 'a', 'b')",
+            "argument --x: invalid choice (not shown) (choose from (not shown), (not shown))",
+        ),
+        ("argument --api-key: expected one argument", "argument --api-key: expected one argument"),
+        (
+            "--model-version must match ^[a-z0-9.-]{3,40}$",
+            "--model-version must match ^[a-z0-9.-]{3,40}$",
+        ),
+    ],
+)
+def test_redact_usage_error(message: str, expected: str) -> None:
+    assert sim.redact_usage_error(message) == expected
+    assert "SECRET" not in sim.redact_usage_error(message)
+
+
+def test_parser_is_the_no_echo_subclass() -> None:
+    parser = sim._build_parser()
+    assert isinstance(parser, sim.NoEchoArgumentParser)
+    assert isinstance(parser, sim.argparse.ArgumentParser)
+
+
+def _no_echo_cases(value: str) -> list[tuple[list[str], str]]:
+    return [
+        (["--api-keyy", value], "unrecognized arguments: 2 value(s) (not shown)"),
+        (["--api-keyy=" + value], "unrecognized arguments: 1 value(s) (not shown)"),
+        ([value], "unrecognized arguments: 1 value(s) (not shown)"),
+        ([value, "two words " + value], "unrecognized arguments: 2 value(s) (not shown)"),
+        (["--lots", value], "argument --lots: invalid int value (not shown)"),
+        (["--lots=" + value], "argument --lots: invalid int value (not shown)"),
+        (["--lot-size", value], "argument --lot-size: invalid int value (not shown)"),
+        (["--lot-size-min", value], "argument --lot-size-min: invalid int value (not shown)"),
+        (["--seed", "x" + value], "argument --seed: invalid int value (not shown)"),
+        (["--defect-rate", value], "argument --defect-rate: invalid float value (not shown)"),
+        (["--unknown-rate", value], "argument --unknown-rate: invalid float value (not shown)"),
+        (["--dry-run=" + value], "argument --dry-run: ignored explicit argument (not shown)"),
+        (["--start", value], "--start"),
+        (["--out-of-control-lots", value], "--out-of-control-lots"),
+        (["--device-id", value], "--device-id"),
+        (["--model-version", value + "!"], "--model-version"),
+    ]
+
+
+@pytest.mark.parametrize("case", range(16))
+def test_usage_errors_never_echo_the_value(
+    case: int,
+    typed: str,
+    monkeypatch: pytest.MonkeyPatch,
+    run: Callable[..., Run],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("SIM_DEVICE_ID", "sim-01")
+    argv, expected = _no_echo_cases(typed)[case]
+    caplog.set_level("DEBUG")
+    result = run(["--dry-run", *argv])
+    assert result.code == 2
+    for text in (result.out, result.err, caplog.text):
+        assert typed not in text
+    assert "Traceback" not in result.err
+    assert expected in result.err
+    assert result.err.startswith("usage: simulate.py")
+
+
+def test_help_mentions_the_equals_form(run: Callable[..., Run]) -> None:
+    result = run(["--help"])
+    assert result.code == 0
+    assert result.out.startswith("usage:")
+    assert "--api-key=<value>" in result.out
+    assert "SIM_DEVICE_API_KEY" in result.out
+
+
+@pytest.mark.parametrize("columns", ["30", "80", "250"])
+def test_help_never_splits_the_equals_form(
+    columns: str, monkeypatch: pytest.MonkeyPatch, run: Callable[..., Run]
+) -> None:
+    monkeypatch.setenv("COLUMNS", columns)
+    assert "--api-key=<value>" in run(["--help"]).out
+
+
+def test_readme_documents_the_equals_form() -> None:
+    text = README.read_text(encoding="utf-8")
+    section = text.split("### Simulador", 1)[1].split("\n### ", 1)[0]
+    assert "--api-key=" in section
+    assert "SIM_DEVICE_API_KEY" in section
+
+
+@pytest.fixture
+def dash_key() -> str:
+    return "-" + secrets.token_urlsafe(24)
+
+
+def _send_with(argv: list[str], run: Callable[..., Run]) -> tuple[Run, FakeApi]:
+    api = FakeApi()
+    base = ["--start", START, "--lots", "1", "--lot-size", "2", "--device-id", "sim-01"]
+    return run([*base, "--api-url", API_URL, *argv], api), api
+
+
+def test_key_starting_with_dash_works_with_equals(dash_key: str, run: Callable[..., Run]) -> None:
+    result, api = _send_with(["--api-key=" + dash_key], run)
+    assert result.code == 0, result.err
+    assert [r.headers["X-API-Key"] for r in api.batch_requests] == [dash_key]
+    assert dash_key not in result.out + result.err
+
+
+def test_key_starting_with_dash_works_from_env(
+    dash_key: str, monkeypatch: pytest.MonkeyPatch, run: Callable[..., Run]
+) -> None:
+    monkeypatch.setenv("SIM_DEVICE_API_KEY", dash_key)
+    result, api = _send_with([], run)
+    assert result.code == 0, result.err
+    assert [r.headers["X-API-Key"] for r in api.batch_requests] == [dash_key]
+
+
+def test_key_starting_with_dash_after_space_is_refused_without_echo(
+    dash_key: str, run: Callable[..., Run]
+) -> None:
+    result, api = _send_with(["--api-key", dash_key], run)
+    assert result.code == 2
+    assert api.requests == []
+    assert dash_key not in result.out + result.err
+    assert "Traceback" not in result.err
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://local\nhost:8001",
+        "https://exa\x01mple.com",
+        "https://example.com/\t",
+        "https://exa mple.com",
+        "https://exämple.com",
+        "https://example.com\x7f",
+        "https://example.com\x1b[31m",
+        " https://example.com",
+        "https://example.com\n",
+    ],
+    ids=repr,
+)
+def test_api_url_with_invisible_or_non_ascii_character_is_refused(
+    url: str, online_env: str, run: Callable[..., Run]
+) -> None:
+    api = FakeApi()
+    result = run(["--start", START, "--api-url", url], api)
+    assert result.code == 2
+    assert api.requests == []
+    assert "invalid --api-url (not shown)" in result.err
+    for fragment in ("Traceback", "mple.com", "host:8001"):
+        assert fragment not in result.err + result.out
+
+
+def test_cloud_api_url_with_control_character_is_refused(
+    online_env: str, monkeypatch: pytest.MonkeyPatch, run: Callable[..., Run]
+) -> None:
+    monkeypatch.setenv("CLOUD_API_URL", "https://exa\x01mple.com")
+    api = FakeApi()
+    result = run(["--start", START], api)
+    assert result.code == 2
+    assert api.requests == []
+    assert "invalid --api-url (not shown)" in result.err
+    assert "mple.com" not in result.err
+
+
+@pytest.mark.parametrize("url", ["https://xn--zz.com", "https://xn--.example.org"])
+def test_api_url_with_invalid_idna_label_is_refused(
+    url: str, online_env: str, run: Callable[..., Run]
+) -> None:
+    api = FakeApi()
+    result = run(["--start", START, "--api-url", url], api)
+    assert result.code == 2
+    assert api.requests == []
+    assert "invalid --api-url (not shown)" in result.err
+    assert "Traceback" not in result.err
+
+
+LABEL_63 = "a" * 63
+LABEL_64 = "a" * 64
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://exa..mple.com",
+        "https://.example.com",
+        "https://example.com..",
+        f"https://{LABEL_64}.example.com",
+        f"https://{LABEL_64}",
+    ],
+    ids=["double-dot", "leading-dot", "two-trailing-dots", "label-64", "single-label-64"],
+)
+def test_api_url_with_label_the_socket_refuses_is_refused(
+    url: str, online_env: str, run: Callable[..., Run]
+) -> None:
+    # The socket encodes the host with the "idna" codec; MockTransport skips the socket, so
+    # these hosts would only fail (UnicodeError, traceback, code 1) against the real API.
+    api = FakeApi()
+    result = run(["--start", START, "--api-url", url], api)
+    assert result.code == 2
+    assert api.requests == []
+    assert "invalid --api-url (not shown)" in result.err
+    for fragment in ("Traceback", "mple.com", "example.com", LABEL_64[:12]):
+        assert fragment not in result.err + result.out
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://exa..mple.com",
+        "https://.example.com",
+        "https://example.com..",
+        f"https://{LABEL_64}.example.com",
+    ],
+)
+def test_socket_codec_really_refuses_those_hosts(url: str) -> None:
+    # Guards the premise of the test above: the codec the socket uses refuses these hosts.
+    with pytest.raises(UnicodeError):
+        httpx.URL(url).raw_host.decode("ascii").encode("idna")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.org",
+        "http://127.0.0.1:8001",
+        "http://127.0.0.1",
+        "http://localhost:8001",
+        "https://example.com.",
+        f"https://{LABEL_63}.example.com",
+        f"https://{LABEL_63}",
+        "https://[::1]",
+        "https://[::1]:8443",
+        "https://xn--nxasmq6b.com",
+    ],
+)
+def test_visible_ascii_api_url_still_sends(
+    url: str, online_env: str, run: Callable[..., Run]
+) -> None:
+    api = FakeApi()
+    result = run(["--start", START, "--lots", "1", "--api-url", url], api)
+    assert result.code == 0, result.err
+    assert len(api.batch_requests) == 1
+
+
+@pytest.mark.parametrize("raw", ["1" * 5000, "12345", "1,12345", "3," + "0" * 5])
+def test_out_of_control_lot_numbers_have_at_most_4_digits(
+    raw: str, run: Callable[..., Run]
+) -> None:
+    result = run(_dry("--lots", "10", "--out-of-control-lots", raw))
+    assert result.code == 2
+    assert result.out == ""
+    assert "--out-of-control-lots must be a comma-separated list of lot numbers" in result.err
+    assert "Traceback" not in result.err
+
+
+def test_leading_zeros_are_still_accepted(run: Callable[..., Run]) -> None:
+    padded = run(_dry("--lots", "10", "--out-of-control-lots", "3,0007", "--seed", "42"))
+    plain = run(_dry("--lots", "10", "--out-of-control-lots", "3,7", "--seed", "42"))
+    assert padded.code == plain.code == 0
+    assert padded.out == plain.out
+    assert padded.err == plain.err
+    assert _cfg("--lots", "10", "--out-of-control-lots", "0007,0010").out_of_control_lots == {
+        7,
+        10,
+    }

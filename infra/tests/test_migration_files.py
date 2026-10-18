@@ -34,8 +34,9 @@ def test_default_dir_is_infra_migrations() -> None:
 
 def test_repository_migrations_are_valid() -> None:
     migrations = load_migrations()
-    assert [m.version for m in migrations][0] == "001"
+    assert [m.version for m in migrations][:2] == ["001", "002"]
     assert migrations[0].filename == "001_init.sql"
+    assert migrations[1].filename == "002_contract_checks.sql"
 
 
 def test_ordered_by_number(tmp_path: Path) -> None:
@@ -119,12 +120,28 @@ def test_host_port_never_contains_secret(conninfo: str, expected: str) -> None:
     assert "s3cr3t-pw" not in result
 
 
-def test_sql_file_has_no_transaction_control() -> None:
-    sql = (DEFAULT_DIR / "001_init.sql").read_text(encoding="utf-8")
+@pytest.mark.parametrize("migration", load_migrations(), ids=lambda m: m.filename)
+def test_sql_file_has_no_transaction_control(migration) -> None:
+    sql = migration.read_sql()
     code = "\n".join(line.split("--", 1)[0] for line in sql.splitlines()).lower()
-    assert re.search(r"\b(begin|commit|rollback)\b", code) is None
+    # The BEGIN of a PL/pgSQL block (inside $$ ... $$) is not transaction control; COMMIT and
+    # ROLLBACK are refused everywhere.
+    top_level = re.sub(r"\$\$.*?\$\$", "$$ $$", code, flags=re.DOTALL)
+    assert re.search(r"\b(begin|commit|rollback)\b", top_level) is None
+    assert re.search(r"\b(commit|rollback)\b", code) is None
     assert "force row level security" not in code
     assert "create policy" not in code
+
+
+def test_contract_checks_message_has_only_counts() -> None:
+    sql = (DEFAULT_DIR / "002_contract_checks.sql").read_text(encoding="utf-8")
+    assert "raise exception 'migration 002: % row(s) of inspections violate the new checks '" in sql
+    assert (
+        "'(model_version=%, inspection_id=%, inspected_at=%, received_at=%); '\n"
+        "            'fix or delete them before migrating',\n"
+        "            bad_total, bad_model_version, bad_inspection_id, bad_inspected_at, "
+        "bad_received_at;"
+    ) in sql
 
 
 @pytest.mark.parametrize("func", [apply_migrations, pending_migrations])

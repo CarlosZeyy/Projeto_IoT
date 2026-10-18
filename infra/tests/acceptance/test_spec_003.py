@@ -29,7 +29,7 @@ from typing import Any
 
 import psycopg
 import pytest
-from migrate import apply_migrations, pending_migrations
+from migrate import apply_migrations, load_migrations, pending_migrations
 from psycopg import errors, sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
@@ -57,6 +57,11 @@ EDGE_HASH = hashlib.sha256(b"edge-01-key").hexdigest()
 
 def _connect(conninfo: str, *, autocommit: bool = True) -> psycopg.Connection:
     return psycopg.connect(conninfo, autocommit=autocommit, prepare_threshold=None)
+
+
+def _default_versions() -> list[str]:
+    """Versions of the files in ``infra/migrations/`` (SPEC-027 section 3.1, item 1)."""
+    return [m.version for m in load_migrations(MIGRATIONS_DIR)]
 
 
 def _valid_row(**overrides: Any) -> dict[str, Any]:
@@ -234,7 +239,7 @@ def empty_db(scratch_conninfo: str) -> str:
 @pytest.fixture
 def ca01_db(empty_db: str) -> str:
     """The database of CA-01 (migrations applied once to an empty schema)."""
-    assert apply_migrations(empty_db) == ["001"]
+    assert apply_migrations(empty_db) == _default_versions()
     return empty_db
 
 
@@ -264,19 +269,21 @@ def test_ca01_apply_on_empty_schema(empty_db: str) -> None:
     with _connect(empty_db) as conn:
         assert _table_exists(conn, "devices") is False
 
-    assert apply_migrations(empty_db) == ["001"]
+    assert apply_migrations(empty_db) == _default_versions()
 
     with _connect(empty_db) as conn:
         for table in ("devices", "inspections", "schema_migrations"):
             assert _table_exists(conn, table), table
-        rows = conn.execute("select version, checksum from schema_migrations").fetchall()
+        rows = conn.execute(
+            "select version, checksum from schema_migrations where version = '001'"
+        ).fetchall()
     assert rows == [("001", hashlib.sha256(INIT_SQL.read_bytes()).hexdigest())]
 
 
 def test_ca02_second_apply_is_noop(ca01_db: str) -> None:
     assert apply_migrations(ca01_db) == []
     with _connect(ca01_db) as conn:
-        assert _count(conn, "schema_migrations") == 1
+        assert _count(conn, "schema_migrations") == len(_default_versions())
 
 
 def test_ca03_rerunning_sql_file_changes_nothing(ca01_db: str) -> None:
@@ -869,7 +876,9 @@ def test_extra_schema_migrations_columns(ca01_db: str) -> None:
                 """
             )
         }
-        row = conn.execute("select filename, applied_at from schema_migrations").fetchone()
+        row = conn.execute(
+            "select filename, applied_at from schema_migrations where version = '001'"
+        ).fetchone()
     assert cols == {
         "version": ("text", True),
         "filename": ("text", True),
@@ -885,12 +894,12 @@ def test_extra_manual_then_runner(empty_db: str) -> None:
     with _connect(empty_db, autocommit=False) as conn:
         conn.execute(INIT_SQL.read_text(encoding="utf-8"))
         conn.commit()
-    assert apply_migrations(empty_db) == ["001"]
+    assert apply_migrations(empty_db) == _default_versions()
     assert pending_migrations(empty_db) == []
 
 
 def test_extra_pending_on_empty_schema(empty_db: str) -> None:
-    assert pending_migrations(empty_db) == ["001"]
+    assert pending_migrations(empty_db) == _default_versions()
     with _connect(empty_db) as conn:
         assert _table_exists(conn, "devices") is False
 
@@ -905,12 +914,15 @@ def test_extra_order_by_number(empty_db: str, tmp_path: Path) -> None:
 
 
 def test_extra_new_migration_after_existing(ca01_db: str, tmp_path: Path) -> None:
-    shutil.copy(INIT_SQL, tmp_path / "001_init.sql")
-    (tmp_path / "002_more.sql").write_text("create table t_more(id int);\n", "utf-8")
-    assert pending_migrations(ca01_db, tmp_path) == ["002"]
-    assert apply_migrations(ca01_db, tmp_path) == ["002"]
+    for path in MIGRATIONS_DIR.glob("*.sql"):
+        shutil.copy(path, tmp_path / path.name)
+    versions = _default_versions()
+    new = f"{int(versions[-1]) + 1:03d}"
+    (tmp_path / f"{new}_more.sql").write_text("create table t_more(id int);\n", "utf-8")
+    assert pending_migrations(ca01_db, tmp_path) == [new]
+    assert apply_migrations(ca01_db, tmp_path) == [new]
     with _connect(ca01_db) as conn:
-        assert _applied_versions(conn) == ["001", "002"]
+        assert _applied_versions(conn) == [*versions, new]
 
 
 def test_extra_failure_stops_following_migrations(empty_db: str, tmp_path: Path) -> None:
@@ -978,9 +990,9 @@ def test_extra_concurrent_runs_apply_once(empty_db: str) -> None:
         t.start()
     for t in threads:
         t.join(timeout=60)
-    assert sorted(map(repr, results)) == sorted([repr(["001"])] + [repr([])] * 3)
+    assert sorted(map(repr, results)) == sorted([repr(_default_versions())] + [repr([])] * 3)
     with _connect(empty_db) as conn:
-        assert _count(conn, "schema_migrations") == 1
+        assert _count(conn, "schema_migrations") == len(_default_versions())
 
 
 def test_extra_advisory_lock_released(empty_db: str) -> None:
@@ -1031,14 +1043,14 @@ def test_extra_cli_apply_success_hides_url(empty_db: str) -> None:
     assert "001" in out
     assert SECRET not in out
     with _connect(empty_db) as conn:
-        assert _applied_versions(conn) == ["001"]
+        assert _applied_versions(conn) == _default_versions()
 
 
 def test_extra_cli_uses_database_url_env(empty_db: str) -> None:
     result = _run_cli(env_extra={"DATABASE_URL": empty_db})
     assert result.returncode == 0, result
     with _connect(empty_db) as conn:
-        assert _applied_versions(conn) == ["001"]
+        assert _applied_versions(conn) == _default_versions()
 
 
 def test_extra_cli_status_applies_nothing(empty_db: str) -> None:
