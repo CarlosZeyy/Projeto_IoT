@@ -1,11 +1,11 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-010, SPEC-025)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
 Estado atual:
 
 - o inferenciador real é o `onnxruntime` na CPU, carregado de `MODEL_DIR` (SPEC-008, seção "Trocar o modelo"). Sem `MODEL_DIR` e sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
-- as inspeções aceitas vão para um `InMemorySink`, que só guarda em memória e não envia nada para lugar nenhum. O outbox e o envio para a nuvem são da SPEC-009;
+- cada inspeção aceita é gravada no outbox SQLite (`OUTBOX_PATH`) antes da resposta ao celular, e um laço em segundo plano a envia para a `qc-api` quando `DEVICE_API_KEY` e `CLOUD_API_URL` estão definidos (SPEC-009, seção "Envio para a nuvem"). Só o JSON do resultado sobe; a foto nunca (R-02);
 - o modo coleta (SPEC-010) monta o dataset: funciona sem modelo e não chama o inferenciador nem o sink (seção "Modo coleta").
 
 ## Como rodar
@@ -36,7 +36,9 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 | `DATASET_DIR` | `ml/data` (relativo ao diretório atual) | modo coleta; se existir, tem de ser um diretório. Não é criado na subida: a primeira coleta o cria com `0700`. `ml/data/` está no `.gitignore`; outro caminho deve ficar fora do repositório |
 | `MODEL_DIR` | vazio (sem modelo) | diretório do modelo (seção "Trocar o modelo"); o nome do diretório resolvido (alvo do link, se for um link simbólico) é o `model_version`. Definido mas inválido, inclusive só com espaços → código 2 |
 | `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio (vale o `decision.json`) | opcionais; número de 0 a 1 que sobrescreve o limiar do `decision.json` (seção "Limiares de decisão"). Fora de `[0, 1]` ou não numérico → código 2 citando a variável. Sem `MODEL_DIR`, são ignorados (com aviso no log) |
-| `DEVICE_API_KEY`, `CLOUD_API_URL`, `OUTBOX_PATH` | vazio | lidas agora, validadas na SPEC-009 |
+| `DEVICE_API_KEY` | vazio | segredo (R-03): chave do dispositivo, gerada por `scripts/register_device.py` e mostrada uma única vez. Vazio = nada é enviado à nuvem. Só ASCII visível (sem espaço nem acento); outro valor → código 2 citando a variável, nunca o valor |
+| `CLOUD_API_URL` | vazio | URL base da `qc-api`, sem `/api/v1` no fim (ex.: `https://<seu-servico>.onrender.com`). `https://` obrigatório; `http://` só com `localhost` ou `127.0.0.1` (testes locais). Sem usuário/senha, query ou fragmento. Outro valor → código 2 citando `CLOUD_API_URL`. Vazio = nada é enviado |
+| `OUTBOX_PATH` | `EDGE_DATA_DIR/outbox.sqlite3` | arquivo SQLite do outbox; as pastas que faltarem são criadas com `0700` e o arquivo novo com `0600`. Se não abrir (ex.: é um diretório) → código 2 citando `OUTBOX_PATH` |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -150,6 +152,53 @@ As gravações passam por um lock de processo e por um `flock` em `DATASET_DIR/m
 O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada.
 
 O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backup é o do `docs/dataset-protocol.md` §8 (Drive pessoal, compactado por data). Correções de rótulo e dupla rotulagem são da SPEC-011 (`labels_overrides.csv`), nunca editando a linha original.
+
+## Envio para a nuvem (SPEC-009)
+
+Fluxo (`docs/architecture.md` §6.2, passos 6 e 8): a captura grava o `InspectionCreate` no outbox SQLite (`OUTBOX_PATH`) e só depois responde ao celular. Uma thread em segundo plano lê os pendentes a cada 2 s e os publica em `POST {CLOUD_API_URL}/api/v1/inspections/batch`, em lotes de até 100, com o header `X-API-Key` e timeout de 5 s. O corpo é sempre JSON (`BatchCreate` de `qc_contracts`): nunca imagem, nunca multipart (R-02). `qc_edge.publisher` é o único módulo da borda que fala HTTP com a nuvem.
+
+Quando o envio fica ligado:
+
+| Situação | Envio | Conectividade |
+|---|---|---|
+| `DEVICE_API_KEY` e `CLOUD_API_URL` definidos, sem `--stub-model` | ligado | `online`, `offline` ou `auth_error` |
+| falta qualquer um dos dois | desligado (o log avisa qual falta) | `disabled` |
+| `--stub-model` | **sempre desligado** (R-06: resultado falso não sobe como `live`) | `disabled` |
+
+Nos dois últimos casos as inspeções continuam sendo gravadas no outbox, como pendentes.
+
+**Use outro `OUTBOX_PATH` com `--stub-model`** (ex.: `OUTBOX_PATH=/tmp/partqc-stub-outbox.sqlite3`). As inspeções do stub (`model_version = stub-v0`) ficam no outbox como pendentes e seriam enviadas como `live` na próxima subida com chave e URL, se o arquivo fosse o mesmo da operação (ver o SPEC_ISSUE-01 de `reviews/SPEC-009/r1-dev-report.md`).
+
+O que o laço faz com a resposta da nuvem:
+
+- `created` ou `duplicate` → a linha vira `sent` (a idempotência por `inspection_id` da API garante que um reenvio não duplica, R-05). Conectividade `online` e "Último envio" atualizado;
+- rede fora, timeout, 5xx, 429, outro 4xx ou resposta malformada → a linha continua pendente e é tentada de novo em `min(60, 2^n × U(0,8; 1,2))` s (`n` = tentativas anteriores: ~1 s, ~2 s, ~4 s… até 60 s). Conectividade `offline`. O cold start do Render (~1 min) aparece assim e é absorvido pelo backoff;
+- 422 ou 413 → o lote é dividido ao meio até isolar a inspeção recusada, que vira `dead` (nunca mais é enviada) com o resumo da recusa em `last_error` (ex.: `HTTP 422: Value cannot be stored` ou `HTTP 422: 2 validation errors`). O corpo da resposta nunca vai para o log nem para o outbox, porque o 422 do FastAPI repete o que foi enviado;
+- 401 ou 403 → conectividade `auth_error`, um erro no log (`check DEVICE_API_KEY and restart qc-edge`) e **nenhuma** requisição até reiniciar o `qc-edge`. Corrija a chave (ou registre o dispositivo de novo com `scripts/register_device.py --rotate`) e reinicie; as pendentes saem na subida seguinte.
+
+Com o outbox vazio, o laço consulta `GET /api/v1/health` (sem chave) logo na subida e depois a cada 60 s sem contato com a nuvem, para atualizar `online`/`offline`.
+
+O console mostra **Pendentes**, **Com falha definitiva** (`dead`), **Conectividade com a nuvem** e **Último envio**; o `/api/status` traz os mesmos campos em `sink`. O log nunca mostra o `DEVICE_API_KEY` nem o corpo das respostas.
+
+O outbox nunca apaga linhas (o volume da demo é pequeno) e sobrevive a uma queda do processo: cada gravação é confirmada (`synchronous=FULL`, WAL) antes da resposta. Para ver as inspeções `dead`:
+
+```bash
+sqlite3 edge/data/outbox.sqlite3 "select inspection_id, attempts, last_error from outbox where status = 'dead'"
+```
+
+(troque o caminho pelo seu `OUTBOX_PATH`). Reenviar uma `dead` à mão fica para uma SPEC futura.
+
+### Demo offline (CA-17 da SPEC-009, manual)
+
+Registre o resultado no test-report da SPEC-009.
+
+1. Borda ligada com `DEVICE_API_KEY` válida e `CLOUD_API_URL` da API publicada, e `MODEL_DIR` do modelo real (sem `--stub-model`). Confira no console: conectividade `online`, pendentes `0`.
+2. Desligue o Wi-Fi do notebook (no plano B, os dados móveis do celular; o celular continua falando com a borda pela LAN do hotspot).
+3. Inspecione 3 peças. O console mostra `offline` e pendentes `3`.
+4. Religue a rede.
+5. Em até 90 s, o console mostra `online` e pendentes `0`, e as 3 inspeções aparecem no dashboard.
+
+O que registrar: horários dos passos 2 a 5, o que o console mostrou em cada um e os `inspection_id` das 3 inspeções no dashboard.
 
 ## Firewall no Arch
 
