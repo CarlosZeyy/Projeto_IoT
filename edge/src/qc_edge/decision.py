@@ -2,9 +2,13 @@
 
 ``decide`` is a pure function: model probabilities + labels + thresholds -> ``Decision`` in
 contract terms. The comparisons are exactly the ones of the SPEC (strict ``<`` for
-``type_threshold``, ``>=`` for ``unusable_threshold``) and probabilities are never rounded before
-being compared. The invariant ``grade is None <=> object_type == unknown`` is checked again by
-``InspectionCreate``.
+``type_threshold``, ``>=`` for ``unusable_threshold``) and always use the raw probabilities, never
+rounded nor clamped. Only after every comparison are the returned numbers clamped to the ranges of
+the contract (section 4.1, item 6): the confidences to ``[0, 1]`` and ``grade_score`` to
+``[0, 4]``. Item 1 accepts values slightly outside ``[0, 1]``, and a float32 ``Softmax`` alone
+gives ``p4 == 1.0`` with ``p3 > 0`` (``sum(i * p_i) > 4``), which ``InspectionCreate`` would refuse.
+The clamp never changes ``object_type``, ``grade`` nor ``needs_review``. The invariant
+``grade is None <=> object_type == unknown`` is checked again by ``InspectionCreate``.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ REVIEW_MARGIN = 0.10
 # Index of ``unusable`` in ``grade_probs`` (the grades are always in severity order).
 UNUSABLE_INDEX = 4
 GRADE_COUNT = 5
+# Contract ranges of the returned numbers (docs/architecture.md section 3.2).
+MAX_GRADE_SCORE = float(GRADE_COUNT - 1)
 # Model class that always maps to ``ObjectType.UNKNOWN`` (docs/architecture.md section 3.1).
 OTHER_LABEL = "other"
 # Tolerances of the output validation (SPEC-008 section 4.1, item 1).
@@ -109,6 +115,11 @@ def _argmax(values: list[float]) -> int:
     return best
 
 
+def _clamp(value: float, upper: float) -> float:
+    """``value`` limited to ``[0, upper]`` (section 4.1, item 6)."""
+    return min(upper, max(0.0, value))
+
+
 def decide(
     type_probs: Sequence[float],
     grade_probs: Sequence[float],
@@ -121,6 +132,9 @@ def decide(
         InvalidModelOutputError: a vector with the wrong length (``len(labels.object_types)``
             types, 5 grades), a non-finite value or one outside ``[0, 1]`` (tolerance 1e-6), or
             a sum outside ``1 +- 1e-3``.
+
+    The thresholds are compared with the raw probabilities; only the returned ``type_confidence``,
+    ``grade_confidence`` (``[0, 1]``) and ``grade_score`` (``[0, 4]``) are clamped afterwards.
     """
     types = _probabilities("type_probs", type_probs, len(labels.object_types))
     grades = _probabilities("grade_probs", grade_probs, GRADE_COUNT)
@@ -148,11 +162,12 @@ def decide(
     needs_review = type_confidence < thresholds.type_threshold + REVIEW_MARGIN or (
         grade_confidence is not None and grade_confidence < thresholds.grade_review_threshold
     )
+    # Section 4.1, item 6: clamp to the contract ranges only after every comparison above.
     return Decision(
         object_type=object_type,
         grade=grade,
-        grade_score=grade_score,
-        type_confidence=type_confidence,
-        grade_confidence=grade_confidence,
+        grade_score=None if grade_score is None else _clamp(grade_score, MAX_GRADE_SCORE),
+        type_confidence=_clamp(type_confidence, 1.0),
+        grade_confidence=None if grade_confidence is None else _clamp(grade_confidence, 1.0),
         needs_review=needs_review,
     )

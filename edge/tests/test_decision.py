@@ -205,9 +205,75 @@ def test_label_order_comes_from_labels() -> None:
     assert _decide([0.9, 0.05, 0.05], labels=labels).object_type is ObjectType.NUT
 
 
+# Section 4.1, item 6: the returned numbers are clamped to the contract ranges (CA-19).
+SOFTMAX_UNUSABLE = [2.506e-10, 2.235e-10, 7.39e-11, 5.899e-08, 1.0]
+
+
+def test_float32_softmax_unusable_is_clamped_to_4() -> None:  # CA-19 (a)
+    assert sum(index * prob for index, prob in enumerate(SOFTMAX_UNUSABLE)) > 4.0
+    decision = _decide([0.98, 0.01, 0.01], SOFTMAX_UNUSABLE)
+    assert decision.object_type is ObjectType.SCREW
+    assert decision.grade is Grade.UNUSABLE
+    assert decision.grade_score == 4.0
+    assert decision.grade_confidence == 1.0
+    assert decision.needs_review is False
+
+
+def test_float32_softmax_unusable_from_numpy_is_clamped() -> None:
+    decision = _decide(
+        np.asarray([0.98, 0.01, 0.01], dtype=np.float32),
+        np.asarray(SOFTMAX_UNUSABLE, dtype=np.float32),
+    )
+    assert decision.grade is Grade.UNUSABLE
+    assert decision.grade_score == 4.0
+    assert type(decision.grade_score) is float
+
+
+def test_type_confidence_above_1_is_clamped() -> None:  # CA-19 (b)
+    decision = _decide([1.0000009, 0.0, 0.0])
+    assert decision.object_type is ObjectType.SCREW
+    assert decision.type_confidence == 1.0
+    assert decision.grade is Grade.GOOD
+
+
+def test_grade_confidence_above_1_and_negative_score_are_clamped() -> None:  # CA-19 (c)
+    decision = _decide([0.9, 0.05, 0.05], [1.0000005, -5e-7, 0.0, 0.0, 0.0])
+    assert decision.grade is Grade.PERFECT
+    assert decision.grade_confidence == 1.0
+    assert decision.grade_score == 0.0
+
+
+def test_type_confidence_above_1_is_clamped_for_unknown() -> None:
+    decision = _decide([0.0, 0.0, 1.0000009])
+    assert decision.object_type is ObjectType.UNKNOWN
+    assert decision.type_confidence == 1.0
+    assert decision.grade_score is None and decision.grade_confidence is None
+
+
+def test_comparisons_use_the_raw_values() -> None:
+    # unusable_threshold = 0 and a raw p4 of -5e-7: -5e-7 >= 0 is false, so the grade comes from
+    # the argmax. Comparing with the clamped value (0 >= 0) would give ``unusable``.
+    thresholds = Thresholds(type_threshold=0.5, unusable_threshold=0.0, grade_review_threshold=0.6)
+    decision = _decide([0.9, 0.05, 0.05], [1.0000005, 0.0, 0.0, 0.0, -5e-7], thresholds=thresholds)
+    assert decision.grade is Grade.PERFECT
+    assert decision.grade_confidence == 1.0
+    assert decision.grade_score == 0.0
+
+
+def test_values_inside_the_ranges_are_not_changed() -> None:  # CA-04 values stay exact
+    decision = _decide([0.6, 0.3, 0.1], [0.0, 0.7, 0.1, 0.1, 0.1])
+    assert decision.type_confidence == 0.6
+    assert decision.grade_confidence == 0.7
+    assert decision.grade_score == pytest.approx(1.6, abs=1e-9)
+
+
 @pytest.mark.parametrize(
     ("type_probs", "grade_probs"),
     [
+        ([0.98, 0.01, 0.01], SOFTMAX_UNUSABLE),
+        ([1.0000009, 0.0, 0.0], GOOD),
+        ([0.9, 0.05, 0.05], [1.0000005, -5e-7, 0.0, 0.0, 0.0]),
+        ([0.0, 0.0, 1.0000009], GOOD),
         ([0.1, 0.1, 0.8], GOOD),
         ([0.45, 0.30, 0.25], GOOD),
         ([0.9, 0.05, 0.05], [0.45, 0.05, 0.05, 0.05, 0.4]),
