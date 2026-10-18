@@ -1312,7 +1312,9 @@ MAIN_COLLECTED = {SPEC_022: 38, SPEC_023: 22}
 
 
 def _collected(path: Path) -> int:
-    env = {k: v for k, v in os.environ.items() if k != "TEST_DATABASE_URL"}
+    # `--collect-only` never touches the database: drop both variables of the SPEC-001 policy,
+    # so the count is the same with or without `CI=true` / `TEST_DATABASE_URL` (r3 fix).
+    env = {k: v for k, v in os.environ.items() if k not in ("TEST_DATABASE_URL", "CI")}
     proc = subprocess.run(
         [
             sys.executable,
