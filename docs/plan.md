@@ -63,7 +63,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [025](specs/SPEC-025-manutencao-borda-host-rede.md) | Manutenção da borda (Host do console, rede, limitador, permissões e modo coleta) | developer | security | 007, 010 | S3 | Done |
 | [026](specs/SPEC-026-spc-teto-de-lotes.md) | Carta p com teto de lotes (`qc-contracts` 0.3.0) | developer | contrato, security | 006 (e 004, 023) | S4 | Done |
 | [027](specs/SPEC-027-manutencao-api-banco-simulador.md) | Manutenção da API, do banco e do simulador (`check` da `002`, SQLSTATE, argparse, teste intermitente) | developer | security | 003, 005, 014 (e 004) | S4 | Done |
-| [028](specs/SPEC-028-manutencao-dashboard.md) | Manutenção do dashboard (https, acabamento da interface, selo da carta e exibição das métricas) | developer | security | 013 | S4 | In Dev (r1) |
+| [028](specs/SPEC-028-manutencao-dashboard.md) | Manutenção do dashboard (https, acabamento da interface, selo da carta e exibição das métricas) | developer | security | 013 | S4 | In Test (r1) |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
 
