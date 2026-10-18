@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-010)
+# qc-edge — gateway de borda (SPEC-007, SPEC-010, SPEC-025)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -18,20 +18,20 @@ uv run --package qc-edge qc-edge                                  # sem .env: tu
 ```
 
 - O `qc-edge` não lê o `.env` sozinho: use `--env-file .env` ou exporte as variáveis.
-- Abra o console **no próprio notebook**, em <http://127.0.0.1:8000/>. Ele só responde ao loopback (`127.0.0.1`/`::1`) e recusa com 403 requisições com `X-Forwarded-For`, `Forwarded` ou `CF-Connecting-IP`. O console mostra o QR code, a URL de pareamento, os outros IPs da máquina (links `/?ip=...`), o estado do modelo e do sink e as 10 últimas inspeções da sessão. Ele recarrega a cada 5 s, e os IPs são detectados de novo a cada recarga (útil ao trocar para o hotspot).
+- Abra o console **no próprio notebook**, em <http://127.0.0.1:8000/> ou <http://localhost:8000/> (troque `8000` pelo seu `EDGE_PORT`). Ele só responde ao loopback (`127.0.0.1`/`::1`), recusa com 403 requisições com `X-Forwarded-For`, `Forwarded` ou `CF-Connecting-IP` e só aceita o header `Host` `127.0.0.1:<porta>`, `localhost:<porta>` ou `[::1]:<porta>`: outro nome ou IP na barra de endereço (inclusive o IP da LAN do próprio notebook) recebe 403. Isso impede que uma página hostil aberta no navegador do notebook leia o token por DNS rebinding (SPEC-025). O console mostra o QR code, a URL de pareamento, os outros IPs da máquina (links `/?ip=...`), o estado do modelo e do sink e as 10 últimas inspeções da sessão. Ele recarrega a cada 5 s, e os IPs são detectados de novo a cada recarga (útil ao trocar para o hotspot).
 - `--stub-model` responde sempre parafuso/bom (`model_version = stub-v0`). É só para desenvolvimento e **nunca** publica na nuvem (R-06).
-- Códigos de saída: `2` para configuração inválida (a mensagem cita a variável, nunca o valor); `1` se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` estiver ligada no processo (SEC-04).
+- Códigos de saída: `2` para configuração inválida (a mensagem cita a variável, nunca o valor) ou argumento desconhecido na linha de comando (o log cita só o nome da opção, nunca o valor: `unknown command-line argument(s): --stub-modle`); `1` se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` estiver ligada no processo (SEC-04).
 - O log do servidor nunca mostra o token nem o `DEVICE_API_KEY`. O access log do uvicorn fica desligado, porque imprimiria a query `?t=<token>`. No lugar dele, o `qc-edge` registra uma linha por requisição, com método, rota, status e duração, sem a query.
 
 ## Variáveis (`.env`, bloco `qc-edge`)
 
 | Variável | Padrão | Regra |
 |---|---|---|
-| `EDGE_HOST` | `0.0.0.0` | IP literal (IPv4 ou IPv6) |
+| `EDGE_HOST` | `0.0.0.0` | IPv4 literal (ex.: `0.0.0.0`, `127.0.0.1`); IPv6 e nomes são recusados (código 2) |
 | `EDGE_PORT` | `8000` | 1 a 65535 |
-| `EDGE_SESSION_TOKEN` | gerado a cada subida (`secrets.token_urlsafe(32)`, 43 caracteres) | se definido, no mínimo 32 caracteres. É segredo: fica fora do Git |
+| `EDGE_SESSION_TOKEN` | gerado a cada subida (`secrets.token_urlsafe(32)`, 43 caracteres) | deixe vazio (recomendado; seção "Segurança na operação"). Se definido, no mínimo 32 caracteres. É segredo: fica fora do Git |
 | `DEVICE_ID` | `edge-01` | `^[a-z0-9-]{3,32}$` (sem quebra de linha final) |
-| `EDGE_DATA_DIR` | `edge/data` (relativo ao diretório atual) | criado se não existir; está no `.gitignore` |
+| `EDGE_DATA_DIR` | `edge/data` (relativo ao diretório atual) | criado com `0700` se não existir (um diretório que já existe não é alterado); está no `.gitignore` |
 | `DATASET_DIR` | `ml/data` (relativo ao diretório atual) | modo coleta; se existir, tem de ser um diretório. Não é criado na subida: a primeira coleta o cria com `0700`. `ml/data/` está no `.gitignore`; outro caminho deve ficar fora do repositório |
 | `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio | lidas agora, validadas nas SPECs 008 e 009 |
 
@@ -41,7 +41,7 @@ Variável vazia vale como não definida (o padrão vale).
 
 | Rota | Acesso | O que faz |
 |---|---|---|
-| `GET /` | só loopback, sem headers de proxy | console do operador (HTML, sem JS), com a cobertura do dataset |
+| `GET /` | só loopback, sem headers de proxy, `Host` de loopback | console do operador (HTML, sem JS), com a cobertura do dataset |
 | `GET /capture?t=<token>` | token na query | página do celular; token errado → 401 "Sessão inválida. Leia o QR code no console." |
 | `GET /static/capture.js`, `/static/capture.css` | livre | arquivos da página (sem segredo, sem recurso externo) |
 | `POST /api/capture` | header `X-Session-Token` | `multipart/form-data` com `image`, `lot_id` e `mode`; no modo `collect`, `item_id`, `object_type`, `grade`, `labeler`, `angle` e `notes` no lugar do `lot_id` |
@@ -56,9 +56,9 @@ Limites da rota (`qc_edge/limits.py`, SPEC-007 §4.7):
 - até 4 M pixels, conferidos pelo cabeçalho antes de decodificar;
 - depois, as regras do `qc_preprocess.load_image`: só JPEG/PNG pelo conteúdo, proporção de até 10:1, JPEG com até 64 marcadores de scan.
 
-No máximo 2 decodificações acontecem ao mesmo tempo. Quem passa disso espera até 10 s e recebe 503 `server busy`. A página do celular sempre reduz a foto para no máximo 1280 px no lado maior e a reencoda em JPEG (q = 0,9) antes de enviar.
+No máximo 2 decodificações acontecem ao mesmo tempo, nos dois modos. Quem passa disso espera até 10 s e recebe 503 `server busy`. A espera não ocupa thread do servidor, então o console e o `/api/status` continuam respondendo durante uma rajada de capturas (SPEC-025). A página do celular sempre reduz a foto para no máximo 1280 px no lado maior e a reencoda em JPEG (q = 0,9) antes de enviar.
 
-A foto aceita é salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD em UTC>/<inspection_id>.jpg`, com nome sempre gerado pelo servidor. Um JPEG é salvo como chegou; um PNG é reencodado em JPEG q = 90.
+A foto aceita é salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD em UTC>/<inspection_id>.jpg`, com nome sempre gerado pelo servidor. Um JPEG é salvo como chegou; um PNG é reencodado em JPEG q = 90. `captures/` e as pastas de dia ficam com `0700` e as fotos com `0600`, seja qual for o `umask` (só o dono lê; `captures/` recebe `0700` a cada subida). Se o `chmod` falhar, o log mostra um `WARNING` e a captura segue. Retenção e remoção dessas fotos: `docs/dataset-protocol.md` §9.
 
 ## Modo coleta (SPEC-010)
 
@@ -73,14 +73,20 @@ Na página do celular, escolha **coleta** no seletor de modo e preencha:
 | Grau (`grade`) | um dos 5 graus para parafuso e porca; desabilitado e vazio para "outro" |
 | Rotulador (`labeler`) | `a` ou `b` |
 | Ângulo (`angle`) | 0 a 4 |
-| Observações (`notes`) | opcional, até 200 caracteres, sem quebra de linha nem tabulação |
+| Observações (`notes`) | opcional, até 200 caracteres, sem quebra de linha, tabulação, separador de linha ou parágrafo (U+2028/U+2029) nem caracteres de formatação invisíveis (controles bidi, hífen suave) |
 
 O lote é ignorado nesse modo. Os campos ficam guardados no navegador (`localStorage`) entre as fotos e depois de recarregar a página. A cada foto salva, o ângulo avança 1; depois do 4, volta a 0 e a página mostra "Peça completa — troque o item_id". O cartão mostra "Salvo: <item_id>, ângulo <n> (fotos desta peça: <total>)". Lembrete fixo: **sem pessoas no quadro** (R-14).
 
 Cada foto vira:
 
-- um arquivo `DATASET_DIR/raw/<object_type>/<grade ou _>/<item_id>__<angle>__<AAAAMMDDTHHMMSSZ>.jpg` (UTC). JPEG é salvo como chegou; PNG é reencodado em JPEG q = 90;
-- uma linha em `DATASET_DIR/manifest.csv` (UTF-8 sem BOM), com as colunas `image_path,item_id,object_type,grade,labeler,angle,captured_at,capture_device,notes`. `capture_device` são os 60 primeiros caracteres do `User-Agent` do celular.
+- um arquivo `DATASET_DIR/raw/<object_type>/<grade ou _>/<item_id>__<angle>__<AAAAMMDDTHHMMSSZ>.jpg` (UTC). JPEG é salvo sem metadados (abaixo); PNG é reencodado em JPEG q = 90;
+- uma linha em `DATASET_DIR/manifest.csv` (UTF-8 sem BOM), com as colunas `image_path,item_id,object_type,grade,labeler,angle,captured_at,capture_device,notes`. `capture_device` são os 60 primeiros caracteres do `User-Agent` do celular, com os caracteres de controle e de formatação trocados por espaço antes do corte.
+
+Privacidade das fotos do dataset (SPEC-025, R-14):
+
+1. O modo coleta grava o JPEG **sem** EXIF (GPS, aparelho, data), XMP, IPTC, comentário e dados depois do fim da imagem (EOI, onde fica o vídeo de uma "foto com movimento"), **sem reencodar**: os segmentos são removidos pela estrutura dos marcadores e os pixels não mudam. Um JPEG cuja estrutura a borda não consegue percorrer recebe 415 `invalid image: unsupported JPEG structure` e nada é gravado.
+2. Antes de **cada** backup do dataset no Drive, rode `uv run --package qc-edge python -m qc_edge.privacy --dataset-dir ml/data` (troque `ml/data` pelo seu `DATASET_DIR`). Ele lista cada imagem de `raw/` com metadados (`raw/screw/fair/<arquivo>.jpg: app1`) e termina com `checked <n> images, <k> with private data`; sai com `0` se `k = 0` e `1` se houver achados. Havendo achados, repita com `--fix`, que reescreve só essas imagens sem os segmentos (o `manifest.csv` não muda) e pode rodar com o `qc-edge` ligado, porque usa o mesmo lock da coleta. Uma imagem `invalid` não é corrigida: apague-a e registre-a em `exclusions.csv`. O procedimento completo está em `docs/dataset-protocol.md` §8 e §8.1.
+3. Fotos copiadas à mão para `raw/` (por exemplo, do app da câmera) não passam pela rota e chegam com todos os metadados: elas passam pela mesma varredura, então rode o comando acima (e o `--fix`) depois de copiar. A varredura confere os arquivos `*.jpg` e não segue links simbólicos.
 
 Respostas além das da tabela de rotas:
 
@@ -92,7 +98,7 @@ Respostas além das da tabela de rotas:
 | `manifest.csv` com linhas ilegíveis (não UTF-8) | 500 `manifest unreadable` | idem |
 | falha de disco ao gravar | 500 `failed to write dataset` | a foto não fica pela metade nem sem linha no manifest |
 
-As gravações passam por um lock de processo e por um `flock` em `DATASET_DIR/manifest.csv.lock` (só POSIX). Tudo o que a coleta **cria** sob `DATASET_DIR` (o próprio `DATASET_DIR`, quando é ela que o cria, `raw/`, as pastas de tipo e grau) fica com `0700`, e as imagens, o `manifest.csv` e o `manifest.csv.lock` com `0600`, seja qual for o `umask`. O que já existia não é alterado. Se o `chmod` falhar, o log mostra um `WARNING` com o caminho e a coleta segue.
+As gravações passam por um lock de processo e por um `flock` em `DATASET_DIR/manifest.csv.lock` (só POSIX). Cada diretório novo e a imagem renomeada recebem `fsync` do diretório antes da linha do manifest, para que uma queda de energia não deixe uma linha sem imagem (se o sistema de arquivos não aceitar, o log mostra um `WARNING` e a coleta segue). Tudo o que a coleta **cria** sob `DATASET_DIR` (o próprio `DATASET_DIR`, quando é ela que o cria, `raw/`, as pastas de tipo e grau) fica com `0700`, e as imagens, o `manifest.csv` e o `manifest.csv.lock` com `0600`, seja qual for o `umask`. O que já existia não é alterado. Se o `chmod` falhar, o log mostra um `WARNING` com o caminho e a coleta segue.
 
 O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada.
 
@@ -100,41 +106,59 @@ O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backu
 
 ## Firewall no Arch
 
-Descubra qual firewall está ativo (normalmente só um responde `active`):
+A porta é aberta **só para a sub-rede** da Wi-Fi de casa ou do hotspot da dupla, **só durante a sessão**, e a regra é desfeita no fim. **Não rode o `qc-edge` com a porta aberta numa rede que não seja da dupla** (por exemplo, a Wi-Fi do campus): o token protege a captura, mas ninguém de fora deve nem alcançar a porta.
 
-```bash
-systemctl is-active ufw firewalld nftables
-```
+1. Descubra a sub-rede da Wi-Fi ou do hotspot:
+
+   ```bash
+   ip -4 route show scope link
+   ```
+
+   Use a linha da interface Wi-Fi ou do hotspot, por exemplo `192.168.43.0/24 dev wlan0 proto kernel src 192.168.43.17`: a sub-rede é `192.168.43.0/24`. Ignore as linhas de `docker0`, `br-*` e `virbr*` (bridges do Docker e de máquinas virtuais). Nos comandos abaixo, troque `<sub-rede>` por esse valor.
+
+2. Descubra qual firewall está ativo (normalmente só um responde `active`):
+
+   ```bash
+   systemctl is-active ufw firewalld nftables
+   ```
 
 ### ufw
 
 ```bash
-sudo ufw allow 8000/tcp            # libera
-sudo ufw status                    # confere
-sudo ufw delete allow 8000/tcp     # desfaz
+sudo ufw allow proto tcp from <sub-rede> to any port 8000          # libera só para a sub-rede
+sudo ufw status numbered                                            # confere
+sudo ufw delete allow proto tcp from <sub-rede> to any port 8000   # desfaz, no fim da sessão
 ```
+
+A regra do ufw **persiste** (inclusive depois de reiniciar o notebook) até ser apagada com o `delete`. Não esqueça de desfazê-la no fim da sessão.
 
 ### firewalld
 
+Só regra de runtime: ela some no próximo reload ou reboot, e não é gravada na configuração.
+
 ```bash
-firewall-cmd --get-active-zones                       # zona da interface (Wi-Fi ou hotspot)
-sudo firewall-cmd --add-port=8000/tcp                 # libera até o próximo reboot/reload
-sudo firewall-cmd --permanent --add-port=8000/tcp     # opcional: permanente
-sudo firewall-cmd --reload                            # só depois do --permanent
-sudo firewall-cmd --remove-port=8000/tcp              # desfaz (runtime)
-sudo firewall-cmd --permanent --remove-port=8000/tcp  # desfaz (permanente) + --reload
+firewall-cmd --get-active-zones        # zona da interface Wi-Fi ou do hotspot
+sudo firewall-cmd --zone=<zona> --add-rich-rule='rule family="ipv4" source address="<sub-rede>" port port="8000" protocol="tcp" accept'
+sudo firewall-cmd --zone=<zona> --list-rich-rules                  # confere
+sudo firewall-cmd --zone=<zona> --remove-rich-rule='rule family="ipv4" source address="<sub-rede>" port port="8000" protocol="tcp" accept'
 ```
 
-Se a interface estiver numa zona diferente da padrão, acrescente `--zone=<zona>` a cada comando.
+O `--remove-rich-rule` recebe exatamente a mesma regra do `--add-rich-rule`.
 
 ### nftables
 
 ```bash
-sudo nft list ruleset                                       # descubra a tabela e a chain de entrada
-sudo nft add rule inet filter input tcp dport 8000 accept   # ajuste "inet filter input"
+sudo nft list ruleset                                                          # descubra a tabela e a chain de entrada
+sudo nft add rule inet filter input ip saddr <sub-rede> tcp dport 8000 accept   # ajuste "inet filter input"
 ```
 
-O `add` coloca a regra no fim da chain. Se a chain terminar com um `drop` ou `reject`, use `insert` no lugar de `add` para a regra ficar no início. Para desfazer:
+O `add` coloca a regra no fim da chain. Se a chain terminar com um `drop` ou `reject`, use a mesma regra com `insert` no lugar de `add`, para ela ficar no início:
+
+```bash
+sudo nft insert rule inet filter input ip saddr <sub-rede> tcp dport 8000 accept
+```
+
+Para desfazer:
 
 ```bash
 sudo nft -a list chain inet filter input                    # mostra o "handle" de cada regra
@@ -145,18 +169,27 @@ Regras criadas com `nft` na linha de comando somem no reboot (a menos que você 
 
 ## Plano B: hotspot do celular (apresentação)
 
-1. No celular A, ligue o roteador Wi-Fi/hotspot (com senha).
+1. No celular A, ligue o roteador Wi-Fi/hotspot, com senha WPA2 ou WPA3.
 2. No notebook, conecte-se a ele:
    ```bash
    nmcli dev wifi list                                   # confira o SSID
    nmcli --ask dev wifi connect <SSID>                   # pede a senha no terminal (fora do histórico)
    ```
 3. Se o `qc-edge` já estiver rodando, não precisa reiniciar: espere o console recarregar (5 s). O QR code passa a usar o IP novo (os outros aparecem como links `/?ip=...`). Se aparecer o aviso "Nenhum IP de rede local foi detectado", a conexão ainda não subiu.
-4. Libere a porta no firewall de novo se a zona do firewalld mudou (veja acima).
+4. Refaça a regra do firewall com a sub-rede **do hotspot** (seção Firewall): o IP do notebook mudou, e a regra da Wi-Fi de casa não vale para a nova rede. Desfaça a regra antiga.
 5. No celular, leia o QR **novo** (o IP mudou; o token continua o mesmo enquanto o processo estiver rodando).
 6. Para voltar à rede de casa: `nmcli con up <nome da conexão de casa>`.
 
 Plano C (`docs/architecture.md` §8): ancoragem USB. O celular ligado pelo cabo cria uma rede só entre os dois; o QR usa o IP do notebook nessa interface. Túneis públicos (Cloudflare e afins) são **proibidos**, porque as fotos passariam por fora da LAN (R-02).
+
+## Segurança na operação
+
+- Deixe `EDGE_SESSION_TOKEN` **vazio**: assim, um token novo é gerado a cada subida, e reiniciar o `qc-edge` invalida os QR codes antigos.
+- **Não projete o console** (QR code e URL com o token) na apresentação. Se ele foi projetado, reinicie o `qc-edge` para trocar o token.
+- O hotspot do celular sempre com senha WPA2 ou WPA3.
+- Se o QR code ou a lista de IPs do console mostrar um endereço `172.17.x.x`, `172.18.x.x` ou vizinho, é uma bridge do Docker (a sondagem UDP falhou, por exemplo, sem rota padrão): use o link do IP da Wi-Fi ou do hotspot, conferido com `ip -4 addr`.
+- O bind padrão `0.0.0.0` também escuta nas bridges do Docker. A regra de firewall por sub-rede (seção Firewall) é o que limita quem alcança a porta.
+- O console só abre com `127.0.0.1`, `localhost` ou `[::1]` na barra de endereço do próprio notebook. Um 403 com outro endereço é o comportamento esperado.
 
 ## Teste manual com os celulares (CA-20 e CA-21)
 
