@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Test |
+| Status | In Review |
 | Rodada atual | r3 |
 | Autor da implementação | ml-engineer |
 | Tags | — |
