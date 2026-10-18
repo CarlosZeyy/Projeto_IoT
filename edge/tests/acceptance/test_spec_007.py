@@ -403,11 +403,17 @@ def asgi_get(
     client: tuple[str, int] = ("127.0.0.1", 50000),
     headers: dict[str, str] | None = None,
 ) -> httpx.Response:
-    """GET through ``httpx.ASGITransport`` with a simulated client address (SPEC §6)."""
+    """GET through ``httpx.ASGITransport`` with a simulated client address (SPEC §6).
+
+    The base URL is the loopback one (``Host: 127.0.0.1:<EDGE_PORT>``), which the console
+    requires since SPEC-025 §4.1 (§4.7, item 1).
+    """
+    port = os.environ.get("EDGE_PORT", "8000")
 
     async def go() -> httpx.Response:
         transport = httpx.ASGITransport(app=app, client=client)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        base_url = f"http://127.0.0.1:{port}"
+        async with httpx.AsyncClient(transport=transport, base_url=base_url) as c:
             return await c.get(path, headers=headers)
 
     return asyncio.run(go())
@@ -1889,6 +1895,9 @@ def test_extra_configuration_boundaries_are_accepted(
     monkeypatch.setenv("EDGE_HOST", "::")
     spy = UvicornSpy()
     monkeypatch.setattr(uvicorn, "run", spy)
+    assert run_main(monkeypatch) == 2  # SPEC-025 §4.3: EDGE_HOST is IPv4 only
+    assert spy.calls == []
+    monkeypatch.setenv("EDGE_HOST", "255.255.255.255")
     assert run_main(monkeypatch) == 0
     assert spy.calls[0][1]["port"] == 65535
 
