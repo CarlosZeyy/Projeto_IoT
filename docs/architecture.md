@@ -227,8 +227,8 @@ O operador escolhe `item_id`, `object_type`, `grade`, `labeler` e `angle` **ante
 Nada é enviado à nuvem e nenhuma inferência é feita. Formato do manifest em `docs/dataset-protocol.md`.
 
 A partir da SPEC-025 (pendências da SPEC-010):
-- o JPEG é gravado **sem** os segmentos APP1 (EXIF, XMP), APP13 (IPTC) e COM e sem nada depois do EOI, por varredura estrutural dos marcadores, sem reencodar (os pixels não mudam). As fotos de inspeção (`captures/`) continuam gravadas como chegaram, porque nunca saem do notebook;
-- `python -m qc_edge.privacy --dataset-dir <D> [--fix]` confere (e corrige) as imagens já gravadas; roda antes de cada backup do dataset no Drive (`docs/dataset-protocol.md` §8);
+- o JPEG é gravado **sem** os segmentos APP1 (EXIF, XMP), APP13 (IPTC) e COM e sem nada depois do EOI, por varredura estrutural dos marcadores, sem reencodar (os pixels não mudam). Um JPEG com rotação EXIF (`Orientation` de 2 a 8) é recusado com 415, porque sem o APP1 o `qc_preprocess.load_image` deixaria de girá-lo (ADR-004); a página `/capture` nunca envia esse caso. As fotos de inspeção (`captures/`) continuam gravadas como chegaram, porque nunca saem do notebook;
+- `python -m qc_edge.privacy --dataset-dir <D> [--fix]` confere (e corrige) as imagens já gravadas, e acusa sem corrigir o achado `orientation` (foto a refazer pela página); roda antes de cada backup do dataset no Drive (`docs/dataset-protocol.md` §8);
 - os diretórios recebem `fsync` depois do `rename` da imagem e da criação de diretórios, antes da linha do manifest;
 - `notes` recusa as categorias Unicode `Cc`, `Cs`, `Cf`, `Zl` e `Zp`, e o `capture_device` troca esses caracteres por espaço antes do corte em 60.
 
