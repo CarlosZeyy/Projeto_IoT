@@ -38,6 +38,7 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 - **Gatilho:** avaliado depois de cada ingestão (`BackgroundTasks` do FastAPI, sem atrasar a resposta) **ou** por um endpoint `POST /api/v1/alerts/check` chamado periodicamente. A escolha está em aberto (§6).
 - **Regra:** usa a carta da SPEC-006 com `source=live` e os parâmetros padrão. Alerta só para o lote recém-concluído com `out_of_control = true` e `n ≥ min_lot_size`.
 - **Custo limitado (ADR-017):** a verificação usa a seleção limitada da SPEC-026 (`lot_selection` + `build_p_chart`, com um `max_points` pequeno), e nunca carrega nem recalcula a história inteira em Python a cada execução (SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`). Os `LotCounts` já são validados quanto a tipo e fuso desde a SPEC-026 (RV-03 do review da SPEC-006).
+- **Tetos sempre inteiros (SEC-26-01):** toda chamada a `lot_selection` passa `max_points` e `max_excluded` como `int`, **nunca** `None` (no repositório, `None` vira `limit null`, sem teto, e reabriria o SEC-06-01 para os excluídos). Valores preliminares: `max_points=2` (o mínimo de `validate_selection_parameters`, suficiente para avaliar o último lote) e `max_excluded=0`. A regra vale para qualquer chamador novo de `lot_selection`.
 - **Deduplicação:** no máximo 1 mensagem por `(lot_id, source, kind)`, garantida pelo `unique` (`INSERT ... ON CONFLICT DO NOTHING` antes de enviar).
 - **Mensagem** (PT-BR, só texto, **sem imagens** — R-02): `Lote L-007 fora de controle: p = 40,0% (LSC 31,2%), n = 25, defeituosas = 10. Origem: real.`
 - **Envio:** `POST https://api.telegram.org/bot<token>/sendMessage` via `httpx`, timeout de 5 s, sem retry infinito. Falha do Telegram é logada e **nunca** afeta a ingestão.
@@ -52,6 +53,7 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 - **CA-04 (preliminar, R-03)** — *Dado* `caplog` em `DEBUG`, *quando* um alerta é enviado, *então* o valor de `TELEGRAM_BOT_TOKEN` não aparece em nenhum log.
 - **CA-05 (preliminar, R-06)** — *Dado* um lote `simulated` fora de controle, *quando* a verificação roda, *então* nenhum alerta é enviado.
 - **CA-06 (preliminar)** — *Dado* `ALERTS_ENABLED=false`, *quando* a verificação roda, *então* nenhuma chamada externa é feita.
+- **CA-07 (preliminar, SEC-26-01)** — *Dado* um espião em `qc_api.repositories.inspections.lot_selection` (que chama o original), *quando* a verificação de alertas roda com lotes `live` no banco de teste, *então* toda chamada registrada tem `max_points` e `max_excluded` do tipo `int` (e não `bool` nem `None`), com `2 <= max_points <= 10` e `max_excluded == 0`; e o código do serviço de alertas não contém a chamada a `lot_selection` com `max_points=None` ou `max_excluded=None` (busca no `ast` do módulo).
 
 ## 6. Perguntas em aberto
 
@@ -66,3 +68,4 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-17 | §4: a regra usa a seleção limitada da SPEC-026 (ADR-017) e nunca recalcula a história inteira; depende, na prática, da SPEC-026. A SPEC continua `Draft`. | SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`; RV-03 de `reviews/SPEC-006/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-17 | §4: `lot_selection` sempre com tetos inteiros (`max_points=2` e `max_excluded=0`, preliminares), nunca `None`; CA-07 preliminar novo (espião e busca no `ast`). A SPEC continua `Draft`. | SEC-26-01 de `reviews/SPEC-026/r1-security-report.md` (= RV-02 de `reviews/SPEC-026/r1-review-report.md`) | Orquestrador, a pedido do humano |

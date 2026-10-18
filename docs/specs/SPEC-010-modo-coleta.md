@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Security |
+| Status | Done |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -153,3 +153,4 @@ Linhas: `screw` × 5 graus e `nut` × 5 graus (metas 120 imagens e 12 peças por
 | 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-17 | §3.1: autoriza o tester a fazer exatamente três ajustes em `edge/tests/acceptance/test_spec_007.py`: (1) `test_ca15_capture_page` deixa de exigir `disabled` na opção `collect`; (2) `test_extra_collect_mode_is_501` é removido ou passa a esperar 422; (3) a contagem `parafuso == 10` de `test_ca13_console_from_loopback` passa a valer só nas linhas `<tr class="inspection" …>`. Nenhum requisito nem CA desta SPEC muda; nenhum CA da SPEC-007 tem a intenção alterada. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 de `reviews/SPEC-010/r1-dev-report.md` (três testes de aceite da SPEC-007 verificavam o comportamento que esta SPEC substitui de propósito) | Orquestrador |
 | 2026-10-17 | Correção do SPEC_ISSUE-01 reaprovada, junto com a regra "Testes de aceite de SPECs anteriores" (`architecture.md` §10); `Blocked` → `In Dev`, retomando a r1 (o código da r1 já está pronto; segue para o tester). | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
+| 2026-10-17 | `Done` (mergeada; o registro do CA-17 manual continua pendente, `docs/plan.md`). Só texto, sem mudança de requisito nesta SPEC: as pendências dos portões r1 foram encaminhadas. SEC-10-01 (JPEG gravado sem APP1, APP13, COM e trailer, e a CLI `python -m qc_edge.privacy`), SEC-10-02 (`fsync` dos diretórios) e SEC-10-03 (`notes` e `capture_device`) → SPEC-025 §4.8 a §4.11, que substituem, a partir do merge dela, o "JPEG: bytes recebidos" do §4.2, passo 4, e as regras de caracteres do §4.1 e do §4.2, item 2. SEC-10-04 e SEC-10-08 → `docs/dataset-protocol.md` §5, §8 e §8.1 e SPEC-011. RV-01 → `docs/architecture.md` §10 (renomear um teste extra cujo nome descreve o comportamento substituído). RV-02 (O-01, umask do CA-18) → aplicado nos CAs de permissão da SPEC-025 (`0o000` e `0o277`); a lacuna do CA-18 daqui já está coberta pelos testes extras com esses umasks. | `reviews/SPEC-010/r1-review-report.md` e `r1-security-report.md` | Orquestrador, a pedido do humano |
