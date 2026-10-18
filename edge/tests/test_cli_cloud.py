@@ -1,10 +1,12 @@
-"""``qc-edge`` with the outbox and the cloud settings (SPEC-009 sections 3.1 and 4.2)."""
+"""``qc-edge`` with the outbox and the cloud settings (SPEC-009 sections 3.1, 4.2 and 4.4)."""
 
 from __future__ import annotations
 
 import logging
+import random
 import secrets
 import sqlite3
+import types
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +16,9 @@ from fastapi.testclient import TestClient
 from qc_edge import cli
 from qc_edge.config import EdgeSettings, check_cloud_api_url
 from qc_edge.outbox import SqliteOutbox
-from qc_edge.publish_loop import PublishLoop
+from qc_edge.publish_loop import ConnectivityState, PublishLoop
+from qc_edge.publisher import HttpPublisher
+from qc_edge.sink import InMemorySink
 
 CONSOLE = {"client": ("127.0.0.1", 50000), "base_url": "http://127.0.0.1:8000"}
 
@@ -59,11 +63,36 @@ def capture(client: TestClient, image: bytes) -> int:
     ).status_code
 
 
-def test_default_outbox_path_and_disabled_without_key(
-    spy: _Spy, tmp_path: Path, jpeg_bytes: bytes, caplog: pytest.LogCaptureFixture
+@pytest.fixture
+def model_dir(
+    dummy_model: types.ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """A dummy ONNX model in ``MODEL_DIR`` (inspect mode without the stub)."""
+    directory = dummy_model.write_model_dir(tmp_path / "models")
+    monkeypatch.setenv("MODEL_DIR", str(directory))
+    return directory
+
+
+def outbox_rows(path: Path) -> list[tuple[Any, ...]]:
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("SELECT * FROM outbox ORDER BY rowid").fetchall()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("variable", [None, "DEVICE_API_KEY"])
+def test_default_outbox_path_and_disabled_without_key_or_url(
+    spy: _Spy,
+    model_dir: Path,
+    tmp_path: Path,
+    jpeg_bytes: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str | None,
 ) -> None:
-    with caplog.at_level(logging.INFO, logger="qc_edge"):
-        cli.main(["--stub-model"])
+    if variable is not None:
+        monkeypatch.setenv(variable, key())  # the key without CLOUD_API_URL
+    cli.main([])
     assert isinstance(spy.sink, SqliteOutbox)
     assert spy.sink.path == tmp_path / "data" / "outbox.sqlite3"
     assert spy.background == []
@@ -75,8 +104,8 @@ def test_default_outbox_path_and_disabled_without_key(
     ).json()
     assert status["sink"]["pending"] == 3
     assert status["sink"]["connectivity"] == "disabled"
+    assert [row[6] for row in outbox_rows(spy.sink.path)] == ["pending"] * 3
     assert 'data-connectivity="disabled"' in client.get("/").text
-    assert "cloud publishing disabled (--stub-model)" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -103,14 +132,96 @@ def test_no_loop_without_key_and_url(
     assert reason in caplog.text
 
 
-def test_stub_model_never_publishes_even_with_key_and_url(
-    spy: _Spy, monkeypatch: pytest.MonkeyPatch
+def test_stub_model_uses_memory_and_never_publishes(
+    spy: _Spy,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    jpeg_bytes: bytes,
+    fake_cloud: types.ModuleType,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setenv("DEVICE_API_KEY", key())
+    """SPEC-009 section 4.4 and CA-19: the existing outbox is left untouched."""
+    device_key = key()
+    path = tmp_path / "data" / "outbox.sqlite3"
+    originals = [fake_cloud.make_inspection(model_version="partqc-mnv3-v1") for _ in range(2)]
+    box = SqliteOutbox(path)
+    for item in originals:
+        box.put(item)
+    box.close()
+    before = outbox_rows(path)
+    monkeypatch.setenv("DEVICE_API_KEY", device_key)
     monkeypatch.setenv("CLOUD_API_URL", "http://127.0.0.1:9000")
+    with caplog.at_level(logging.DEBUG):
+        cli.main(["--stub-model"])
+        assert isinstance(spy.sink, InMemorySink)
+        assert spy.background == []
+        with TestClient(spy.app) as client:
+            for _ in range(3):
+                assert capture(client, jpeg_bytes) == 200
+            status = client.get(
+                "/api/status", headers={"X-Session-Token": spy.app.state.session_token}
+            ).json()["sink"]
+    assert (status["pending"], status["dead"], status["connectivity"]) == (3, 0, "disabled")
+    assert outbox_rows(path) == before
+    assert all("stub-v0" not in row[1] for row in outbox_rows(path))
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("--stub-model" in message for message in warnings)
+    assert device_key not in caplog.text
+
+    cloud = fake_cloud.FakeCloud()
+    state = ConnectivityState()
+    box = SqliteOutbox(path, connectivity=state)
+    publisher = HttpPublisher(fake_cloud.BASE_URL, device_key, transport=cloud.transport)
+    try:
+        loop = PublishLoop(box, publisher, state, rng=random.Random(0))
+        loop.run_once()
+        assert box.stats().pending == 0
+    finally:
+        publisher.close()
+        box.close()
+    assert set(cloud.stored) == {item.inspection_id for item in originals}
+    assert all(item["model_version"] != "stub-v0" for item in cloud.stored.values())
+
+
+def test_stub_model_never_creates_outbox_path(
+    spy: _Spy, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, jpeg_bytes: bytes
+) -> None:
+    missing_dir = tmp_path / "sem-outbox"
+    monkeypatch.setenv("OUTBOX_PATH", str(missing_dir / "outbox.sqlite3"))
     cli.main(["--stub-model"])
-    assert spy.background == []
-    assert spy.sink.stats().connectivity == "disabled"
+    with TestClient(spy.app) as client:
+        for _ in range(3):
+            assert capture(client, jpeg_bytes) == 200
+    assert not missing_dir.exists()
+    assert not (tmp_path / "data" / "outbox.sqlite3").exists()
+
+
+def test_stub_model_still_validates_url_and_key(
+    spy: _Spy, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("CLOUD_API_URL", "http://api.exemplo.org")
+    with caplog.at_level(logging.INFO, logger="qc_edge"), pytest.raises(SystemExit) as excinfo:
+        cli.main(["--stub-model"])
+    assert excinfo.value.code == 2
+    assert "CLOUD_API_URL" in caplog.text
+    monkeypatch.delenv("CLOUD_API_URL")
+    bad = "chave inválida " + secrets.token_hex(4)
+    monkeypatch.setenv("DEVICE_API_KEY", bad)
+    with caplog.at_level(logging.INFO, logger="qc_edge"), pytest.raises(SystemExit) as excinfo:
+        cli.main(["--stub-model"])
+    assert excinfo.value.code == 2
+    assert "DEVICE_API_KEY" in caplog.text
+    assert bad not in caplog.text
+
+
+def test_stub_model_ignores_an_unopenable_outbox_path(
+    spy: _Spy, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    directory = tmp_path / "is-a-directory"
+    directory.mkdir()
+    monkeypatch.setenv("OUTBOX_PATH", str(directory))
+    cli.main(["--stub-model"])  # not opened, so not an error
+    assert isinstance(spy.sink, InMemorySink)
 
 
 def test_loop_with_key_and_local_url(
@@ -171,16 +282,14 @@ def test_unopenable_outbox_exits_2(
     assert "OUTBOX_PATH" in caplog.text
 
 
-def test_outbox_survives_a_restart(spy: _Spy, jpeg_bytes: bytes, tmp_path: Path) -> None:
-    cli.main(["--stub-model"])
+def test_outbox_survives_a_restart(
+    spy: _Spy, model_dir: Path, jpeg_bytes: bytes, tmp_path: Path
+) -> None:
+    cli.main([])
     assert capture(TestClient(spy.app), jpeg_bytes) == 200
-    cli.main(["--stub-model"])
+    cli.main([])
     assert spy.sink.stats().pending == 1
-    conn = sqlite3.connect(tmp_path / "data" / "outbox.sqlite3")
-    try:
-        assert conn.execute("SELECT count(*) FROM outbox").fetchone()[0] == 1
-    finally:
-        conn.close()
+    assert len(outbox_rows(tmp_path / "data" / "outbox.sqlite3")) == 1
 
 
 # -- CLOUD_API_URL -------------------------------------------------------------------------------

@@ -20,7 +20,7 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 
 - O `qc-edge` não lê o `.env` sozinho: use `--env-file .env` ou exporte as variáveis.
 - Abra o console **no próprio notebook**, em <http://127.0.0.1:8000/> ou <http://localhost:8000/> (troque `8000` pelo seu `EDGE_PORT`). Ele só responde ao loopback (`127.0.0.1`/`::1`), recusa com 403 requisições com `X-Forwarded-For`, `Forwarded` ou `CF-Connecting-IP` e só aceita o header `Host` `127.0.0.1:<porta>`, `localhost:<porta>` ou `[::1]:<porta>`: outro nome ou IP na barra de endereço (inclusive o IP da LAN do próprio notebook) recebe 403. Isso impede que uma página hostil aberta no navegador do notebook leia o token por DNS rebinding (SPEC-025). O console mostra o QR code, a URL de pareamento, os outros IPs da máquina (links `/?ip=...`), o estado do modelo e do sink e as 10 últimas inspeções da sessão. Ele recarrega a cada 5 s, e os IPs são detectados de novo a cada recarga (útil ao trocar para o hotspot).
-- `--stub-model` responde sempre parafuso/bom (`model_version = stub-v0`). É só para desenvolvimento e **nunca** publica na nuvem (R-06). Ele tem precedência sobre `MODEL_DIR`: com os dois, o log avisa (`--stub-model takes precedence: MODEL_DIR is not loaded`) e o diretório não é carregado.
+- `--stub-model` responde sempre parafuso/bom (`model_version = stub-v0`). É só para desenvolvimento: as inspeções ficam só na memória, nunca vão para o outbox e **nunca** são publicadas na nuvem (R-06, seção "Envio para a nuvem"). Ele tem precedência sobre `MODEL_DIR`: com os dois, o log avisa (`--stub-model takes precedence: MODEL_DIR is not loaded`) e o diretório não é carregado.
 - Códigos de saída: `2` para configuração inválida (a mensagem cita a variável, nunca o valor), argumento desconhecido na linha de comando (o log cita só o nome da opção, nunca o valor: `unknown command-line argument(s): --stub-modle`) ou `MODEL_DIR` que não carrega (o log mostra `cannot load the model: ...` com o nome do arquivo); `1` se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` estiver ligada no processo (SEC-04).
 - O log do servidor nunca mostra o token nem o `DEVICE_API_KEY`. O access log do uvicorn fica desligado, porque imprimiria a query `?t=<token>`. No lugar dele, o `qc-edge` registra uma linha por requisição, com método, rota, status e duração, sem a query.
 
@@ -38,7 +38,7 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 | `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio (vale o `decision.json`) | opcionais; número de 0 a 1 que sobrescreve o limiar do `decision.json` (seção "Limiares de decisão"). Fora de `[0, 1]` ou não numérico → código 2 citando a variável. Sem `MODEL_DIR`, são ignorados (com aviso no log) |
 | `DEVICE_API_KEY` | vazio | segredo (R-03): chave do dispositivo, gerada por `scripts/register_device.py` e mostrada uma única vez. Vazio = nada é enviado à nuvem. Só ASCII visível (sem espaço nem acento); outro valor → código 2 citando a variável, nunca o valor |
 | `CLOUD_API_URL` | vazio | URL base da `qc-api`, sem `/api/v1` no fim (ex.: `https://<seu-servico>.onrender.com`). `https://` obrigatório; `http://` só com `localhost` ou `127.0.0.1` (testes locais). Sem usuário/senha, query ou fragmento. Outro valor → código 2 citando `CLOUD_API_URL`. Vazio = nada é enviado |
-| `OUTBOX_PATH` | `EDGE_DATA_DIR/outbox.sqlite3` | arquivo SQLite do outbox; as pastas que faltarem são criadas com `0700` e o arquivo novo com `0600`. Se não abrir (ex.: é um diretório) → código 2 citando `OUTBOX_PATH` |
+| `OUTBOX_PATH` | `EDGE_DATA_DIR/outbox.sqlite3` | arquivo SQLite do outbox (ignorado com `--stub-model`: nem aberto nem criado); as pastas que faltarem são criadas com `0700` e o arquivo novo com `0600`. Se não abrir (ex.: é um diretório) → código 2 citando `OUTBOX_PATH` |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -157,17 +157,17 @@ O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backu
 
 Fluxo (`docs/architecture.md` §6.2, passos 6 e 8): a captura grava o `InspectionCreate` no outbox SQLite (`OUTBOX_PATH`) e só depois responde ao celular. Uma thread em segundo plano lê os pendentes a cada 2 s e os publica em `POST {CLOUD_API_URL}/api/v1/inspections/batch`, em lotes de até 100, com o header `X-API-Key` e timeout de 5 s. O corpo é sempre JSON (`BatchCreate` de `qc_contracts`): nunca imagem, nunca multipart (R-02). `qc_edge.publisher` é o único módulo da borda que fala HTTP com a nuvem.
 
-Quando o envio fica ligado:
+Onde ficam as inspeções e quando o envio fica ligado (SPEC-009 §4.4):
 
-| Situação | Envio | Conectividade |
-|---|---|---|
-| `DEVICE_API_KEY` e `CLOUD_API_URL` definidos, sem `--stub-model` | ligado | `online`, `offline` ou `auth_error` |
-| falta qualquer um dos dois | desligado (o log avisa qual falta) | `disabled` |
-| `--stub-model` | **sempre desligado** (R-06: resultado falso não sobe como `live`) | `disabled` |
+| Situação | Onde ficam as inspeções | Envio | Conectividade |
+|---|---|---|---|
+| sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL` | outbox (`OUTBOX_PATH`) | ligado | `online`, `offline` ou `auth_error` |
+| sem `--stub-model`, faltando qualquer um dos dois | outbox (`OUTBOX_PATH`), como pendentes | desligado (o log avisa qual falta) | `disabled` |
+| com `--stub-model` (com ou sem chave e URL) | **só na memória** (somem quando o processo termina) | **sempre desligado** | `disabled` |
 
-Nos dois últimos casos as inspeções continuam sendo gravadas no outbox, como pendentes.
+**Com `--stub-model`, nada vai para o outbox nem para a nuvem** (R-06: resultado falso não sobe como `live`). O `qc-edge` não abre, não cria e não valida o `OUTBOX_PATH`: as inspeções do stub (`model_version = stub-v0`) ficam só na memória do processo, e nenhuma subida posterior, com ou sem a flag, consegue publicá-las. Linhas que já existiam no outbox ficam intactas e só saem numa subida sem a flag. A subida registra um aviso `--stub-model: inspections are kept only in memory and are never written to the outbox nor sent to the cloud`. A validação de `CLOUD_API_URL` e `DEVICE_API_KEY` é a mesma com ou sem a flag.
 
-**Use outro `OUTBOX_PATH` com `--stub-model`** (ex.: `OUTBOX_PATH=/tmp/partqc-stub-outbox.sqlite3`). As inspeções do stub (`model_version = stub-v0`) ficam no outbox como pendentes e seriam enviadas como `live` na próxima subida com chave e URL, se o arquivo fosse o mesmo da operação (ver o SPEC_ISSUE-01 de `reviews/SPEC-009/r1-dev-report.md`).
+Se você rodou um build anterior desta branch (SPEC-009 r1, antes da correção do SPEC_ISSUE-01) com `--stub-model`, o `outbox.sqlite3` pode ter linhas `stub-v0` pendentes: apague o arquivo antes da primeira subida com chave e URL. Só afeta máquinas de desenvolvimento; nada disso chegou à `main`.
 
 O que o laço faz com a resposta da nuvem:
 
