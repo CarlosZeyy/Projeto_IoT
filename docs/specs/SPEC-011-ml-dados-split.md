@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | ml-engineer |
 | Tags | — |
@@ -206,3 +206,4 @@ Nada é mockado além do sistema de arquivos temporário. O CA-25 usa `pytest.im
 | 2026-10-12 | §4.1: problema novo `too_many_jpeg_scans` (a mensagem do `load_image` contém `JPEG scans`), separado de `unreadable_image`, e linhas de resumo `count <code>: <n>` no `validate`. CA-28 novo. §7: não cortar no `FF D9`, não recontar e não usar `verify_images=False` para contornar. Nenhum CA existente muda (o CA-07 continua imprimindo as 3 linhas de problema; o resumo vem depois delas). SPEC marcada como "Aguardando reaprovação humana". | SEC-24-03 de `reviews/SPEC-024/r1-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-12 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-17 | Mudanças: (a) §1 com as pendências da SPEC-010; (b) §3: `load_exclusions` e órfãos no `data.py`; a varredura de privacidade fica na SPEC-025; (c) §4.1: leitura só com `csv`/`pandas`, `exclusions.csv` (`image_path,reason`, `reason` ∈ `person`/`other`) e problemas novos `orphan_image`, `exclusion_unknown_image`, `exclusion_invalid_reason` e `excluded_file_present`; (d) §4.2: `n_excluded`; (e) §4.3: exclusões na concordância e `n_excluded_pairs`; (f) §4.4: parâmetro `excluded` e aviso `excluded_previous_image` (imagem excluída sai do split novo, inclusive do teste, sem `SplitError`); (g) CA-18 passa a apagar também o arquivo (senão o `orphan_image` passaria o CA pelo motivo errado); CAs novos CA-29 a CA-32; (h) §7: planilhas, `flock` e exclusões. Nenhum outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-10-02, SEC-10-03, SEC-10-04, SEC-10-06 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-18 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -294,3 +294,4 @@ Contexto comum: `EdgeSettings` com `EDGE_PORT=8000` e `EDGE_DATA_DIR` e `DATASET
 | 2026-10-13 | SPEC criada (Draft). | SEC-01, SEC-03, SEC-04, SEC-05, SEC-06 (parte de `captures/`) e SEC-07 de `reviews/SPEC-007/r1-security-report.md`; RV-04 e RV-05 de `reviews/SPEC-007/r1-review-report.md`; RV-02 de `reviews/SPEC-004/r2-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-13 | `Draft` → `Ready`. Aprovação humana, com 422 para a classe 23 e retenção das fotos até a entrega. | Aprovação humana | Humano (Carlos) |
 | 2026-10-17 | Mudanças: (a) título e cabeçalho (depende da SPEC-010, já `Done`; prazo também antes do primeiro backup do dataset no Drive); (b) §1 com as pendências de código da SPEC-010; (c) §3 com os arquivos novos e o que fica fora; (d) §4.2: ordem sem o 501 e o limitador assíncrono valendo para os dois modos; (e) §4.7: ajustes em testes antigos pela regra de `architecture.md` §10, com o item 4 (`test_spec_010.py`); (f) §4.8 nova: o modo coleta grava o JPEG sem APP1, APP13, COM e dados depois do EOI, sem reencodar (415 em erro estrutural; o modo `inspect` não muda); (g) §4.9 nova: CLI `python -m qc_edge.privacy` (varredura e `--fix`); (h) §4.10 nova: `fsync` dos diretórios na coleta; (i) §4.11 nova: `notes` recusa `Cf`, `Zl` e `Zp`, e `capture_device` troca controles por espaço antes do corte; (j) §4.12 nova: README do modo coleta; (k) CA-08 inclui uma coleta, CA-09 ganha os umasks `0o000` e `0o277`, CA-11 confere o README; CAs novos CA-13 a CA-18; §6, §7 e §8 atualizadas. Nenhum outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-10-01, SEC-10-02 e SEC-10-03 de `reviews/SPEC-010/r1-security-report.md`; RV-02 (O-01), RV-03 e RV-04 de `reviews/SPEC-010/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-18 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |

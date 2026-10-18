@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -154,3 +154,4 @@ Só a fronteira HTTP é mockada (`httpx.MockTransport`), como na SPEC-013. O CA-
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-17 | SPEC criada (`Draft`). | RV-04, RV-05 e RV-07 de `reviews/SPEC-013/r1-review-report.md`; RV-08, RV-09 e RV-10 de `reviews/SPEC-013/r2-review-report.md`; SEC-13-01 a SEC-13-05 e SEC-13-08 de `reviews/SPEC-013/r2-security-report.md`; SEC-26-02 (parte do dashboard, sem mudança) de `reviews/SPEC-026/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-18 | `Draft` → `Ready`. Aprovação humana. | Aprovação humana | Humano (Carlos) |

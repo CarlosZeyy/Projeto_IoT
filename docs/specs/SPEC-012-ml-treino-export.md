@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready — **Aguardando reaprovação humana** |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | ml-engineer |
 | Tags | — |
@@ -173,3 +173,4 @@ Sem internet nos testes (`pretrained=False`). Dados sempre do `make_synthetic_da
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-17 | §4.8: o valor da tabela do CHANGELOG segue a regra única de exibição de `docs/architecture.md` §7 (4 casas, nunca a favor da meta: corte para baixo quando maior é melhor, arredondamento para cima quando menor é melhor, IC alargado; status pelo valor bruto), a mesma do dashboard (SPEC-028). CA-25 alterado: `0,9313` → `0,9312`, com casos novos de QWK (`0,7500`, `atingida`) e de latência (`120,0001`). Nenhum outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | RV-07 de `reviews/SPEC-013/r1-review-report.md` (o CHANGELOG arredondava ao mais próximo e o painel cortava, e cortar uma métrica em que menor é melhor a deixava melhor que a medida, contra a intenção do R-11) | Orquestrador, a pedido do humano |
+| 2026-10-18 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
