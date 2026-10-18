@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -28,6 +29,7 @@ from qc_edge.collect import (
     DatasetObjectType,
     DatasetWriteError,
     DatasetWriter,
+    ExifOrientationNotSupportedError,
     InvalidCollectFieldError,
     ItemTypeConflictError,
     ManifestHeaderMismatchError,
@@ -38,7 +40,7 @@ from qc_edge.collect import (
     empty_coverage,
 )
 from qc_edge.fsutil import fsync_dir
-from qc_edge.jpeg import JpegStructureError, strip_private_segments
+from qc_edge.jpeg import JpegStructureError, jpeg_private_findings, strip_private_segments
 from qc_preprocess import load_image
 
 NOW = datetime(2026, 10, 22, 14, 15, 3, tzinfo=UTC)
@@ -793,6 +795,79 @@ def test_png_is_never_walked(
     data, image = _encoded("PNG")
     result = make_writer().write(_request(), data, image, "")
     assert (root / result.image_path).read_bytes().startswith(b"\xff\xd8\xff")
+
+
+def test_exif_rotated_jpeg_is_415_before_touching_the_disk(
+    make_writer: Callable[..., DatasetWriter], root: Path, jpeg_tools: Any
+) -> None:
+    for data in (jpeg_tools.rotated_jpeg(6), jpeg_tools.xmp_orientation_jpeg(8)):
+        with pytest.raises(ExifOrientationNotSupportedError) as excinfo:
+            make_writer().write(_request(), data, load_image(data), "")
+        assert excinfo.value.status_code == 415
+        assert excinfo.value.detail == "invalid image: EXIF orientation not supported"
+        assert not root.exists()
+
+
+def test_orientation_1_is_stripped_and_keeps_the_load_image_result(
+    make_writer: Callable[..., DatasetWriter], root: Path, jpeg_tools: Any
+) -> None:
+    data = jpeg_tools.rotated_jpeg(1)
+    result = make_writer().write(_request(), data, load_image(data), "")
+    stored = (root / result.image_path).read_bytes()
+    assert stored == strip_private_segments(data)
+    assert jpeg_private_findings(stored) == frozenset()
+    assert load_image(stored).size == load_image(data).size == (64, 48)
+    assert (np.asarray(load_image(stored)) == np.asarray(load_image(data))).all()
+
+
+def test_rotation_check_comes_before_the_strip(
+    make_writer: Callable[..., DatasetWriter],
+    root: Path,
+    jpeg_tools: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def never(data: bytes) -> bytes:
+        raise AssertionError("a rotated JPEG must not be stripped")
+
+    monkeypatch.setattr(jpeg_module, "strip_private_segments", never)
+    data = jpeg_tools.rotated_jpeg(6)
+    with pytest.raises(ExifOrientationNotSupportedError):
+        make_writer().write(_request(), data, load_image(data), "")
+
+
+def test_unreadable_orientation_is_an_unsupported_structure(
+    make_writer: Callable[..., DatasetWriter], root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(data: bytes) -> bool:
+        raise JpegStructureError("cannot read the JPEG EXIF orientation")
+
+    monkeypatch.setattr(jpeg_module, "has_exif_rotation", broken)
+    data, image = _encoded()
+    with pytest.raises(UnsupportedJpegStructureError) as excinfo:
+        make_writer().write(_request(), data, image, "")
+    assert excinfo.value.status_code == 415
+    assert not root.exists()
+
+
+def test_png_orientation_is_applied_before_the_reencode(
+    make_writer: Callable[..., DatasetWriter],
+    root: Path,
+    jpeg_tools: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def never(data: bytes) -> bool:
+        raise AssertionError("a PNG is never checked as JPEG")
+
+    monkeypatch.setattr(jpeg_module, "has_exif_rotation", never)
+    buffer = io.BytesIO()
+    jpeg_tools.noise_image().save(buffer, format="PNG", exif=jpeg_tools.orientation_exif(6))
+    png = buffer.getvalue()
+    image = load_image(png)
+    assert image.size == (48, 64)
+    result = make_writer().write(_request(), png, image, "")
+    stored = (root / result.image_path).read_bytes()
+    assert jpeg_private_findings(stored) == frozenset()
+    assert load_image(stored).size == (48, 64)
 
 
 class _FsyncSpy:

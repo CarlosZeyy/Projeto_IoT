@@ -15,20 +15,23 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from qc_edge import app as app_module
+from qc_edge import jpeg as jpeg_module
 from qc_edge import limits as limits_module
 from qc_edge import netinfo
 from qc_edge.app import create_app
 from qc_edge.collect import MANIFEST_COLUMNS
 from qc_edge.config import EdgeSettings
 from qc_edge.inference import StubInferencer
-from qc_edge.jpeg import JpegStructureError
+from qc_edge.jpeg import JpegStructureError, jpeg_private_findings
 from qc_edge.limits import CAPTURE_MAX_BYTES
 from qc_edge.sink import InMemorySink
+from qc_preprocess import load_image
 
 NOW = datetime(2026, 10, 22, 14, 15, 3, tzinfo=UTC)
 LOCAL = ("127.0.0.1", 50000)
@@ -418,6 +421,69 @@ def test_unsupported_structure_is_415_and_releases_the_slot(
         files={"image": ("a.jpg", jpeg_bytes, "image/jpeg")},
     )
     assert inspect.status_code == 200
+
+
+def test_exif_rotated_jpeg_is_415_and_the_inspect_mode_keeps_it(
+    settings: EdgeSettings, jpeg_tools: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    # INFO, as in production: Pillow's own DEBUG records (PIL.TiffImagePlugin) are not emitted.
+    caplog.set_level(logging.INFO)
+    rot6 = jpeg_tools.rotated_jpeg(6)
+    edge = Edge(
+        settings,
+        inferencer=StubInferencer(),
+        clock=app_module.utc_now,  # the inspection needs a current inspected_at
+        max_concurrent_decodes=1,
+        decode_wait_s=1,
+    )
+    response = edge.post(rot6)
+    assert response.status_code == 415
+    assert response.json() == {"detail": "invalid image: EXIF orientation not supported"}
+    assert edge.files() == []
+    assert any(
+        r.levelno == logging.WARNING and "EXIF orientation not supported" in r.getMessage()
+        for r in caplog.records
+    )
+    assert not any("30.21" in r.getMessage() or "3021" in r.getMessage() for r in caplog.records)
+    inspect = edge.client.post(
+        "/api/capture",
+        headers={"X-Session-Token": edge.token},
+        data={"lot_id": "L-001", "mode": "inspect"},
+        files={"image": ("a.jpg", rot6, "image/jpeg")},
+    )
+    assert inspect.status_code == 200  # the slot was released after the 415
+    [stored] = (settings.EDGE_DATA_DIR / "captures").rglob("*.jpg")
+    assert stored.read_bytes() == rot6
+
+
+def test_orientation_1_is_stored_without_metadata(edge: Edge, jpeg_tools: Any) -> None:
+    rot1 = jpeg_tools.rotated_jpeg(1)
+    response = edge.post(rot1)
+    assert response.status_code == 200
+    stored = (edge.root / response.json()["image_path"]).read_bytes()
+    assert jpeg_private_findings(stored) == frozenset()
+    assert load_image(stored).size == load_image(rot1).size
+    assert (np.asarray(load_image(stored)) == np.asarray(load_image(rot1))).all()
+
+
+def test_orientation_check_runs_in_the_worker_thread(
+    edge: Edge, jpeg_tools: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = jpeg_module.has_exif_rotation
+    loop_running: list[bool] = []
+
+    def spy(data: bytes) -> bool:
+        try:
+            asyncio.get_running_loop()
+            loop_running.append(True)
+        except RuntimeError:
+            loop_running.append(False)
+        return original(data)
+
+    monkeypatch.setattr(jpeg_module, "has_exif_rotation", spy)
+    assert edge.post(jpeg_tools.rotated_jpeg(6)).status_code == 415
+    assert edge.post(jpeg_tools.pillow_jpeg()).status_code == 200
+    assert loop_running == [False, False]
 
 
 @pytest.mark.parametrize("char", [" ", " ", "‮", "⁦", "‏", "­"])

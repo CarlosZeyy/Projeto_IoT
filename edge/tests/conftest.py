@@ -2,7 +2,8 @@
 
 Images are generated in memory, never stored in the repository (R-14). The JPEG samples of
 SPEC-025 (``jpeg_tools``) insert, right after the SOI of a Pillow JPEG, an EXIF APP1 with a GPS
-IFD, an XMP APP1, an IPTC APP13 and a COM, and append a Motion-Photo-like trailer after the EOI.
+IFD, an XMP APP1, an IPTC APP13 and a COM, and append a Motion-Photo-like trailer after the EOI;
+the rotated samples carry an EXIF (or XMP) ``Orientation``.
 """
 
 from __future__ import annotations
@@ -51,6 +52,46 @@ def gps_exif() -> bytes:
     latitude = tuple(TiffImagePlugin.IFDRational(*part) for part in GPS_LATITUDE)
     exif[0x8825] = {1: "S", 2: latitude}  # GPSInfo IFD: GPSLatitudeRef and GPSLatitude
     return exif.tobytes()
+
+
+def orientation_exif(value: int, *, gps: bool = True) -> bytes:
+    """EXIF with ``Orientation`` (tag 274) and, by default, the GPS IFD of ``gps_exif``."""
+    exif = Image.Exif()
+    exif[0x0112] = value
+    if gps:
+        latitude = tuple(TiffImagePlugin.IFDRational(*part) for part in GPS_LATITUDE)
+        exif[0x8825] = {1: "S", 2: latitude}
+    return exif.tobytes()
+
+
+def rotated_jpeg(value: int = 6, size: tuple[int, int] = (64, 48), *, gps: bool = True) -> bytes:
+    """Pillow JPEG (asymmetric noise) with ``Orientation=value`` in the EXIF."""
+    return pillow_jpeg(size, exif=orientation_exif(value, gps=gps))
+
+
+def xmp_orientation_jpeg(value: int, *, element: bool = False) -> bytes:
+    """Pillow JPEG without EXIF and with ``tiff:Orientation`` only in an XMP APP1."""
+    tag = (
+        f"<tiff:Orientation>{value}</tiff:Orientation>"
+        if element
+        else f'<rdf:Description tiff:Orientation="{value}"/>'
+    )
+    payload = XMP_PREFIX + f"<x:xmpmeta>{tag}</x:xmpmeta>".encode()
+    return insert_after_soi(pillow_jpeg(), segment(0xE1, payload))
+
+
+def tiff_orientation_exif(field_type: int, value: bytes) -> bytes:
+    """Hand-made little-endian EXIF whose only entry is tag 274 with ``field_type`` (TIFF type
+    number) and ``value`` (at most 8 bytes, stored after the IFD when it has more than 4)."""
+    count = 1
+    if len(value) <= 4:
+        entry = struct.pack("<HHI", 0x0112, field_type, count) + value.ljust(4, b"\x00")
+        tail = b""
+    else:
+        offset = 8 + 2 + 12 + 4
+        entry = struct.pack("<HHII", 0x0112, field_type, count, offset)
+        tail = value
+    return b"Exif\x00\x00II*\x00" + struct.pack("<IH", 8, 1) + entry + struct.pack("<I", 0) + tail
 
 
 def insert_after_soi(data: bytes, *segments: bytes) -> bytes:
@@ -182,6 +223,10 @@ def jpeg_tools() -> types.SimpleNamespace:
         noise_image=noise_image,
         pillow_jpeg=pillow_jpeg,
         gps_exif=gps_exif,
+        orientation_exif=orientation_exif,
+        rotated_jpeg=rotated_jpeg,
+        xmp_orientation_jpeg=xmp_orientation_jpeg,
+        tiff_orientation_exif=tiff_orientation_exif,
         insert_after_soi=insert_after_soi,
         with_metadata=with_metadata,
         pixels=pixels,

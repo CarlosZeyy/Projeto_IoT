@@ -11,10 +11,16 @@ Motion Photo). It is a structural walk over the markers, never a search for loos
 ``FF D9`` can appear inside an APPn, a COM or an EXIF thumbnail), and it never re-encodes: the
 entropy-coded data is copied as is, so the decoded pixels do not change (R-14). The inspect mode
 keeps writing the JPEG as received (``captures/`` never leaves the notebook).
+
+The EXIF ``Orientation`` tag lives in the APP1, and ``qc_preprocess.load_image`` applies it
+(``ImageOps.exif_transpose``). A JPEG with an EXIF rotation (``has_exif_rotation``) is therefore
+never stripped: the collect mode refuses it and the privacy scan reports it, so that
+``load_image`` gives the same image for the received bytes and for the stored file (ADR-004).
 """
 
 from __future__ import annotations
 
+import io
 import re
 from typing import BinaryIO
 
@@ -35,6 +41,11 @@ FINDING_TRAILER = "trailer"
 PRIVATE_FINDINGS = frozenset({*_PRIVATE_SEGMENTS.values(), FINDING_TRAILER})
 
 _FILL = re.compile(rb"\xff+")
+
+# EXIF tag 274 and the values ``ImageOps.exif_transpose`` applies (a ``dict.get`` lookup: the
+# membership test below uses the same hash and equality, so ``6.0`` counts like ``6``).
+_ORIENTATION_TAG = 0x0112
+_ROTATION_VALUES = frozenset(range(2, 9))
 
 
 class JpegStructureError(ValueError):
@@ -75,6 +86,31 @@ def jpeg_private_findings(data: bytes) -> frozenset[str]:
     """
     _, findings = _walk(data, keep_output=False)
     return frozenset(findings)
+
+
+def has_exif_rotation(data: bytes) -> bool:
+    """Whether ``qc_preprocess.load_image`` would rotate or flip ``data`` (SPEC-025 section 4.8).
+
+    ``True`` if, and only if, the ``Orientation`` tag (274) of
+    ``Image.open(..., formats=("JPEG",)).getexif()`` is one of the values 2 to 8 that
+    ``ImageOps.exif_transpose`` applies. Pillow's ``getexif`` also reads the XMP
+    ``tiff:Orientation`` when the EXIF has no such tag. Only the header is read (no ``load()``),
+    and the value is never returned nor logged.
+
+    Raises:
+        JpegStructureError: any Pillow error (except ``MemoryError``), with a fixed message.
+    """
+    try:
+        with Image.open(io.BytesIO(data), formats=("JPEG",)) as image:
+            orientation = image.getexif().get(_ORIENTATION_TAG)
+    except MemoryError:
+        raise
+    except Exception:
+        raise JpegStructureError("cannot read the JPEG EXIF orientation") from None
+    try:
+        return orientation in _ROTATION_VALUES
+    except TypeError:  # an unhashable value is never applied (exif_transpose would fail)
+        return False
 
 
 def _walk(data: bytes, *, keep_output: bool) -> tuple[bytearray, set[str]]:

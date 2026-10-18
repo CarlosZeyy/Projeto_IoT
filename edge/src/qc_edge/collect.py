@@ -11,9 +11,11 @@ module creates under ``DATASET_DIR`` gets an exact mode, whatever the ``umask``:
 directories and ``0600`` for files (SEC-06, R-14).
 
 SPEC-025: a JPEG is stored without its private segments (APP1, APP13, COM and the bytes after
-the EOI, ``qc_edge.jpeg.strip_private_segments``), every new directory entry is made durable with
-``fsync_dir`` before the manifest row is appended (SEC-10-02), and ``notes`` and
-``capture_device`` never carry line separators nor bidi controls (SEC-10-03).
+the EOI, ``qc_edge.jpeg.strip_private_segments``); a JPEG with an EXIF rotation is refused
+instead (without the APP1, ``qc_preprocess.load_image`` would no longer rotate it, ADR-004);
+every new directory entry is made durable with ``fsync_dir`` before the manifest row is appended
+(SEC-10-02); and ``notes`` and ``capture_device`` never carry line separators nor bidi controls
+(SEC-10-03).
 """
 
 from __future__ import annotations
@@ -163,6 +165,13 @@ class UnsupportedJpegStructureError(CollectError):
 
     status_code = 415
     detail = "invalid image: unsupported JPEG structure"
+
+
+class ExifOrientationNotSupportedError(CollectError):
+    """415: a JPEG with an EXIF rotation (``Orientation`` 2 to 8), refused before the disk."""
+
+    status_code = 415
+    detail = "invalid image: EXIF orientation not supported"
 
 
 # -------------------------------------------------------------------------------------- request
@@ -391,15 +400,23 @@ def manifest_file_lock(dataset_dir: Path) -> Iterator[None]:
 
 def dataset_image_bytes(data: bytes) -> bytes:
     """Bytes stored for an uploaded image: a JPEG without its private segments; a PNG as is
-    (``write_capture_jpeg`` re-encodes it).
+    (``write_capture_jpeg`` re-encodes it, already rotated by ``load_capture_image``).
+
+    A JPEG with an EXIF rotation is refused instead of stripped (SPEC-025 section 4.8, step 1).
 
     Raises:
-        JpegStructureError: the JPEG markers cannot be walked.
+        ExifOrientationNotSupportedError: 415, ``has_exif_rotation`` is true.
+        UnsupportedJpegStructureError: 415, the header or the markers cannot be walked.
     """
-    if data.startswith(JPEG_SIGNATURE):
+    if not data.startswith(JPEG_SIGNATURE):
+        return data
+    try:
+        if jpeg.has_exif_rotation(data):
+            raise ExifOrientationNotSupportedError()
         # Looked up at call time on the module (SPEC-025 CA-16 replaces it in the tests).
         return jpeg.strip_private_segments(data)
-    return data
+    except JpegStructureError:
+        raise UnsupportedJpegStructureError() from None
 
 
 def _csv_line(values: tuple[str, ...]) -> str:
@@ -446,15 +463,13 @@ class DatasetWriter:
         re-encoded as JPEG q=90.
 
         Raises:
-            UnsupportedJpegStructureError: 415, checked before the disk is touched.
+            ExifOrientationNotSupportedError, UnsupportedJpegStructureError: 415, checked
+                before the disk is touched.
             ManifestHeaderMismatchError, ManifestUnreadableError: 500, nothing written.
             ItemTypeConflictError, CaptureExistsError: 409, nothing written.
             DatasetWriteError: 500; an image already written is removed.
         """
-        try:
-            data = dataset_image_bytes(data)
-        except JpegStructureError:
-            raise UnsupportedJpegStructureError() from None
+        data = dataset_image_bytes(data)
         try:
             with self._lock:
                 self._make_dirs(self._root)

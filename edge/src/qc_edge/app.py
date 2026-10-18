@@ -429,7 +429,8 @@ def create_app(
         """SPEC-010 section 4.2; runs in a worker thread holding a decode slot.
 
         No inferencer, no sink. The JPEG is stored without its private segments (SPEC-025
-        section 4.8); a JPEG whose markers cannot be walked is a 415, with nothing written.
+        section 4.8); a JPEG with an EXIF rotation or whose markers cannot be walked is a 415,
+        with nothing written.
         """
         if form.collect is None:  # read_capture_form always sets it in collect mode
             return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, DETAIL_INTERNAL)
