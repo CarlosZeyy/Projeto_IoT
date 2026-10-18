@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Proposto |
+| Status | Aceito (aprovado pelo humano em 2026-10-18; a decisão 4, `/docs` não publicado, aguarda confirmação) |
 | Data | 2026-10-18 |
 | Decisores | Humano (Carlos) (redigido pelo agente architect) |
 | Relacionados | ADR-008 (substituído em parte), ADR-006, ADR-007, ADR-010, ADR-015, ADR-016 (precedente de mudança de regra inegociável por decisão do humano), ADR-017, SPEC-015, SPEC-028, R-01, R-02, R-03, R-12, R-13, N-05 |
