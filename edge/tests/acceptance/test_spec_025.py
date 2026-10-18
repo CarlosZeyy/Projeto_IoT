@@ -2,8 +2,9 @@
 permissions, CLI and collect-mode privacy).
 
 Written by the tester from the SPEC acceptance criteria (black box), before reading the
-implementation. Covers CA-01 to CA-18. Tests named ``test_extra_*`` are exploratory edge cases
-around the SPEC that no CA spells out.
+implementation. Covers CA-01 to CA-19 (round r2 adjusted CA-11, CA-13 and CA-15 and added
+CA-19, after SPEC_ISSUE-01 of the r1 review). Tests named ``test_extra_*`` are exploratory edge
+cases around the SPEC that no CA spells out.
 
 Rules followed (``reviews/checklist.md`` and ``docs/architecture.md`` §10): the session token and
 every marker are built at run time (no credential literal in a URL or header), images are
@@ -56,9 +57,15 @@ from qc_contracts import Grade, InspectionCreate, ObjectType
 from qc_edge.app import create_app
 from qc_edge.config import EdgeSettings
 from qc_edge.inference import InferenceError, InferenceResult, ModelInfo, StubInferencer
-from qc_edge.jpeg import JpegStructureError, jpeg_private_findings, strip_private_segments
+from qc_edge.jpeg import (
+    JpegStructureError,
+    has_exif_rotation,
+    jpeg_private_findings,
+    strip_private_segments,
+)
 from qc_edge.security import is_allowed_console_host
 from qc_edge.sink import SinkStats
+from qc_preprocess import load_image
 
 pytestmark = pytest.mark.acceptance
 
@@ -85,6 +92,7 @@ PORT = 8000
 SESSION_HEADER = "X-Session-Token"
 BUSY = {"detail": "server busy"}
 UNSUPPORTED = {"detail": "invalid image: unsupported JPEG structure"}
+ORIENTATION_REFUSED = {"detail": "invalid image: EXIF orientation not supported"}
 REFUSAL_LOG = "console refused: host not allowed"
 
 SOI = b"\xff\xd8"
@@ -178,6 +186,27 @@ def pixels(data: bytes | Path) -> np.ndarray:
     source = data if isinstance(data, Path) else io.BytesIO(data)
     with Image.open(source) as img:
         return np.asarray(img.convert("RGB"))
+
+
+def loaded(data: bytes | Path) -> np.ndarray:
+    """Pixels through the project loader (EXIF orientation applied, ADR-004)."""
+    return np.asarray(load_image(data))
+
+
+def same_loaded(a: bytes | Path, b: bytes | Path) -> bool:
+    """Same size and same pixels through ``qc_preprocess.load_image``."""
+    left, right = loaded(a), loaded(b)
+    return left.shape == right.shape and np.array_equal(left, right)
+
+
+def oriented_jpeg(orientation: int, seed: int = 25) -> bytes:
+    """CA-19: Pillow JPEG 64x48 whose EXIF has ``Orientation`` and the GPS IFD."""
+    exif = gps_exif()
+    exif[ExifTags.Base.Orientation] = orientation
+    data = clean_jpeg(seed, exif=exif)
+    with Image.open(io.BytesIO(data)) as img:
+        assert img.getexif()[ExifTags.Base.Orientation] == orientation
+    return data
 
 
 def parse_segments(data: bytes) -> list[tuple[int, bytes]]:
@@ -1244,7 +1273,7 @@ def test_ca11_readme_and_env_example() -> None:
     assert "ou IPv6" not in edge_host[0]
 
     collect = _section(text, lambda line: "Modo coleta" in line)
-    for needle in ("python -m qc_edge.privacy", "--fix", "dataset-protocol.md"):
+    for needle in ("python -m qc_edge.privacy", "--fix", "orientation", "dataset-protocol.md"):
         assert needle in collect, needle
 
     env_lines = (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
@@ -1343,6 +1372,7 @@ def test_ca13_collect_stores_the_jpeg_without_private_segments(edge: Edge) -> No
     with Image.open(stored_meta) as img:
         assert len(img.getexif()) == 0
     assert np.array_equal(pixels(stored_meta), pixels(data))
+    assert same_loaded(stored_meta, data)  # also through the project loader (r2, ADR-004)
 
     assert (edge.dataset / r_clean.json()["image_path"]).read_bytes() == clean
 
@@ -1481,6 +1511,7 @@ def test_ca15_fix_rewrites_only_the_private_files(
     ds = make_dataset(tmp_path)
     before = ds.files()
     pixels_before = {n: pixels(ds.folder / n) for n in ("b.jpg", "c.jpg")}
+    loaded_before = {n: loaded(ds.folder / n) for n in ("b.jpg", "c.jpg")}
     assert run_privacy(["--dataset-dir", str(ds.root)], capsys)[0] == 1
 
     umask_guard(umask)
@@ -1496,6 +1527,8 @@ def test_ca15_fix_rewrites_only_the_private_files(
         path = ds.folder / name
         assert jpeg_private_findings(path.read_bytes()) == frozenset()
         assert np.array_equal(pixels(path), pixels_before[name])
+        assert loaded(path).shape == loaded_before[name].shape
+        assert np.array_equal(loaded(path), loaded_before[name])
         assert _mode(path) == 0o600
     after = ds.files()
     for key in ("raw/screw/fair/a.jpg", "manifest.csv", "<outside>"):
@@ -1667,6 +1700,464 @@ def test_ca18_user_agent_controls_become_spaces_before_the_cut(edge: Edge) -> No
     assert device == "Phone X Y" + "z" * 51
     assert len(device) == 60
     assert len(edge.manifest.read_text(encoding="utf-8").splitlines()) == 2
+
+
+# =========================================================================== CA-19
+
+
+def _assert_collect_wrote_nothing(edge: Edge) -> None:
+    assert edge.images() == []
+    assert not edge.manifest.exists() or edge.rows() == []
+
+
+def test_ca19_rot6_is_portrait_for_load_image() -> None:
+    """Precondition of CA-19: the project loader applies the EXIF rotation of ``rot6``."""
+    rot6 = oriented_jpeg(6)
+    assert load_image(rot6).size == (48, 64)
+    assert load_image(oriented_jpeg(1)).size == (64, 48)
+
+
+def test_ca19_rotated_jpeg_is_415_in_collect_and_kept_in_inspect(edge: Edge) -> None:
+    rot6 = oriented_jpeg(6)
+    assert load_image(rot6).size == (48, 64)
+    app = edge.app(max_concurrent_decodes=1, decode_wait_s=1)
+    with TestClient(app) as client:
+        refused = post(client, edge.token, rot6, collect_fields())
+        inspected = post(client, edge.token, rot6, inspect_fields())
+    assert refused.status_code == 415, refused.text
+    assert refused.json() == ORIENTATION_REFUSED
+    _assert_collect_wrote_nothing(edge)
+    assert inspected.status_code == 200, inspected.text
+    captures = edge.captures()
+    assert len(captures) == 1
+    assert captures[0].read_bytes() == rot6  # inspect mode keeps the JPEG as received
+
+
+def test_ca19_orientation_1_is_stored_without_private_data(edge: Edge) -> None:
+    rot1 = oriented_jpeg(1)
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, rot1, collect_fields())
+    assert r.status_code == 200, r.text
+    stored = edge.dataset / r.json()["image_path"]
+    assert jpeg_private_findings(stored.read_bytes()) == frozenset()
+    assert load_image(stored).size == load_image(rot1).size
+    assert np.array_equal(loaded(stored), loaded(rot1))
+
+
+def test_ca19_has_exif_rotation() -> None:
+    assert has_exif_rotation(oriented_jpeg(6)) is True
+    assert has_exif_rotation(oriented_jpeg(1)) is False
+    assert has_exif_rotation(clean_jpeg()) is False
+    with pytest.raises(JpegStructureError):
+        has_exif_rotation(b"not a jpeg")
+
+
+def _orientation_dataset(tmp_path: Path) -> tuple[Path, Path, bytes]:
+    root = tmp_path / "D19"
+    folder = root / "raw" / "screw" / "fair"
+    folder.mkdir(parents=True)
+    (root / "manifest.csv").write_text(
+        MANIFEST_HEADER
+        + "raw/screw/fair/e.jpg,S-001,screw,fair,a,0,2026-10-20T10:00:00Z,seed,\n"
+        + "raw/screw/fair/f.jpg,S-001,screw,fair,a,1,2026-10-20T10:00:01Z,seed,\n",
+        encoding="utf-8",
+    )
+    rot6 = oriented_jpeg(6, seed=41)
+    (folder / "e.jpg").write_bytes(rot6)
+    (folder / "f.jpg").write_bytes(oriented_jpeg(1, seed=42))
+    return root, folder, rot6
+
+
+def test_ca19_fix_never_rewrites_an_orientation_finding(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, folder, rot6 = _orientation_dataset(tmp_path)
+    f_before = loaded(folder / "f.jpg")
+    code, out, _ = run_privacy(["--dataset-dir", str(root), "--fix"], capsys)
+    assert code == 1, out
+    lines = out.splitlines()
+    assert "raw/screw/fair/e.jpg: app1, orientation" in lines
+    assert "raw/screw/fair/f.jpg: app1" in lines
+    assert "fixed raw/screw/fair/f.jpg" in lines
+    assert "fixed raw/screw/fair/e.jpg" not in lines
+    assert lines[-1] == "checked 2 images, 2 with private data"
+    assert (folder / "e.jpg").read_bytes() == rot6
+    assert jpeg_private_findings((folder / "f.jpg").read_bytes()) == frozenset()
+    assert np.array_equal(loaded(folder / "f.jpg"), f_before)  # f.jpg had Orientation=1
+
+    code, out, _ = run_privacy(["--dataset-dir", str(root)], capsys)
+    assert code == 1
+    lines = out.splitlines()
+    assert [line for line in lines if not line.startswith("checked ")] == [
+        "raw/screw/fair/e.jpg: app1, orientation"
+    ]
+    assert lines[-1] == "checked 2 images, 1 with private data"
+
+
+# --------------------------------------------------------------------------- CA-19 extras
+
+
+def xmp_jpeg(body: bytes, seed: int = 25, exif: Image.Exif | None = None) -> bytes:
+    """Pillow JPEG with one XMP APP1 right after the SOI (and the given EXIF, if any)."""
+    base = clean_jpeg(seed, exif=exif) if exif is not None else clean_jpeg(seed)
+    packet = (
+        b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF '
+        b'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        b'<rdf:Description xmlns:tiff="http://ns.adobe.com/tiff/1.0/" ' + body + b"</rdf:RDF>"
+        b"</x:xmpmeta>"
+    )
+    return base[:2] + segment(0xE1, XMP_PREFIX + packet) + base[2:]
+
+
+def xmp_attr(value: int) -> bytes:
+    return b'tiff:Orientation="%d"/>' % value
+
+
+def xmp_element(value: int) -> bytes:
+    return b"><tiff:Orientation>%d</tiff:Orientation></rdf:Description>" % value
+
+
+# TIFF field types: (code, payload bytes, count). Payloads longer than 4 bytes go to an offset.
+TIFF_ORIENTATIONS: dict[str, tuple[int, bytes, int]] = {
+    "byte-6": (1, b"\x06", 1),
+    "ascii-6": (2, b"6\x00", 2),
+    "short-6": (3, struct.pack(">H", 6), 1),
+    "short-6-6": (3, struct.pack(">HH", 6, 6), 2),
+    "long-6": (4, struct.pack(">I", 6), 1),
+    "rational-6/1": (5, struct.pack(">II", 6, 1), 1),
+    "rational-12/2": (5, struct.pack(">II", 12, 2), 1),
+    "rational-13/2": (5, struct.pack(">II", 13, 2), 1),
+    "sshort-6": (8, struct.pack(">h", 6), 1),
+    "sshort-minus-6": (8, struct.pack(">h", -6), 1),
+    "slong-8": (9, struct.pack(">i", 8), 1),
+    "srational-3/1": (10, struct.pack(">ii", 3, 1), 1),
+    "float-6": (11, struct.pack(">f", 6.0), 1),
+    "float-6.5": (11, struct.pack(">f", 6.5), 1),
+    "double-8": (12, struct.pack(">d", 8.0), 1),
+    "short-0": (3, struct.pack(">H", 0), 1),
+    "short-9": (3, struct.pack(">H", 9), 1),
+    "short-65535": (3, struct.pack(">H", 65535), 1),
+}
+
+
+def tiff_orientation_jpeg(kind: str, seed: int = 25) -> bytes:
+    """Hand-built EXIF APP1 whose IFD0 has only tag 274 with the given TIFF type."""
+    type_code, payload, count = TIFF_ORIENTATIONS[kind]
+    header = b"MM\x00\x2a" + struct.pack(">I", 8)
+    ifd_size = 2 + 12 + 4
+    if len(payload) <= 4:
+        value_field, extra = payload.ljust(4, b"\x00"), b""
+    else:
+        value_field, extra = struct.pack(">I", 8 + ifd_size), payload
+    ifd = struct.pack(">H", 1) + struct.pack(">HHI", 274, type_code, count) + value_field
+    tiff = header + ifd + struct.pack(">I", 0) + extra
+    base = clean_jpeg(seed)
+    return base[:2] + segment(0xE1, b"Exif\x00\x00" + tiff) + base[2:]
+
+
+def rotates_in_load_image(data: bytes) -> bool:
+    """Whether the project loader gives a different image once the APP1 is gone (ADR-004)."""
+    return not same_loaded(data, strip_private_segments(data))
+
+
+@pytest.mark.parametrize("orientation", range(2, 9))
+def test_extra_every_exif_rotation_is_refused_and_flagged(
+    edge: Edge, tmp_path: Path, capsys: pytest.CaptureFixture[str], orientation: int
+) -> None:
+    data = oriented_jpeg(orientation, seed=50 + orientation)
+    assert rotates_in_load_image(data)  # the 64x48 noise image makes every transpose visible
+    assert has_exif_rotation(data) is True
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, data, collect_fields())
+    assert r.status_code == 415, r.text
+    assert r.json() == ORIENTATION_REFUSED
+    _assert_collect_wrote_nothing(edge)
+
+    root = tmp_path / "scan"
+    (root / "raw" / "nut" / "good").mkdir(parents=True)
+    (root / "manifest.csv").write_text(MANIFEST_HEADER, encoding="utf-8")
+    target = root / "raw" / "nut" / "good" / "r.jpg"
+    target.write_bytes(data)
+    code, out, _ = run_privacy(["--dataset-dir", str(root), "--fix"], capsys)
+    assert code == 1
+    assert out.splitlines() == [
+        "raw/nut/good/r.jpg: app1, orientation",
+        "checked 1 images, 1 with private data",
+    ]
+    assert target.read_bytes() == data
+
+
+@pytest.mark.parametrize("form", ["attribute", "element"])
+@pytest.mark.parametrize("orientation", [2, 6, 8])
+def test_extra_orientation_only_in_the_xmp_is_refused_and_flagged(
+    edge: Edge, tmp_path: Path, capsys: pytest.CaptureFixture[str], form: str, orientation: int
+) -> None:
+    body = xmp_attr(orientation) if form == "attribute" else xmp_element(orientation)
+    data = xmp_jpeg(body, seed=60 + orientation)
+    assert ExifTags.Base.Orientation not in Image.open(io.BytesIO(data)).getexif().get_ifd(
+        ExifTags.IFD.Exif
+    )
+    assert rotates_in_load_image(data)
+    assert has_exif_rotation(data) is True
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, data, collect_fields())
+    assert r.status_code == 415, r.text
+    assert r.json() == ORIENTATION_REFUSED
+    _assert_collect_wrote_nothing(edge)
+
+    root = tmp_path / "scan"
+    (root / "raw" / "nut" / "good").mkdir(parents=True)
+    target = root / "raw" / "nut" / "good" / "x.jpg"
+    target.write_bytes(data)
+    code, out, _ = run_privacy(["--dataset-dir", str(root), "--fix"], capsys)
+    assert code == 1
+    assert "raw/nut/good/x.jpg: app1, orientation" in out.splitlines()
+    assert target.read_bytes() == data
+
+
+def _non_rotating_cases() -> dict[str, bytes]:
+    exif1 = gps_exif()
+    exif1[ExifTags.Base.Orientation] = 1
+    return {
+        "exif-0": oriented_jpeg(0, seed=71),
+        "exif-9": oriented_jpeg(9, seed=72),
+        "xmp-1": xmp_jpeg(xmp_attr(1), seed=73),
+        "xmp-9": xmp_jpeg(xmp_attr(9), seed=74),
+        "exif-1-wins-over-xmp-6": xmp_jpeg(xmp_attr(6), seed=75, exif=exif1),
+        "gps-without-orientation": exif_jpeg(seed=76),
+    }
+
+
+@pytest.mark.parametrize("kind", list(_non_rotating_cases()))
+def test_extra_orientation_values_that_do_not_rotate_are_stored_with_load_image_parity(
+    edge: Edge, kind: str
+) -> None:
+    data = _non_rotating_cases()[kind]
+    assert not rotates_in_load_image(data)
+    assert has_exif_rotation(data) is False
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, data, collect_fields())
+    assert r.status_code == 200, r.text
+    stored = edge.dataset / r.json()["image_path"]
+    assert jpeg_private_findings(stored.read_bytes()) == frozenset()
+    assert same_loaded(stored, data)
+
+
+@pytest.mark.filterwarnings("ignore:Metadata Warning:UserWarning")
+@pytest.mark.parametrize("kind", list(TIFF_ORIENTATIONS))
+def test_extra_odd_tiff_types_follow_the_loader(
+    edge: Edge, tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    """Decision 1 of the r2 dev report: a rotation is whatever ``exif_transpose`` applies.
+
+    Invariant checked (§4.8, ADR-004): the collect refuses exactly the JPEGs whose loader result
+    would change without the APP1, every accepted JPEG keeps the loader result, and the scan
+    flags ``orientation`` on exactly the same files (and ``--fix`` keeps their loader result).
+    """
+    data = tiff_orientation_jpeg(kind, seed=80)
+    rotates = rotates_in_load_image(data)
+    assert has_exif_rotation(data) is rotates
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, data, collect_fields())
+    if rotates:
+        assert r.status_code == 415, r.text
+        assert r.json() == ORIENTATION_REFUSED
+        _assert_collect_wrote_nothing(edge)
+    else:
+        assert r.status_code == 200, r.text
+        assert same_loaded(edge.dataset / r.json()["image_path"], data)
+
+    root = tmp_path / "scan"
+    (root / "raw" / "nut" / "good").mkdir(parents=True)
+    target = root / "raw" / "nut" / "good" / "t.jpg"
+    target.write_bytes(data)
+    code, out, _ = run_privacy(["--dataset-dir", str(root), "--fix"], capsys)
+    expected = "raw/nut/good/t.jpg: app1, orientation" if rotates else "raw/nut/good/t.jpg: app1"
+    assert expected in out.splitlines()
+    if rotates:
+        assert code == 1
+        assert target.read_bytes() == data
+    else:
+        assert code == 0
+        assert same_loaded(target, data)
+
+
+def _mpo(orientation: int | None) -> bytes:
+    kwargs: dict[str, Any] = {"save_all": True, "append_images": [textured(seed=102)]}
+    if orientation is not None:
+        exif = gps_exif()
+        exif[ExifTags.Base.Orientation] = orientation
+        kwargs["exif"] = exif
+    return encode(textured(seed=101), "MPO", quality=90, **kwargs)
+
+
+def _odd_structures() -> dict[str, bytes]:
+    base = clean_jpeg(seed=103)
+    gps_app1 = [s for m, s in parse_segments(exif_jpeg(seed=103)) if m == 0xE1][0]
+    rot6_app1 = [s for m, s in parse_segments(oriented_jpeg(6, seed=103)) if m == 0xE1][0]
+    progressive = clean_jpeg(seed=104, progressive=True)
+    first_sos = progressive.index(b"\xff\xda")
+    second_sos = progressive.index(b"\xff\xda", first_sos + 2)
+    return {
+        "mpo-two-frames": _mpo(None),
+        "mpo-rot1": _mpo(1),
+        "mpo-rot6": _mpo(6),
+        "two-exif-gps-then-rot6": base[:2] + gps_app1 + rot6_app1 + base[2:],
+        "two-exif-rot6-then-gps": base[:2] + rot6_app1 + gps_app1 + base[2:],
+        "rot6-exif-between-progressive-scans": (
+            progressive[:second_sos] + rot6_app1 + progressive[second_sos:]
+        ),
+        "xmp-orientation-60": xmp_jpeg(b'tiff:Orientation="60"/>', seed=105),
+        "xmp-6-and-exif-without-orientation": xmp_jpeg(xmp_attr(6), seed=106, exif=gps_exif()),
+    }
+
+
+@pytest.mark.parametrize("kind", list(_odd_structures()))
+def test_extra_odd_structures_keep_the_load_image_parity(
+    edge: Edge, tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    """ADR-004 as a property: whatever Pillow reads as the orientation, the collect refuses
+    exactly what the loader would rotate, stores the rest with the same loader result, and the
+    scan flags ``orientation`` on the same files."""
+    data = _odd_structures()[kind]
+    rotates = rotates_in_load_image(data)
+    assert has_exif_rotation(data) is rotates
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, data, collect_fields())
+    if rotates:
+        assert r.status_code == 415, r.text
+        assert r.json() == ORIENTATION_REFUSED
+        _assert_collect_wrote_nothing(edge)
+    else:
+        assert r.status_code == 200, r.text
+        stored = edge.dataset / r.json()["image_path"]
+        assert same_loaded(stored, data)
+        assert jpeg_private_findings(stored.read_bytes()) == frozenset()
+
+    root = tmp_path / "scan"
+    (root / "raw" / "nut" / "good").mkdir(parents=True)
+    target = root / "raw" / "nut" / "good" / "o.jpg"
+    target.write_bytes(data)
+    code, out, _ = run_privacy(["--dataset-dir", str(root), "--fix"], capsys)
+    first = out.splitlines()[0]
+    assert ("orientation" in first) is rotates, out
+    if rotates:
+        assert code == 1
+        assert target.read_bytes() == data
+    else:
+        assert code == 0, out
+        assert same_loaded(target, data)
+
+
+def _accepted_collect_images() -> dict[str, bytes]:
+    cmyk = encode(textured(seed=91).convert("CMYK"), "JPEG", quality=90)
+    gray = encode(textured(seed=92).convert("L"), "JPEG", quality=90)
+    return {
+        "clean": clean_jpeg(seed=90),
+        "metadata": metadata_jpeg(seed=93)[0],
+        "rot1": oriented_jpeg(1, seed=94),
+        "progressive-exif": clean_jpeg(seed=95, progressive=True, exif=gps_exif()),
+        "restart-markers": clean_jpeg(seed=96, restart_marker_blocks=1, exif=gps_exif()),
+        "cmyk-adobe": cmyk,
+        "gray": gray,
+        "exif-thumbnail-with-eoi": (
+            clean_jpeg(seed=97)[:2]
+            + segment(0xE1, EMPTY_TIFF + clean_jpeg(seed=98) + b"tail")
+            + clean_jpeg(seed=97)[2:]
+        ),
+    }
+
+
+@pytest.mark.parametrize("kind", list(_accepted_collect_images()))
+def test_extra_every_accepted_jpeg_keeps_the_load_image_result(edge: Edge, kind: str) -> None:
+    """ADR-004: ``load_image`` gives the same image for the received bytes and the stored file."""
+    data = _accepted_collect_images()[kind]
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, data, collect_fields())
+    assert r.status_code == 200, r.text
+    stored = edge.dataset / r.json()["image_path"]
+    assert same_loaded(stored, data)
+    assert np.array_equal(pixels(stored), pixels(data))
+    assert jpeg_private_findings(stored.read_bytes()) == frozenset()
+
+
+@pytest.mark.parametrize("orientation", [1, 6, 8])
+def test_extra_png_with_exif_orientation_keeps_the_loaded_size(
+    edge: Edge, orientation: int
+) -> None:
+    """A PNG is re-encoded from the already rotated image (§4.8): same size through the loader,
+    no private data and no orientation left in the stored JPEG."""
+    exif = gps_exif()
+    exif[ExifTags.Base.Orientation] = orientation
+    data = encode(textured(seed=99), "PNG", exif=exif)
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, data, collect_fields(), content_type="image/png")
+    assert r.status_code == 200, r.text
+    stored = edge.dataset / r.json()["image_path"]
+    assert load_image(stored).size == load_image(data).size
+    assert jpeg_private_findings(stored.read_bytes()) == frozenset()
+    assert has_exif_rotation(stored.read_bytes()) is False
+
+
+def test_extra_has_exif_rotation_reads_only_the_header_and_never_logs_the_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rot6 = oriented_jpeg(6)
+    truncated = rot6[: len(rot6) // 2]  # entropy data cut: a full decode would fail
+    caplog.set_level(logging.DEBUG, logger="qc_edge")
+    assert has_exif_rotation(truncated) is True
+    for bad in (b"", SOI, png_bytes(), gif_bytes(), b"\xff\xd8\xff\xe1\x00\x02garbage"):
+        with pytest.raises(JpegStructureError) as excinfo:
+            has_exif_rotation(bad)
+        _assert_no_input_bytes(str(excinfo.value), bad + b"\x00" * 10)
+    qc_records = [r for r in caplog.records if r.name.startswith("qc_edge")]
+    assert all("Orientation" not in r.getMessage() for r in qc_records)
+
+
+def test_extra_rotated_collect_releases_the_slot_and_logs_no_gps(
+    edge: Edge, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="qc_edge")
+    app = edge.app(max_concurrent_decodes=1, decode_wait_s=1)
+    with TestClient(app) as client:
+        codes = [
+            post(client, edge.token, oriented_jpeg(6, seed=s), collect_fields()).status_code
+            for s in range(3)
+        ]
+        ok = post(client, edge.token, oriented_jpeg(1), collect_fields())
+    assert codes == [415, 415, 415]
+    assert ok.status_code == 200, ok.text
+    assert len(edge.rows()) == 1
+    qc_text = "\n".join(r.getMessage() for r in caplog.records if r.name.startswith("qc_edge"))
+    for latitude in LATITUDE_TEXTS:
+        assert latitude not in qc_text
+
+
+def test_extra_rotation_check_runs_inside_the_slot_off_the_event_loop(
+    edge: Edge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-08 with a rotated JPEG: the image is still decoded once, off the event loop."""
+    seen: list[bool] = []
+    original = qc_edge.limits.load_capture_image
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(loop_running())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(qc_edge.limits, "load_capture_image", spy)
+    app = edge.app()
+    with TestClient(app) as client:
+        r = post(client, edge.token, oriented_jpeg(6), collect_fields())
+    assert r.status_code == 415
+    assert seen == [False]
 
 
 # =========================================================================== extras
