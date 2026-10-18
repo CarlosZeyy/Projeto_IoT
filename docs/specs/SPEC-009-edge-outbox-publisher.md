@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked (SPEC_ISSUE-01 corrigido; **Aguardando reaprovação humana**) |
+| Status | In Dev |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -198,3 +198,4 @@ Mock só de fronteiras: rede da nuvem (MockTransport), relógio e RNG. O SQLite 
 | 2026-10-13 | Mudanças: (a) dependência da SPEC-025 (validação do `Host` do console), que precisa estar `Done` antes do merge desta, porque a partir daqui uma inspeção injetada por DNS rebinding chegaria à nuvem como `live`; (b) §4.2: `PublishRejectedError.detail` passa a ser um resumo da recusa (status, `detail` em texto ou contagem de erros), e o corpo do 422 nunca vai para o log nem para `last_error`; §4.3 usa esse resumo no item `dead`; (c) CA-18 novo; (d) §8 com o item da SPEC-025. Nenhum CA existente muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-01 de `reviews/SPEC-007/r1-security-report.md`; SEC-04-04 de `reviews/SPEC-004/r2-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-13 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-18 | Correção do SPEC_ISSUE-01 com a opção (d) do dev-report: com `--stub-model`, o sink volta a ser o `InMemorySink` da SPEC-007, e `OUTBOX_PATH` não é aberto, criado nem validado. Assim, nenhuma inspeção `stub-v0` (`source=live`) chega a um arquivo durável, e nenhuma subida posterior pode publicá-la (R-06 por construção). Mudanças: (a) §3.1, bullet da integração; (b) §4.3, último parágrafo; (c) §4.4 nova (tabela sink/laço por situação, `OUTBOX_PATH` intocado com a flag, aviso `WARNING` na subida); (d) CA-12 passa a cobrir só a subida sem a flag (chave ausente, ou URL ausente), com o caminho padrão `EDGE_DATA_DIR/outbox.sqlite3`; (e) CA-19 novo (R-06, `--stub-model`); (f) §7, nota sobre README, `.env.example` e outboxes locais da r1. Opções descartadas: (a) arquivo de outbox próprio do stub, que continuaria durável e seria publicado se alguém apontasse `OUTBOX_PATH` para ele; (b) recusar a subida com o `OUTBOX_PATH` da operação, que quebraria `qc-edge --stub-model` sem configuração (SPEC-025, CA-04 e CA-10); (c) descartar `stub-v0` no laço, que depende do nome da versão e mantém o resultado falso no arquivo. `docs/architecture.md` §6.1 e §6.2 (passo 6) atualizadas. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 de `reviews/SPEC-009/r1-dev-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-18 | Correção do SPEC_ISSUE-01 (opção d) reaprovada; `Blocked` → `In Dev`, retomada na r1. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
