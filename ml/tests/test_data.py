@@ -96,6 +96,18 @@ def test_too_many_jpeg_scans_is_its_own_code(dataset: Path, rows_io) -> None:
     assert len(load_manifest(dataset, verify_images=False)) == 88
 
 
+def test_too_many_jpeg_scans_cli_counts(dataset: Path, rows_io, capsys) -> None:
+    read_rows, _, _ = rows_io
+    rows = read_rows(dataset)
+    path = dataset / _first(rows, object_type="screw")["image_path"]
+    path.write_bytes(path.read_bytes() + b"\xff\xda" * 64)
+    (dataset / rows[-1]["image_path"]).write_bytes(b"not an image")
+    capsys.readouterr()
+    assert data.main(["validate", "--dataset-dir", str(dataset)]) == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[-2:] == ["count too_many_jpeg_scans: 1", "count unreadable_image: 1"]
+
+
 def test_item_type_conflict_and_prefix_mismatch(dataset: Path, rows_io) -> None:
     read_rows, write_rows, _ = rows_io
     rows = read_rows(dataset)
