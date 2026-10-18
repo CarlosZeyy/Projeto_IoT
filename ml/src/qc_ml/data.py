@@ -435,7 +435,9 @@ def load_manifest(
 
     Returns one row per kept image with the manifest columns plus ``grade_original`` and
     ``overridden``. An empty grade becomes ``None``; ``angle`` is an ``int``. ``df.attrs`` holds
-    ``manifest_sha256`` and ``n_excluded`` (used by the data report).
+    ``manifest_sha256`` and ``n_excluded`` (used by the data report) and ``excluded_items``
+    (``image_path -> item_id`` of the excluded manifest rows, used by ``qc_ml.split`` so that an
+    item whose old images were all excluded keeps its previous split).
 
     Raises:
         FileNotFoundError: ``manifest.csv`` does not exist.
@@ -481,6 +483,9 @@ def load_manifest(
     excluded = set(exclusions.paths)
     kept = [(line, row) for line, row in table.rows if row["image_path"] not in excluded]
     n_excluded = len(excluded & seen)
+    excluded_items = {
+        row["image_path"]: row["item_id"] for _, row in table.rows if row["image_path"] in excluded
+    }
 
     overrides: dict[str, str | None] = {}
     if apply_overrides:
@@ -523,6 +528,7 @@ def load_manifest(
     df = pd.DataFrame(columns, columns=list(RESULT_COLUMNS))
     df.attrs["manifest_sha256"] = _sha256_hex(manifest_bytes)
     df.attrs["n_excluded"] = n_excluded
+    df.attrs["excluded_items"] = excluded_items
     return df
 
 

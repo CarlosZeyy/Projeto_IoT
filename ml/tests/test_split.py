@@ -283,3 +283,102 @@ def test_cli_with_invalid_manifest(dataset: Path, tmp_path: Path) -> None:
     (dataset / "manifest.csv").write_text("nothing\n", encoding="utf-8")
     assert _run(dataset, tmp_path / "s") == 2
     assert not (tmp_path / "s").exists()
+
+
+# ---------- items re-photographed after all their images left (RV-01 of the r1 review) ----------
+
+
+def _item_in(v1: dict[str, str], df: pd.DataFrame, which: str, kind: str) -> str:
+    items = dict(zip(df["image_path"], df["item_id"], strict=True))
+    return sorted(items[p] for p, s in v1.items() if s == which and f"/{kind}/" in p)[0]
+
+
+def _rows_of(read_rows, dataset: Path, item_id: str) -> list[dict[str, str]]:
+    return [r for r in read_rows(dataset) if r["item_id"] == item_id]
+
+
+def test_rephotographed_items_keep_their_split(dataset: Path, tmp_path: Path, rows_io) -> None:
+    read_rows, _, write_csv = rows_io
+    splits_dir = tmp_path / "splits"
+    assert _run(dataset, splits_dir) == 0
+    v1 = _split_map(splits_dir / "split_v1.csv")
+    df = load_manifest(dataset)
+    test_item = _item_in(v1, df, "test", "screw")
+    val_item = _item_in(v1, df, "val", "nut")
+    old = _rows_of(read_rows, dataset, test_item) + _rows_of(read_rows, dataset, val_item)
+    for row in old:
+        (dataset / row["image_path"]).unlink()
+    write_csv(
+        dataset / "exclusions.csv",
+        ["image_path", "reason"],
+        [[r["image_path"], "person"] for r in old],
+    )
+    assert load_manifest(dataset).attrs["excluded_items"] == {
+        r["image_path"]: r["item_id"] for r in old
+    }
+    new_test = add_synthetic_item(dataset, test_item, "screw", old[0]["grade"], seed=3)
+    new_val = add_synthetic_item(dataset, val_item, "nut", old[-1]["grade"], seed=4)
+
+    assert _run(dataset, splits_dir) == 0
+    v2 = _split_map(splits_dir / "split_v2.csv")
+    assert [v2[p] for p in new_test] == ["test", "test"]
+    assert [v2[p] for p in new_val] == ["val", "val"]
+    assert all(r["image_path"] not in v2 for r in old)
+    assert {p: s for p, s in v2.items() if p in v1} == {
+        p: s for p, s in v1.items() if p not in {r["image_path"] for r in old}
+    }
+
+
+def test_removed_without_exclusion_uses_the_file_name(dataset: Path) -> None:
+    df = load_manifest(dataset)
+    first = make_split(df, seed=42).frame
+    v1 = dict(zip(first["image_path"], first["split"], strict=True))
+    item = _item_in(v1, df, "val", "screw")
+    paths = df[df["item_id"] == item]["image_path"].tolist()
+    renamed = df.copy()
+    # The old rows leave the manifest (no exclusion); new photos of the item arrive.
+    renamed.loc[renamed["item_id"] == item, "image_path"] = [p + ".new.jpg" for p in paths]
+    result = make_split(renamed, seed=42, previous=first)
+    new = dict(zip(result.frame["image_path"], result.frame["split"], strict=True))
+    assert [new[p + ".new.jpg"] for p in paths] == ["val", "val"]
+    codes = [w["code"] for w in result.warnings]
+    assert codes == ["missing_previous_image", "missing_previous_image"]
+
+
+def test_excluded_images_without_attrs_use_the_rows_of_df(dataset: Path) -> None:
+    df = load_manifest(dataset)
+    first = make_split(df, seed=42).frame
+    v1 = dict(zip(first["image_path"], first["split"], strict=True))
+    item = _item_in(v1, df, "test", "nut")
+    old = df[df["item_id"] == item]
+    added = old.assign(image_path=[f"raw/x/{item}-{k}.jpg" for k in range(len(old))])
+    bare = pd.concat([df, added], ignore_index=True)  # no attrs: rows of df are the source
+    bare.attrs = {}
+    result = make_split(bare, seed=42, previous=first, excluded=frozenset(old["image_path"]))
+    new = dict(zip(result.frame["image_path"], result.frame["split"], strict=True))
+    assert {new[p] for p in added["image_path"]} == {"test"}
+
+
+def test_old_images_of_an_item_in_two_splits_is_an_integrity_error(dataset: Path) -> None:
+    df = load_manifest(dataset)
+    first = make_split(df, seed=42).frame.copy()
+    paths = df[df["item_id"] == "S-001"]["image_path"].tolist()
+    first.loc[first["image_path"] == paths[0], "split"] = "train"
+    first.loc[first["image_path"] == paths[1], "split"] = "val"
+    kept = df[df["image_path"] != paths[0]]
+    kept.attrs = {"excluded_items": {paths[0]: "S-001"}}
+    with pytest.raises(SplitIntegrityError):
+        make_split(kept, seed=42, previous=first, excluded=frozenset({paths[0]}))
+
+
+def test_small_stratum_of_new_items_has_a_scope(dataset: Path) -> None:
+    df = load_manifest(dataset)
+    first = make_split(df, seed=42).frame
+    grown = pd.concat(
+        [df, df[df["item_id"] == "S-001"].assign(item_id="S-201", image_path=["a.jpg", "b.jpg"])],
+        ignore_index=True,
+    )
+    result = make_split(grown, seed=42, previous=first)
+    assert result.warnings == [
+        {"code": "small_stratum", "stratum": "screw/perfect", "n_items": 1, "scope": "new_items"}
+    ]

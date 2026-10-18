@@ -25,7 +25,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import numpy as np
@@ -43,6 +43,8 @@ from qc_ml.errors import ManifestError, SplitError, SplitIntegrityError
 
 SPLIT_COLUMNS: tuple[str, str] = ("image_path", "split")
 SPLIT_FILE_PATTERN = re.compile(r"split_v([1-9][0-9]*)\.csv")
+# File name written by the collect mode (SPEC-010): <item_id>__<angle>__<ts>.jpg.
+IMAGE_FILE_PATTERN = re.compile(r"([SNOT]-[0-9]{3})__[0-4]__[0-9]{8}T[0-9]{6}Z\.jpg")
 DEFAULT_RATIOS: tuple[float, float, float] = (0.70, 0.15, 0.15)
 OUTDATED_MESSAGE = "split outdated: run qc_ml.split"
 MIN_STRATUM_ITEMS = 3
@@ -98,6 +100,9 @@ def _allocate(
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
     """Allocate the items of each stratum; ``test_ratio=None`` -> train/val only.
 
+    With ``test_ratio=None`` (only the new items of a frozen split), ``small_stratum`` carries
+    ``"scope": "new_items"``: the stratum may be large; only its new items are fewer than 3.
+
     Strata in lexicographic order; inside each, sorted ``item_id`` permuted by the single ``rng``.
     The first ``n_test`` permuted items go to test, the next ``n_val`` to val, the rest to train.
     """
@@ -109,9 +114,14 @@ def _allocate(
         n = len(ids)
         if n < MIN_STRATUM_ITEMS:
             n_test = n_val = 0
-            warnings.append(
-                {"code": "small_stratum", "stratum": stratum_name(stratum), "n_items": n}
-            )
+            warning: dict[str, Any] = {
+                "code": "small_stratum",
+                "stratum": stratum_name(stratum),
+                "n_items": n,
+            }
+            if test_ratio is None:
+                warning["scope"] = "new_items"
+            warnings.append(warning)
         else:
             n_test = 0 if test_ratio is None else max(1, round_half_up(test_ratio * n))
             n_val = max(1, round_half_up(val_ratio * n))
@@ -143,6 +153,30 @@ def _previous_map(previous: pd.DataFrame) -> dict[str, str]:
     return mapping
 
 
+def _previous_item_ids(
+    prev: dict[str, str], df: pd.DataFrame, excluded_items: dict[str, str]
+) -> dict[str, str]:
+    """``item_id`` of each image of the previous split, when it can be known.
+
+    Sources, in order: the current rows of ``df``; the excluded manifest rows
+    (``df.attrs["excluded_items"]``, set by ``load_manifest``); the SPEC-010 file name
+    ``<item_id>__<angle>__<ts>.jpg`` (an image removed from the manifest). An image without any of
+    them is left out.
+    """
+    current = dict(zip(df["image_path"], df["item_id"], strict=True))
+    items: dict[str, str] = {}
+    for image_path in prev:
+        if image_path in current:
+            items[image_path] = str(current[image_path])
+        elif image_path in excluded_items:
+            items[image_path] = str(excluded_items[image_path])
+        else:
+            match = IMAGE_FILE_PATTERN.fullmatch(PurePosixPath(image_path).name)
+            if match:
+                items[image_path] = match.group(1)
+    return items
+
+
 def check_item_integrity(df: pd.DataFrame, splits: Sequence[str] | pd.Series) -> None:
     """Raise ``SplitIntegrityError`` when an ``item_id`` has images in two or more splits."""
     seen: dict[str, str] = {}
@@ -166,7 +200,10 @@ def make_split(
     each with ``n >= 3``), the rest in train; ``n < 3`` -> all in train and ``small_stratum``.
 
     With ``previous`` (the last split): items already there keep their split, new images of an
-    old item inherit it; new items go to train/val only (70:15 per stratum, same rules). A
+    old item inherit it; new items go to train/val only (70:15 per stratum, same rules). An item
+    is "already there" when **any** image of it is in ``previous``, including images that were
+    excluded or removed since (their ``item_id`` comes from ``df.attrs["excluded_items"]`` or from
+    the SPEC-010 file name), so a re-photographed test item stays in test (R-11). A
     previous image in ``excluded`` leaves the split with ``excluded_previous_image``; any other
     previous image missing from ``df`` is a ``SplitError`` in test and ``missing_previous_image``
     in train/val.
@@ -178,6 +215,14 @@ def make_split(
     _, r_val, r_test = _check_ratios(ratios)
     r_train = Decimal(1) - r_val - r_test
     rng = np.random.default_rng(seed)
+    excluded_items: dict[str, str] = dict(df.attrs.get("excluded_items") or {})
+    excluded_items.update(
+        zip(
+            df.loc[df["image_path"].isin(list(excluded)), "image_path"],
+            df.loc[df["image_path"].isin(list(excluded)), "item_id"],
+            strict=True,
+        )
+    )
     df = df[~df["image_path"].isin(list(excluded))]
     strata = item_strata(df)
     images_by_item: dict[str, list[str]] = defaultdict(list)
@@ -215,10 +260,13 @@ def make_split(
                 "is frozen, R-11; an image that had to leave the dataset goes to exclusions.csv): "
                 + ", ".join(missing_test)
             )
+        previous_splits: dict[str, set[str]] = defaultdict(set)
+        for image_path, item_id in _previous_item_ids(prev, df, excluded_items).items():
+            previous_splits[item_id].add(prev[image_path])
         assignment = {}
         new_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
-        for item_id, paths in sorted(images_by_item.items()):
-            old = sorted({prev[p] for p in paths if p in prev})
+        for item_id in sorted(images_by_item):
+            old = sorted(previous_splits.get(item_id, set()))
             if len(old) > 1:
                 raise SplitIntegrityError(
                     f"item {item_id} is in more than one split of the previous split: "
