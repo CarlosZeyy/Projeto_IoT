@@ -43,7 +43,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Done |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Done |
 | [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Done (CA-20/21 manual confirmado pelo humano) |
-| [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | Ready |
+| [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | In Dev (r1) |
 | [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007, 025 | S3 | Ready |
 | [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | Done (CA-17 manual confirmado pelo humano) |
 | [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready |
@@ -63,7 +63,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [025](specs/SPEC-025-manutencao-borda-host-rede.md) | Manutenção da borda (Host do console, rede, limitador, permissões e modo coleta) | developer | security | 007, 010 | S3 | Done |
 | [026](specs/SPEC-026-spc-teto-de-lotes.md) | Carta p com teto de lotes (`qc-contracts` 0.3.0) | developer | contrato, security | 006 (e 004, 023) | S4 | Done |
 | [027](specs/SPEC-027-manutencao-api-banco-simulador.md) | Manutenção da API, do banco e do simulador (`check` da `002`, SQLSTATE, argparse, teste intermitente) | developer | security | 003, 005, 014 (e 004) | S4 | Done |
-| [028](specs/SPEC-028-manutencao-dashboard.md) | Manutenção do dashboard (https, acabamento da interface, selo da carta e exibição das métricas) | developer | security | 013 | S4 | In Security (r1) |
+| [028](specs/SPEC-028-manutencao-dashboard.md) | Manutenção do dashboard (https, acabamento da interface, selo da carta e exibição das métricas) | developer | security | 013 | S4 | Done (CA-12 manual pendente) |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
 
@@ -111,6 +111,8 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
   - **`docs/architecture.md` §10**: arquivo vigente da versão exata do `qc-contracts` (`test_spec_026.py`, RV-01 da 026), `ALLOWED_EXACT` no mesmo commit do arquivo (RV-03 da 026) e renomeação de teste extra (RV-01 da 010);
   - **SPECs 010, 013, 026 e 027** (só texto, sem reaprovação): linha de Histórico com os encaminhamentos; o CA-07 da 027 diz o contexto `SIM_DEVICE_ID` (RV-03);
   - **Próxima manutenção do simulador** (sem SPEC agora): incluir `https://xn--1-zhc.com` nos casos de aceitação do autor (RV-01 de `reviews/SPEC-027/r2-review-report.md`).
+- As pendências dos portões da **SPEC-028** (mergeada):
+  - **Próxima SPEC do dashboard** (sem SPEC agora): isolar o `st.secrets` no `_isolated` de `dashboard/tests/acceptance/test_spec_013.py`, porque com um `.streamlit/secrets.toml` na raiz `test_extra_settings_from_environment` falha e imprime a `READ_API_KEY` (RV-01 + SEC-28-01, média; **antes do primeiro uso de chave real nesse arquivo**; até lá, tirar o arquivo da raiz antes de rodar a suíte), comentário desatualizado em `test_spec_013.py:1306` (RV-03), selo de simulado também quando `spc.source` for simulado (RV-02/SEC-28-03) e `is_secure_api_url` recusando porta não numérica e caracteres de controle (SEC-28-02).
 - **CAs manuais pendentes de SPECs mergeadas:** CA-20/21 da 007, CA-17 da 010 e CA-26 da 013. O da 010 (página de coleta no celular) e o da 013 (painel no celular) devem ser executados **antes** do merge das SPECs 025 e 028, que mudam o modo coleta e o selo da página da carta.
 - O **ML depende de dados**: a coleta (humana) começa já na S1, mesmo antes da SPEC-010.
 - A SPEC-008 é desenvolvida com um **modelo dummy** (ONNX gerado nos testes, com as mesmas entradas e saídas) e não depende da SPEC-012. O modelo real é só um artefato trocado via `MODEL_DIR`.
