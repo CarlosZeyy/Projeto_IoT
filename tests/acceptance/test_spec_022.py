@@ -1,6 +1,7 @@
 """Acceptance tests for SPEC-022 (setup maintenance: hook, passwordless CI DB, architect commits).
 
-Written by the tester from the SPEC acceptance criteria (CA-01 to CA-16).
+Written by the tester from the SPEC acceptance criteria (CA-01 to CA-14 and CA-16;
+CA-15 is checked by CI and by the test report, docs/architecture.md section 10).
 CA-17 (CI on the PR) and CA-18 (diff of .claude/) are manual and recorded in the test report.
 
 Forbidden sequences (old URL with password, password variable) are built by concatenation at
