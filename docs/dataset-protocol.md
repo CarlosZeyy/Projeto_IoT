@@ -104,6 +104,10 @@ Se algum grau ficar abaixo da meta, registre em `ml/reports/` e use pesos de cla
 
 Uma linha por imagem. As correções de rótulo **não** reescrevem a linha original: entram em `labels_overrides.csv` (`image_path,grade,labeler,reason`), aplicado pelo pipeline (SPEC-011).
 
+Uma imagem que precisa **sair** do dataset (por exemplo, com uma pessoa no quadro) também não reescreve o manifest: o arquivo é apagado e o `image_path` entra em `exclusions.csv` (`image_path,reason`, com `reason` igual a `person` ou `other`), no mesmo diretório do manifest. O pipeline tira essas linhas antes de validar e de gerar o split (SPEC-011). O passo a passo está na §8.1.
+
+**Não abra o `manifest.csv` numa planilha** (LibreOffice, Google Planilhas): um `notes` que comece com `=`, `+`, `-` ou `@` pode ser avaliado como fórmula. Para ler, use o pandas ou o `csv` do Python. Se for inevitável, importe **todas** as colunas como texto e nunca salve o arquivo pela planilha (SEC-10-04 de `reviews/SPEC-010/r1-security-report.md`). Pelo mesmo motivo, não conte linhas com `wc -l` nem `grep`: textos antigos podem ter separadores de linha Unicode (SEC-10-03).
+
 ## 6. Rotulagem dupla e concordância
 
 - Sorteie 20% das imagens, estratificadas por grau. O segundo membro rotula às cegas, gerando `labels_second.csv`.
@@ -114,6 +118,7 @@ Uma linha por imagem. As correções de rótulo **não** reescrevem a linha orig
 
 - O split é **agrupado por `item_id`** (`StratifiedGroupKFold` ou equivalente): 70% treino, 15% validação e 15% teste, estratificado por tipo e grau dentro do possível. A seed fica fixada e o hash do split é salvo.
 - **Teste final:** congelado na primeira geração do split (S3). Novas peças entram **só** em treino e validação, salvo se a dupla decidir, com um ADR, recriar o teste.
+- **Imagem excluída (§8.1):** sai do split seguinte, inclusive do teste, com o aviso `excluded_previous_image` no `split_v<N>.json` (SPEC-011). Isso não é recriar o teste: nenhuma imagem muda de conjunto, e a exclusão é decidida pela foto (R-14), nunca pelo resultado do modelo. O relatório de métricas cita o aviso.
 - Opcional, mas recomendado: um teste de "condição de demo", com 50 fotos capturadas no local e no dia do ensaio (S7), relatado separadamente.
 
 ## 8. Armazenamento
@@ -122,6 +127,25 @@ Uma linha por imagem. As correções de rótulo **não** reescrevem a linha orig
 - Backup no Google Drive pessoal de um dos membros, compactado por data, que também é a forma de levar os dados ao Colab.
 - Nunca suba imagens para a nuvem do projeto (R-02).
 - No notebook, o modo coleta cria os diretórios de `DATASET_DIR` com `0700` e os arquivos com `0600` (SPEC-010).
+
+**Antes do primeiro backup no Drive (prazo, SEC-10-01 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md`).** O primeiro backup no Drive só acontece **depois** do merge da SPEC-025, que grava as fotos da coleta sem EXIF (GPS, aparelho, data), XMP e trailer (vídeo do Motion Photo) e traz a varredura abaixo. Até lá:
+- a cópia de segurança fica só em mídia local da dupla (disco externo ou pendrive), nunca no Drive nem em outro serviço;
+- coletar só pela página `/capture`, que reencoda a foto pelo canvas e já descarta os metadados; não enviar fotos à rota por script nem copiar fotos do app da câmera para `raw/`.
+
+**Antes de cada backup no Drive** (inclusive o primeiro):
+1. `uv run --package qc-edge python -m qc_edge.privacy --dataset-dir ml/data` → `0 with private data`. Se houver achados, repetir com `--fix` e rodar de novo sem `--fix`. Um arquivo `invalid` é apagado e registrado em `exclusions.csv` (§8.1, `reason=other`);
+2. depois da SPEC-011: `uv run --package qc-ml python -m qc_ml.data validate --dataset-dir ml/data` sem problemas (nenhum `orphan_image`, `missing_file` nem `excluded_file_present`);
+3. conferir que nenhuma foto nova tem pessoa no quadro (R-14); se tiver, seguir a §8.1 antes de compactar;
+4. compactar `ml/data/` inteiro (com `manifest.csv`, `labels_overrides.csv` e `exclusions.csv`) e subir o arquivo com a data no nome.
+
+### 8.1 Remover uma foto do dataset (pessoa no quadro, R-14)
+
+Quem notar uma foto com pessoa identificável no dataset (ou outra foto que precise sair):
+1. apagar o arquivo: `rm ml/data/<image_path>`;
+2. acrescentar a linha `<image_path>,person` (ou `,other`) a `ml/data/exclusions.csv`, criando o arquivo com o cabeçalho `image_path,reason` se ele não existir. Não editar nem apagar a linha do `manifest.csv`;
+3. rodar `python -m qc_ml.data validate` (depois da SPEC-011): não pode haver `excluded_file_present`;
+4. **backups:** apagar do Drive todo arquivo compactado que contenha a foto, subir um novo, gerado depois do passo 1, e excluir os antigos de forma permanente na lixeira do Drive. Pela ajuda do Google Drive, um arquivo na lixeira "continua ocupando espaço" e só é excluído de forma permanente "após 30 dias", e quem tinha acesso compartilhado continua com acesso até a exclusão definitiva (<https://support.google.com/drive/answer/2375102?hl=pt-BR>, consultado em 2026-10-17). Apagar também as cópias locais (pendrive, disco externo) e, se houver, a cópia descompactada no Colab;
+5. se a foto estava no split de teste, o próximo `python -m qc_ml.split` a tira do teste com o aviso `excluded_previous_image` (§7).
 
 ## 9. Fotos de inspeção (`EDGE_DATA_DIR/captures/`)
 
@@ -140,3 +164,4 @@ As fotos do modo inspeção são outra coisa: servem para conferir uma inspeçã
 | 2026-10-12 | Uso das peças existentes; pregos como `other` | A dupla já tem peças novas e enferrujadas, pregos e ferramentas |
 | 2026-10-12 | §3: desligar a "foto com movimento" e recursos parecidos na câmera | O vídeo anexado ao JPEG faz o `load_image` recusar a foto pelo limite de marcadores de scan (SEC-24-03 de `reviews/SPEC-024/r1-security-report.md`) |
 | 2026-10-13 | §8: permissões do `DATASET_DIR`; §9 nova: fotos de inspeção fora do dataset, permissões, remoção de foto com pessoa e retenção até a entrega (04/12/2026) | SEC-06 de `reviews/SPEC-007/r1-security-report.md` (R-14) |
+| 2026-10-17 | §5: `exclusions.csv` e aviso de não abrir o manifest em planilha nem contar linhas com `wc -l`/`grep`; §7: imagem excluída sai do split, inclusive do teste, sem recriar o teste; §8: primeiro backup no Drive só depois do merge da SPEC-025 (até lá, cópia só local e coleta só pela página) e checklist antes de cada backup (`python -m qc_edge.privacy`, `validate`, conferência visual); §8.1 nova: remoção de foto do dataset e dos backups | SEC-10-01, SEC-10-03, SEC-10-04 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md` (R-14) |

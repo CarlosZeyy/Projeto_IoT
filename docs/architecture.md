@@ -40,9 +40,9 @@ O acesso ao banco é feito com **psycopg 3 direto ao Postgres do Supabase** (con
 
 As **migrações** são a exceção: o `infra/migrate.py` usa um advisory lock de sessão, que não sobrevive entre transações no modo transaction. Por isso, elas rodam pela conexão direta ou pelo pooler em **modo session** (porta 5432), nunca pela porta 6543, e o executor recusa essa porta (SPEC-015 §4.7).
 
-## 3. Contrato v0 (`qc-contracts` 0.2.0; 0.3.0 com a SPEC-026)
+## 3. Contrato v0 (`qc-contracts` 0.3.0)
 
-Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023); 0.3.0, com os 3 campos opcionais de corte da carta p em `SpcResponse` (SPEC-026, ADR-017; vale a partir do merge dela). O histórico completo fica em `packages/contracts/README.md`.
+Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023); 0.3.0, com os 3 campos opcionais de corte da carta p em `SpcResponse` (SPEC-026, ADR-017; vigente). O histórico completo fica em `packages/contracts/README.md`.
 
 ### 3.1 Enums
 
@@ -226,6 +226,14 @@ O operador escolhe `item_id`, `object_type`, `grade`, `labeler` e `angle` **ante
 
 Nada é enviado à nuvem e nenhuma inferência é feita. Formato do manifest em `docs/dataset-protocol.md`.
 
+A partir da SPEC-025 (pendências da SPEC-010):
+- o JPEG é gravado **sem** os segmentos APP1 (EXIF, XMP), APP13 (IPTC) e COM e sem nada depois do EOI, por varredura estrutural dos marcadores, sem reencodar (os pixels não mudam). As fotos de inspeção (`captures/`) continuam gravadas como chegaram, porque nunca saem do notebook;
+- `python -m qc_edge.privacy --dataset-dir <D> [--fix]` confere (e corrige) as imagens já gravadas; roda antes de cada backup do dataset no Drive (`docs/dataset-protocol.md` §8);
+- os diretórios recebem `fsync` depois do `rename` da imagem e da criação de diretórios, antes da linha do manifest;
+- `notes` recusa as categorias Unicode `Cc`, `Cs`, `Cf`, `Zl` e `Zp`, e o `capture_device` troca esses caracteres por espaço antes do corte em 60.
+
+O pipeline (SPEC-011) lê o manifest só com `csv`/`pandas`, acusa linha sem arquivo e arquivo sem linha, e aplica `exclusions.csv` (foto que precisa sair do dataset, como uma com pessoa; R-14).
+
 ### 6.4 Configuração (`.env` da borda)
 
 `EDGE_HOST` (0.0.0.0; só IPv4 literal, SPEC-025), `EDGE_PORT` (8000), `EDGE_DATA_DIR` (padrão `edge/data`, no `.gitignore`), `EDGE_SESSION_TOKEN` (opcional), `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` (os três últimos são opcionais e sobrescrevem o `decision.json`).
@@ -247,6 +255,15 @@ Cada versão vive em `ml/models/<model_version>/`. **O nome do diretório é o `
 
 Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gratuito) ou copie manualmente para o notebook da borda.
 
+**Exibição das métricas** (regra única para o CHANGELOG da SPEC-012 e para a página "Sobre o modelo" do dashboard, SPEC-028; RV-07 de `reviews/SPEC-013/r1-review-report.md`). O `metrics.json` guarda o valor bruto, nunca arredondado (R-11). Na exibição:
+- 4 casas decimais e vírgula decimal, calculadas a partir de `Decimal(repr(valor))`;
+- **nunca a favor da meta:** nas métricas em que menor é melhor (`grade_mae`, `false_unknown_rate`, `needs_review_rate`, `latency_ms_p50`, `latency_ms_p95`), arredondamento para cima (`ROUND_CEILING`); em todas as outras (acurácias, QWK, precisões, recalls, F1, `unknown_rate_on_other`), corte para baixo (`ROUND_FLOOR`);
+- nos ICs 95% (`*_ci95`), `low` para baixo e `high` para cima (o intervalo exibido nunca fica mais estreito que o medido);
+- inteiros (`support`, contagens, `latency_runs`) sem casas;
+- o status em relação à meta (`atingida`/`abaixo da meta`) usa sempre o valor bruto.
+
+Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1235`. Uma métrica nova entra na lista de "menor é melhor" aqui, na SPEC-012 e no `model_info` do dashboard (que não importa `qc_ml`, R-12).
+
 ## 8. Rede e operação
 
 - A borda escuta em `0.0.0.0:8000`. No Arch, libere a porta 8000/tcp no firewall ativo (ufw, firewalld ou nftables) **só para a sub-rede** da Wi-Fi de casa ou do hotspot, só durante a sessão, e desfaça a regra no fim. Não rode a borda com a porta aberta numa rede que não seja da dupla. Comandos no `edge/README.md` (SPEC-025).
@@ -265,6 +282,8 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
 | Página hostil no navegador do notebook usa DNS rebinding para ler o token no console e injetar inspeções falsas | O console só responde com `Host` de loopback (`127.0.0.1`, `localhost` ou `[::1]` na porta configurada); senão, 403. Precisa estar `Done` antes do merge da SPEC-009, quando uma inspeção injetada chegaria à nuvem como `live` (SPEC-025; SEC-01 de `reviews/SPEC-007/r1-security-report.md`). As rotas com token não checam o `Host`: sem o token, nada é aceito |
 | Porta da borda alcançada fora da rede da dupla (Wi-Fi do campus, bridges do Docker) | Regra de firewall só para a sub-rede da LAN ou do hotspot, só durante a sessão (§8); o token cobre o resto |
 | Fotos lidas por outra conta local do notebook | `captures/` e `DATASET_DIR` com diretórios `0700` e arquivos `0600` (SPEC-025 e SPEC-010); retenção das fotos de inspeção em `docs/dataset-protocol.md` §9 (R-14) |
+| Foto do dataset levando a localização (EXIF GPS), o aparelho ou um vídeo (Motion Photo) para o backup no Drive e o Colab, ou uma foto com pessoa no backup (SEC-10-01 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md`) | Modo coleta grava sem APP1, APP13, COM e trailer, e `python -m qc_edge.privacy` antes de cada backup (SPEC-025, `Done` antes do primeiro backup); remoção de foto com pessoa por `exclusions.csv`, inclusive do backup (`docs/dataset-protocol.md` §8 e §8.1, SPEC-011) |
+| `API_BASE_URL` do dashboard com `http://` mandando a `READ_API_KEY` em claro (SEC-13-01 de `reviews/SPEC-013/r2-security-report.md`) | O dashboard recusa esquema que não seja `https://`, salvo `http://` em `localhost`/`127.0.0.1` (SPEC-028); Secrets do Streamlit CC com `https://` (SPEC-015) |
 | Chave de dispositivo vazada | Hash no banco; rotação por `register_device.py --rotate` |
 | Leitura indevida pela chave anon do Supabase | RLS sem políticas; a API usa `DATABASE_URL` só no servidor |
 | Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão. O `load_image` checa pelo cabeçalho, antes de decodificar, o limite de pixels (40 M) e de proporção (≤ 10:1), o que evita o OOM do resize (SPEC-023), e recusa JPEG com mais de 64 marcadores de scan (`FF DA`), o que limita a CPU gasta com scans progressivos repetidos (SPEC-024). Nenhum componente liga `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`: o `load_image` se recusa a rodar com ela ligada, e a borda se recusa a subir (SPEC-007) |
@@ -295,10 +314,11 @@ Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gra
   - "O outro pacote não mudou" não vira teste de aceite. O reviewer confere no diff (`pyproject.toml`, `__init__.py` e `uv.lock`).
   - As docstrings de módulo dos testes citam no máximo a versão que a própria SPEC introduziu, nunca "a versão verificada agora".
   - **Quando uma SPEC aumenta a versão de um pacote:** o CA dela fixa a versão nova (exata). A §3.1 dela autoriza o tester a converter para a forma acima as asserções exatas desse pacote no arquivo de aceite da SPEC vigente anterior (um arquivo por pacote), e nada mais. Enquanto existir o CA-28 da SPEC-004 (`test_ca28_version_expectations_migrated`, em `api/tests/acceptance/test_spec_004.py`), que fixa em `ALLOWED_EXACT` o par arquivo/versão vigente de cada pacote e exige essas asserções em funções `test_ca01_*`, a mesma §3.1 autoriza trocar nesse conjunto o par do pacote pelo do arquivo novo, e o CA de versão da SPEC nova é o CA-01 (precedente: SPEC-026).
-  - Implementação: migração única pelo tester da SPEC-004 (§3.1 e CA-28 dela). Depois dela, as asserções exatas ficam só em `packages/preprocess/tests/acceptance/test_spec_024.py` (`qc-preprocess` 0.3.0) e em `packages/contracts/tests/acceptance/test_spec_023.py` (`qc-contracts` 0.2.0). O reviewer confere a regra em toda SPEC.
+  - Implementação: migração única pelo tester da SPEC-004 (§3.1 e CA-28 dela). **Arquivos vigentes** (atualizado em 2026-10-17, RV-01 de `reviews/SPEC-026/r1-review-report.md`): as asserções exatas ficam só em `packages/preprocess/tests/acceptance/test_spec_024.py` (`qc-preprocess` 0.3.0) e em `packages/contracts/tests/acceptance/test_spec_026.py` (`qc-contracts` 0.3.0). A fonte de verdade é o conjunto `ALLOWED_EXACT` do CA-28 da SPEC-004: quando ele muda, esta linha muda junto. O reviewer confere a regra em toda SPEC.
+  - O ajuste do `ALLOWED_EXACT` vai **no mesmo commit** do tester que cria o arquivo de aceite que ele passa a citar; senão, o CA-28 falha num checkout isolado do commit intermediário e atrapalha o `git bisect` (RV-03 de `reviews/SPEC-026/r1-review-report.md`).
 - **Testes de aceite de SPECs anteriores** (aprovada pelo humano em 2026-10-17; motivada pelo SPEC_ISSUE-01 de `reviews/SPEC-005/r1-dev-report.md` e pelo SPEC_ISSUE-01 de `reviews/SPEC-010/r1-dev-report.md`). Sem esta regra, toda SPEC que substitui de propósito um comportamento provisório de outra (um 501, uma opção desabilitada, uma rota ainda inexistente) trava o loop num SPEC_ISSUE só para autorizar o tester a mexer no arquivo de aceite antigo.
   - **Quando vale:** uma SPEC nova muda **de propósito** um comportamento que um teste de aceite de uma SPEC anterior verifica, e a mudança decorre de um requisito ou CA escrito na SPEC nova (por exemplo, "substitui o 501 da SPEC-007" ou "coleta habilitado").
-  - **O que o tester da SPEC nova pode fazer:** ajustar, no arquivo de aceite da SPEC anterior, só as asserções afetadas, sem mudar a intenção dos CAs antigos. Isso inclui afrouxar ou trocar a asserção que verificava o comportamento substituído e restringir uma contagem ou busca à parte da página ou resposta que o CA antigo descrevia. Remover um teste inteiro só é permitido se for um teste extra, sem CA associado, cujo único objeto é o comportamento substituído; um teste `test_caNN_…` nunca é removido.
+  - **O que o tester da SPEC nova pode fazer:** ajustar, no arquivo de aceite da SPEC anterior, só as asserções afetadas, sem mudar a intenção dos CAs antigos. Isso inclui afrouxar ou trocar a asserção que verificava o comportamento substituído e restringir uma contagem ou busca à parte da página ou resposta que o CA antigo descrevia. Remover um teste inteiro só é permitido se for um teste extra, sem CA associado, cujo único objeto é o comportamento substituído; um teste `test_caNN_…` nunca é removido. Renomear um teste **extra** cujo nome descreve o comportamento substituído (ex.: `test_extra_collect_mode_is_501` → `test_extra_collect_mode_without_collect_fields_is_422`) faz parte do ajuste, desde que a renomeação conste na tabela do test-report; um `test_caNN_…` nunca é renomeado (RV-01 de `reviews/SPEC-010/r1-review-report.md`).
   - **O que o autor faz:** não edita `tests/acceptance/` (R-07) nem distorce a implementação para manter passando uma asserção que a SPEC nova invalidou. Ele lista no dev-report os testes antigos que falham e o requisito da SPEC nova que os invalida. Se a falha não for consequência direta de um requisito da SPEC nova, é bug da implementação, não ajuste.
   - **Registro no test-report:** uma tabela com uma linha por ajuste: arquivo, teste, asserção antes → depois e o requisito ou CA da SPEC nova que o motivou. O ajuste vai num commit do tester (`Agent: tester`), como o resto de `tests/acceptance/`.
   - **Conferência do reviewer:** cada linha da tabela é consequência direta do requisito citado, a intenção do CA antigo continua verificada e nenhuma outra linha do arquivo antigo mudou (conferido no diff). Um ajuste fora da tabela ou sem requisito que o justifique é achado bloqueante.

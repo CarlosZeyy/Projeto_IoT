@@ -25,6 +25,8 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 | S1 | Instalar o `uv` no notebook (`sudo pacman -S uv`) antes da SPEC-001 | Dupla |
 | S2 | Testar `<input capture>` nos dois celulares e a conexão celular → notebook, em casa, pelo Wi-Fi e pelo hotspot (CA manual da SPEC-007) | Dupla |
 | S1–S3 | Fotografar no modo coleta (assim que a SPEC-010 estiver pronta; antes disso, com a câmera normal, seguindo o protocolo e anotando o `item_id`) | Dupla |
+| S2–S3 | Backup do dataset: só em mídia local até o merge da SPEC-025; a partir dele, no Drive, sempre depois do checklist do `docs/dataset-protocol.md` §8 | Dupla |
+| Já | Registrar os CAs manuais pendentes: CA-17 da SPEC-010 e CA-26 da SPEC-013 (antes do merge das SPECs 025 e 028) e CA-20/21 da SPEC-007 | Dupla |
 | S3 | Rotulagem dupla (20%) | Dupla |
 | Contínuo | Aprovar SPECs (`Draft` → `Ready`) e ADRs (`Proposto` → `Aceito`); vetar um merge quando quiser (o merge dos PRs é feito pelo orquestrador sob delegação, ADR-016) | Dupla |
 
@@ -40,15 +42,15 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [004](specs/SPEC-004-api-ingestao.md) | API de ingestão e autenticação de dispositivos | developer | security | 002, 003, 023, 024 | S2 | Done |
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Done |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Done |
-| [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Done (CA-20/21 manuais pendentes) |
+| [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Done (CA-20/21 manual confirmado pelo humano) |
 | [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | Ready |
 | [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007, 025 | S3 | Ready |
-| [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | In Security (r1) |
+| [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | Done (CA-17 manual confirmado pelo humano) |
 | [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready |
 | [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | Ready |
-| [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | In Security (r2) |
+| [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | Done (CA-26 manual confirmado pelo humano) |
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
-| [015](specs/SPEC-015-deploy.md) | Deploy e keep-alive | security-devops | deploy, security | 004, 013, 026, 027 (e 003, 005, 006, 014) | S4 | Ready |
+| [015](specs/SPEC-015-deploy.md) | Deploy e keep-alive | security-devops | deploy, security | 004, 013, 026, 027 (e 003, 005, 006, 014; 028 recomendada antes) | S4 | Ready |
 | [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais | ml-engineer + developer | contrato | 012 (e 002, 003, 008, 011, 013) | S6 | Draft |
 | [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006 (e 003, 004) | S6 | Draft |
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos | developer | contrato, security | 004 (e 002, 003, 009, 013) | S6 | Draft |
@@ -58,21 +60,24 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [022](specs/SPEC-022-manutencao-setup.md) | Manutenção do setup (hook, CI sem senha, commits do architect) | developer | infra | 001 | S1 | Done |
 | [023](specs/SPEC-023-pacotes-compartilhados-0-2.md) | Pacotes compartilhados 0.2.0 (teto de `latency_ms`, proporção da imagem, flag de JPEG truncado) | developer | contrato, security | 002 | S2 | Done |
 | [024](specs/SPEC-024-preprocess-0-3-scans-jpeg.md) | `qc-preprocess` 0.3.0 (limite de scans do JPEG) | developer | security | 023 | S2 | Done |
-| [025](specs/SPEC-025-manutencao-borda-host-rede.md) | Manutenção da borda (Host do console, rede, limitador e permissões) | developer | security | 007 | S3 | Ready |
+| [025](specs/SPEC-025-manutencao-borda-host-rede.md) | Manutenção da borda (Host do console, rede, limitador, permissões e modo coleta) | developer | security | 007, 010 | S3 | Ready |
 | [026](specs/SPEC-026-spc-teto-de-lotes.md) | Carta p com teto de lotes (`qc-contracts` 0.3.0) | developer | contrato, security | 006 (e 004, 023) | S4 | Done |
-| [027](specs/SPEC-027-manutencao-api-banco-simulador.md) | Manutenção da API, do banco e do simulador (`check` da `002`, SQLSTATE, argparse, teste intermitente) | developer | security | 003, 005, 014 (e 004) | S4 | In Security (r2) |
+| [027](specs/SPEC-027-manutencao-api-banco-simulador.md) | Manutenção da API, do banco e do simulador (`check` da `002`, SQLSTATE, argparse, teste intermitente) | developer | security | 003, 005, 014 (e 004) | S4 | Done |
+| [028](specs/SPEC-028-manutencao-dashboard.md) | Manutenção do dashboard (https, acabamento da interface, selo da carta e exibição das métricas) | developer | security | 013 | S4 | Ready |
 
-> As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC.
+> As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
 
 ## 3. Ordem sugerida (caminho crítico)
 
 ```text
-001 → 002 ─┬─► 003 → 004 ─┬─► 005, 006, 014 ─► 026 ─► 013 ─► 027 ─► 015 ─┐
-           │              └─► 009 ◄──┐                                    ├─► MVP (S4)
-           └─► 007 ─┬─► 008 ─────────┼────────────────────────────────────┤
-                    ├─► 025 ─────────┘                                    │
-                    └─► 010 ─► 011 ─► 012 (modelo v1 → usado pela 008) ───┘
+001 → 002 ─┬─► 003 → 004 ─┬─► 005, 006, 014 ─► 026 ─► 013 ─► 027 ─► 028 ─► 015 ─┐
+           │              └─► 009 ◄──┐                                           ├─► MVP (S4)
+           └─► 007 ─┬─► 008 ─────────┼───────────────────────────────────────────┤
+                    ├─► 025 ─────────┘  (025 Done antes do 1º backup no Drive)    │
+                    └─► 010 ─► 011 ─► 012 (modelo v1 → usado pela 008) ──────────┘
 ```
+
+**Ordem do loop a partir de 2026-10-17:** 025 → 028 → 008 → 009 → 015 → 011 → 012 → 017 (Draft; só depois de aprovada). A 025 vem primeiro porque tem os dois prazos (merge da 009 e primeiro backup do dataset no Drive). A 028 é curta e entra antes da 015, para o painel publicado já recusar `http://` e mostrar o caminho relativo. A 011 e a 012 dependem dos dados reais da S3 (marco "teste final congelado"); a ordem entre elas e a 015 pode trocar conforme a coleta.
 
 - A **SPEC-023** (pacotes 0.2.0, pendências do review da SPEC-002) entra **antes** da 004 e da 007 e pode correr em paralelo com a 003 (`002 → 023 → 004/007`).
 - A **SPEC-024** (`qc-preprocess` 0.3.0, SEC-01 do security-report da SPEC-023) entra **antes** da 007 (`023 → 024 → 007`). A 004 depende dela só pela migração das expectativas de versão (abaixo), e a 024 já está mergeada (PR #9).
@@ -95,6 +100,18 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
   - **SPEC-015**: `statement_timeout` por `alter role`, geração e troca da `READ_API_KEY`, limites do Render (512 MB e 0,1 CPU) e uso do simulador em produção (SEC-05-01, INFO-02, SEC-07);
   - **SPEC-014** (só texto, sem reaprovação): comportamentos de 3xx/4xx e validação extra de URL (RV-04);
   - **SPEC-016** e **SPEC-017** (rascunhos): tipos da Fase 2 na carta (RV-01 da 006) e alertas sem recalcular a história inteira (SEC-06-01).
+- As pendências dos portões das **SPECs 010, 013, 026 e 027** (mergeadas):
+  - **SPEC-025** (emenda): JPEG da coleta sem APP1/APP13/COM e trailer, mais a CLI `python -m qc_edge.privacy` (SEC-10-01, **prazo: `Done` antes do primeiro backup do dataset no Drive**); `fsync` dos diretórios (SEC-10-02); `notes` e `capture_device` sem separadores de linha nem controles (SEC-10-03); CAs de permissão com umask `0o000` e `0o277` (RV-02 da 010);
+  - **SPEC-011** (emenda): `exclusions.csv` para tirar foto com pessoa (SEC-10-08, R-14), `orphan_image` (SEC-10-02), leitura só com `csv`/`pandas` (SEC-10-03), notas de planilha e de `flock` (SEC-10-04, SEC-10-06);
+  - **`docs/dataset-protocol.md`**: primeiro backup no Drive só depois do merge da SPEC-025, checklist antes de cada backup e §8.1 (remoção da foto, inclusive dos backups) (SEC-10-01, SEC-10-04, SEC-10-08);
+  - **SPEC-012** (emenda) e **SPEC-028**: regra única de exibição das métricas, nunca a favor da meta (`docs/architecture.md` §7; RV-07 da 013);
+  - **SPEC-028** (nova, `Draft`): `https` no `API_BASE_URL` (SEC-13-01, média), sem barra do Plotly e com margem na série (RV-08, RV-09), selo da carta pela origem da carta (RV-04), "Sobre o modelo" sem depender da API (RV-05), botão sem limpar o cache global (SEC-13-02), caminho relativo (SEC-13-03), `.streamlit/secrets.toml` local (SEC-13-04), `max_entries` (SEC-13-05) e `report_image` (SEC-13-08);
+  - **SPEC-015** (emenda): `qc-dashboard` editável ou `MODEL_METRICS_PATH` absoluto (RV-06 da 013), `https://` nos Secrets (SEC-13-01), timeout com resposta **503** (SEC-26-02), `EXPLAIN ANALYZE` da consulta nova e `15s` (SEC-26-03), `pg_get_constraintdef` depois de migrar (SEC-02 da 027);
+  - **SPEC-017** (`Draft`): `lot_selection` sempre com tetos inteiros (SEC-26-01);
+  - **`docs/architecture.md` §10**: arquivo vigente da versão exata do `qc-contracts` (`test_spec_026.py`, RV-01 da 026), `ALLOWED_EXACT` no mesmo commit do arquivo (RV-03 da 026) e renomeação de teste extra (RV-01 da 010);
+  - **SPECs 010, 013, 026 e 027** (só texto, sem reaprovação): linha de Histórico com os encaminhamentos; o CA-07 da 027 diz o contexto `SIM_DEVICE_ID` (RV-03);
+  - **Próxima manutenção do simulador** (sem SPEC agora): incluir `https://xn--1-zhc.com` nos casos de aceitação do autor (RV-01 de `reviews/SPEC-027/r2-review-report.md`).
+- **CAs manuais pendentes de SPECs mergeadas:** CA-20/21 da 007, CA-17 da 010 e CA-26 da 013. O da 010 (página de coleta no celular) e o da 013 (painel no celular) devem ser executados **antes** do merge das SPECs 025 e 028, que mudam o modo coleta e o selo da página da carta.
 - O **ML depende de dados**: a coleta (humana) começa já na S1, mesmo antes da SPEC-010.
 - A SPEC-008 é desenvolvida com um **modelo dummy** (ONNX gerado nos testes, com as mesmas entradas e saídas) e não depende da SPEC-012. O modelo real é só um artefato trocado via `MODEL_DIR`.
 
@@ -105,3 +122,5 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | 2026-10-12 | Escopo em camadas: MVP parafuso/porca; Fase 2 ferramentas manuais; Fase 3 elétricas (só identificação); tornos e fresadoras fora |
 | 2026-10-13 | SPEC-025 (manutenção da borda) criada para as pendências da SPEC-007; a SPEC-009 passa a depender dela. Fotos de inspeção fora do dataset, com retenção até a entrega (`docs/dataset-protocol.md` §9) |
 | 2026-10-17 | ADR-017 (`Proposto`): carta p limitada aos últimos lotes válidos, com a base de `p̄` na história inteira. SPEC-026 (teto da carta, contrato 0.3.0) e SPEC-027 (manutenção da API, do banco e do simulador) criadas como `Draft`. SPEC-013 e SPEC-015 alteradas, aguardando reaprovação. Ordem: `026 → 013 → 027 → 015` |
+| 2026-10-17 | SPECs 010, 013 e 027 `Done` (as duas primeiras com CA manual pendente). Pendências dos portões delas e da 026 consolidadas: SPEC-028 criada (`Draft`); SPECs 025, 011, 012 e 015 alteradas, aguardando reaprovação; SPEC-017 (`Draft`) alterada. Primeiro backup do dataset no Drive só depois do merge da SPEC-025. Regra única de exibição das métricas em `architecture.md` §7. Ordem: `025 → 028 → 008 → 009 → 015 → 011 → 012 → 017` |
+| 2026-10-18 | Os CAs manuais CA-20/21 (SPEC-007), CA-17 (SPEC-010) e CA-26 (SPEC-013) foram confirmados como aprovados pelo humano, sem a tabela detalhada nos test-reports. Nenhum backup do dataset no Drive foi feito; até a SPEC-025 estar `Done`, só cópia local e coleta pela página `/capture`. |

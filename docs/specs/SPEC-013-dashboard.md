@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Security |
+| Status | Done |
 | Rodada atual | r2 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -175,3 +175,4 @@ Só a fronteira HTTP é mockada. Nenhum teste acessa a internet nem a API real.
 |---|---|---|---|
 | 2026-10-17 | Mudanças: (a) passa a depender da SPEC-026, que tem de estar `Done` antes de esta SPEC entrar em `In Dev`, e cita o ADR-017; (b) §1: contrato 0.3.0 e carta cortada; (c) §4.1: `spc(...)` ganha `max_points`, e as páginas leem dados só pelas funções cacheadas de `data.py`; (d) §4.2: legenda de origem sempre visível na Visão geral e no Histórico; (e) §4.4: controle **Lotes na carta** (`max_points`, 2–500, padrão 100), título da figura com a origem, uma carta e uma requisição por origem, aviso de carta cortada, total de excluídos e aviso de que o período não se aplica à carta; (f) CA-14 e CA-15 alterados (título; `max_points=100` e sem `from`/`to`); CAs novos CA-27 a CA-31. Nenhum outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-06-01 e INFO-02 de `reviews/SPEC-006/r1-security-report.md`; SEC-05-01 e INFO-01 de `reviews/SPEC-005/r1-security-report.md`; ADR-017 | Orquestrador, a pedido do humano |
 | 2026-10-17 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
+| 2026-10-17 | `Done` (mergeada; o registro do CA-26 manual continua pendente, `docs/plan.md`). Só texto, sem mudança de requisito nesta SPEC: as pendências dos portões foram encaminhadas. RV-04, RV-05, RV-07, RV-08, RV-09 e SEC-13-01, 02, 03, 04, 05 e 08 → SPEC-028 (nova), que substitui, a partir do merge dela, o `st.cache_data.clear()` do botão (§4.1), o selo da página da carta (§4.2 e §4.4), o `st.stop()` da checagem do selo em "Sobre o modelo" e o "sem arredondar para cima" (§4.6, agora a regra de `architecture.md` §7). RV-06 e o `https://` nos Secrets (SEC-13-01) → SPEC-015. SEC-13-06, 07 e 09 e RV-10: sem ação. O passo 3 do CA-26 descreve o selo de antes da SPEC-028; se for executado depois do merge dela, vale o CA-12 da SPEC-028 para a página da carta. | `reviews/SPEC-013/r1-review-report.md`, `r2-review-report.md` e `r2-security-report.md` | Orquestrador, a pedido do humano |
