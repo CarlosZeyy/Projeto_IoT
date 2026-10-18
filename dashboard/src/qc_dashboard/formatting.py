@@ -11,7 +11,7 @@ import csv
 import io
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from zoneinfo import ZoneInfo
 
 from qc_contracts import (
@@ -76,16 +76,33 @@ def fmt_pct(value: float | None, places: int = 1) -> str:
     return f"{fmt_decimal(value * 100, places)}%"
 
 
-def fmt_truncated(value: float | None, places: int = 4) -> str:
-    """``places`` decimals, never rounded up (R-11): ``0.95999`` -> ``0,9599``.
+def fmt_quantized(value: float | None, places: int, rounding: str) -> str:
+    """``places`` decimals with a decimal comma, from ``Decimal(repr(value))`` and ``rounding``.
 
-    ``None`` -> ``—``.
+    ``rounding`` is a ``decimal`` mode (``ROUND_FLOOR`` or ``ROUND_CEILING`` for the metrics
+    display rule, ``docs/architecture.md`` §7). ``None`` -> ``—``.
     """
     if value is None:
         return EMPTY
     quantum = Decimal(1).scaleb(-places)
-    truncated = Decimal(repr(float(value))).quantize(quantum, rounding=ROUND_FLOOR)
-    return _swap_separators(f"{truncated:,f}")
+    quantized = Decimal(repr(float(value))).quantize(quantum, rounding=rounding)
+    return _swap_separators(f"{quantized:,f}")
+
+
+def fmt_truncated(value: float | None, places: int = 4) -> str:
+    """``places`` decimals, never rounded up (``ROUND_FLOOR``): ``0.95999`` -> ``0,9599``.
+
+    ``None`` -> ``—``.
+    """
+    return fmt_quantized(value, places, ROUND_FLOOR)
+
+
+def fmt_rounded_up(value: float | None, places: int = 4) -> str:
+    """``places`` decimals, never rounded down (``ROUND_CEILING``): ``0.12341`` -> ``0,1235``.
+
+    ``None`` -> ``—``.
+    """
+    return fmt_quantized(value, places, ROUND_CEILING)
 
 
 def fmt_bool(value: bool | None) -> str:

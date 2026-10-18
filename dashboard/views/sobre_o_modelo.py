@@ -1,7 +1,9 @@
 """Sobre o modelo: metrics of the test set against the PRD targets (SPEC-013 §4.6).
 
 Reads the versioned ``metrics.json`` (SPEC-012), not the API. A missing file is the normal state
-before the first training, not an error.
+before the first training, not an error. The API is read only for the badge check with the
+origin ``Todos``; when that check fails, the page shows the error and the badge and goes on with
+the local files (SPEC-028 §4.4).
 """
 
 from __future__ import annotations
@@ -13,14 +15,14 @@ from qc_dashboard import config, filters, model_info
 
 st.title("Sobre o modelo")
 selected = filters.render_sidebar()
-with filters.api_guard():
-    filters.render_badge(selected)
+filters.render_badge_or_error(selected)
 
 path = config.get_model_metrics_path()
 try:
     metrics = model_info.load_metrics(path)
 except FileNotFoundError:
-    st.info(f"Nenhum modelo avaliado ainda: metrics.json não encontrado em {path}.")
+    shown = model_info.display_path(path)
+    st.info(f"Nenhum modelo avaliado ainda: metrics.json não encontrado em {shown}.")
     st.stop()
 except model_info.MetricsFileError as exc:
     st.error(f"metrics.json inválido: {exc}")

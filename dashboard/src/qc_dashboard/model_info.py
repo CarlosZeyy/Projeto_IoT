@@ -1,8 +1,9 @@
-"""``metrics.json`` of the model and the PRD targets (SPEC-013 section 4.6).
+"""``metrics.json`` of the model and the PRD targets (SPEC-013 §4.6, SPEC-028 §4.4).
 
 The file format is the one of SPEC-012 section 4.7. The dashboard cannot import ``qc_ml`` (it
 brings the inference runtime, R-12), so ``PRD_TARGETS`` repeats the targets of SPEC-012 and of
-the PRD (section 7): a change of a target must be made in both places.
+the PRD (section 7), and ``LOWER_IS_BETTER`` repeats the list of the metrics display rule of
+``docs/architecture.md`` §7: a change of either must be made in every place.
 """
 
 from __future__ import annotations
@@ -17,11 +18,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from qc_contracts import GRADE_ORDER, MODEL_VERSION_PATTERN
-from qc_dashboard.config import resolve_repo_path
+from qc_dashboard import config
 from qc_dashboard.formatting import (
     EMPTY,
     fmt_datetime,
     fmt_int,
+    fmt_rounded_up,
     fmt_truncated,
     grade_label,
 )
@@ -68,6 +70,19 @@ STATUS_UNKNOWN = EMPTY
 
 CONFUSION_IMAGES: tuple[str, ...] = ("type_confusion.png", "grade_confusion.png")
 REPORTS_DIR = "ml/reports"
+
+# Metrics in which lower is better (docs/architecture.md §7, "Exibição das métricas"): shown
+# rounded up (``ROUND_CEILING``); every other metric is cut down (``ROUND_FLOOR``). So the shown
+# value is never on the favorable side of the target. Same list as SPEC-012.
+LOWER_IS_BETTER: frozenset[str] = frozenset(
+    {
+        "grade_mae",
+        "false_unknown_rate",
+        "needs_review_rate",
+        "latency_ms_p50",
+        "latency_ms_p95",
+    }
+)
 
 
 class MetricsFileError(ValueError):
@@ -159,12 +174,17 @@ def load_metrics(path: str | Path) -> dict[str, Any]:
     return document
 
 
-def fmt_metric(value: Any) -> str:
-    """4 decimals, decimal comma, never rounded up; intervals as ``[low; high]``."""
+def fmt_metric(value: Any, key: str | None = None) -> str:
+    """A metric value by the display rule of ``docs/architecture.md`` §7 (never toward the target).
+
+    4 decimals and a decimal comma: rounded up when ``key`` is in ``LOWER_IS_BETTER``, cut down
+    otherwise. A 95% interval is ``[low; high]``, with ``low`` cut down and ``high`` rounded up,
+    so it is never narrower than the measured one. ``None`` -> ``—``; other values as text.
+    """
     if _is_number(value):
-        return fmt_truncated(value, 4)
+        return fmt_rounded_up(value, 4) if key in LOWER_IS_BETTER else fmt_truncated(value, 4)
     if isinstance(value, list | tuple) and len(value) == 2 and all(_is_number(v) for v in value):
-        return f"[{fmt_truncated(value[0], 4)}; {fmt_truncated(value[1], 4)}]"
+        return f"[{fmt_truncated(value[0], 4)}; {fmt_rounded_up(value[1], 4)}]"
     if value is None:
         return EMPTY
     return str(value)
@@ -175,7 +195,7 @@ def target_rows(metrics: Mapping[str, Any]) -> list[dict[str, str]]:
     return [
         {
             "Métrica": target.label,
-            "Valor": fmt_metric(metrics.get(target.key)),
+            "Valor": fmt_metric(metrics.get(target.key), target.key),
             "Meta": target.describe(),
             "Status": target.status(metrics.get(target.key)),
         }
@@ -189,7 +209,7 @@ def other_metric_rows(metrics: Mapping[str, Any]) -> list[dict[str, str]]:
     for key, label in OTHER_METRICS:
         value = metrics.get(key)
         text = fmt_int(value) if key == "latency_runs" and isinstance(value, int) else None
-        rows.append({"Métrica": label, "Valor": text or fmt_metric(value)})
+        rows.append({"Métrica": label, "Valor": text or fmt_metric(value, key)})
     return rows
 
 
@@ -233,12 +253,31 @@ def fmt_evaluated_at(value: Any) -> str:
     return fmt_datetime(moment)
 
 
-def report_image(model_version: Any, name: str) -> Path | None:
-    """``ml/reports/<model_version>/<name>`` when it exists; ``None`` otherwise.
+def display_path(path: str | Path) -> str:
+    """``path`` for a public message (SEC-13-03): relative to ``config.REPO_ROOT``, with ``/``,
+    when the resolved file is inside the repository; the absolute path otherwise."""
+    candidate = config.resolve_repo_path(path)
+    resolved = candidate.resolve()
+    root = config.REPO_ROOT.resolve()
+    if resolved.is_relative_to(root):
+        return resolved.relative_to(root).as_posix()
+    return str(candidate)
 
-    ``model_version`` must match the contract pattern, so it cannot point outside the reports.
+
+def report_image(model_version: Any, name: str) -> Path | None:
+    """``ml/reports/<model_version>/<name>`` when it is a file; ``None`` otherwise.
+
+    ``None`` too, without touching the file system, when ``model_version`` does not match
+    ``MODEL_VERSION_PATTERN`` (``re.fullmatch``) or is made only of dots; and ``None`` when
+    ``(ml/reports / model_version / name).resolve()`` is not inside ``(ml/reports).resolve()``
+    (``Path.is_relative_to``), as with a symbolic link to another directory.
     """
     if not isinstance(model_version, str) or not re.fullmatch(MODEL_VERSION_PATTERN, model_version):
         return None
-    path = resolve_repo_path(REPORTS_DIR) / model_version / name
+    if set(model_version) == {"."}:
+        return None
+    reports = config.resolve_repo_path(REPORTS_DIR)
+    path = reports / model_version / name
+    if not path.resolve().is_relative_to(reports.resolve()):
+        return None
     return path if path.is_file() else None

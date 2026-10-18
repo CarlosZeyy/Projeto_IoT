@@ -126,3 +126,32 @@ def test_spc_rows(factory) -> None:
     assert [row["Fora de controle"] for row in rows] == ["Não", "Não", "Sim", "Não"]
     assert rows[0]["p"] == "16,0%"
     assert rows[0]["Início"] == "03/11/2026 12:00"
+
+
+# ---------- SPEC-028 §4.4: rounding direction ----------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (0.12341, "0,1235"),
+        (0.12340, "0,1234"),
+        (0.02, "0,0200"),
+        (120.00001, "120,0001"),
+        (0.30000000000000004, "0,3001"),
+        (1.0, "1,0000"),
+        (0.0, "0,0000"),
+        (None, "—"),
+    ],
+)
+def test_fmt_rounded_up_never_rounds_down(value, expected) -> None:
+    assert fm.fmt_rounded_up(value) == expected
+
+
+def test_fmt_quantized_modes() -> None:
+    from decimal import ROUND_CEILING, ROUND_FLOOR
+
+    assert fm.fmt_quantized(0.93127, 4, ROUND_FLOOR) == "0,9312"
+    assert fm.fmt_quantized(0.93127, 4, ROUND_CEILING) == "0,9313"
+    assert fm.fmt_quantized(1234.56789, 2, ROUND_FLOOR) == "1.234,56"
+    assert fm.fmt_quantized(None, 4, ROUND_CEILING) == "—"
