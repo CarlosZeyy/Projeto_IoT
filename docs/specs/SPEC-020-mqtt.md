@@ -39,7 +39,7 @@ Um `MqttPublisher`, alternativo ao `HttpPublisher` e escolhido por variável de 
 | Opção | Como | Problema |
 |---|---|---|
 | (a) Mosquitto local + ponte | Broker no notebook; um processo na própria borda assina o tópico e repassa à API por HTTP | A nuvem continua recebendo por HTTP; o MQTT fica só dentro da LAN |
-| (b) Assinante na nuvem | Serviço sempre ligado assinando um broker na internet | O Render free dorme e não acorda com MQTT; não há host gratuito sempre ligado confirmado |
+| (b) Assinante na nuvem | Serviço sempre ligado assinando um broker na internet | Antes do ADR-018: o Render free dorme e não acorda com MQTT. Desde o ADR-018 (2026-10-18), a VPS pessoal fica sempre ligada e poderia hospedar um broker (Mosquitto) e o assinante no compose. Exigiria publicar mais uma porta (MQTT sobre TLS), com autenticação por dispositivo e regra de firewall só acrescentada (SPEC-015 §4.15), e uma revisão de segurança própria |
 | (c) Broker gerenciado gratuito | Broker na nuvem + assinante | A página oficial do HiveMQ não lista mais plano gratuito (<https://www.hivemq.com/pricing/>, verificado em 2026-10-12); brokers públicos de teste não têm privacidade |
 
 A nuvem não consegue assinar um broker da LAN sem expor o notebook à internet. **Recomendação:** implementar só se o professor exigir, e então a opção (a), que mostra o protocolo sem custo e sem expor a rede.
@@ -63,3 +63,10 @@ A nuvem não consegue assinar um broker da LAN sem expor o notebook à internet.
 2. Biblioteca: `paho-mqtt` (licença EPL/EDL) ou `aiomqtt`? Conferir licença e manutenção (portão de segurança).
 3. Na opção (a), a "ponte" na mesma máquina demonstra o suficiente, ou o professor espera o broker fora do notebook?
 4. ~~Se a SPEC avançar, ela precisa da tag `security` (credenciais e rede)? O quadro do `docs/plan.md` hoje não traz tag.~~ Resolvido: a SPEC e o quadro do `docs/plan.md` têm a tag `security`.
+5. Com a VPS sempre ligada (ADR-018), a opção (b) passa a ser viável sem custo. A recomendação da §4 (opção (a)) continua até o professor responder a pergunta 1; se ele esperar o broker fora do notebook, reavaliar a (b) com um ADR.
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-18 | §4, opção (b), e §7, pergunta 5: a VPS pessoal sempre ligada torna a opção (b) viável; a recomendação não muda. A SPEC continua `Draft`. | ADR-018 (hospedagem na VPS pessoal) | Orquestrador, a pedido do humano |

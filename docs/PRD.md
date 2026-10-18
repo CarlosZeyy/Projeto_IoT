@@ -26,7 +26,7 @@ Um sistema de inspeção visual em três camadas:
 | Frente | Onde aparece |
 |---|---|
 | IoT / Edge | Celular como sensor; notebook como gateway que processa localmente e só envia o resultado; fila offline com reenvio; pareamento por QR |
-| Cloud | API REST, Postgres gerenciado e dashboard hospedados em free tier, acessíveis de qualquer lugar |
+| Cloud | API REST e dashboard em contêineres na VPS pessoal da dupla (Docker Compose, HTTPS), com Postgres gerenciado em free tier (Supabase), sem custo adicional e acessíveis de qualquer lugar (ADR-018) |
 | Indústria 4.0 | Inspeção automatizada com visão computacional, rastreabilidade por lote, indicadores em tempo quase real e controle estatístico de processo |
 
 ### Metodologia de desenvolvimento
@@ -52,7 +52,7 @@ O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autoriza�
 - Modo coleta para montar o dataset com o próprio celular.
 - Fila offline com reenvio idempotente.
 - Simulador de lotes (dados marcados `simulated`).
-- Deploy em free tier.
+- Deploy sem custo adicional: API e dashboard na VPS pessoal com Docker Compose; banco no Supabase Free; Render como reserva (ADR-018).
 
 ### 4.2 Fase 2 (S5–S6 — até 22/11)
 
@@ -100,7 +100,7 @@ O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autoriza�
 
 | ID | Requisito | Meta |
 |---|---|---|
-| RNF-01 | Custo | R$ 0 (R-01) |
+| RNF-01 | Custo | Custo adicional R$ 0 (R-01, ADR-018) |
 | RNF-02 | Latência de inferência na borda (pré-processamento + modelo, CPU do notebook) | p95 ≤ 300 ms |
 | RNF-03 | Tempo total foto → resultado no celular (LAN, foto já redimensionada) | p95 ≤ 3 s |
 | RNF-04 | Confiabilidade do envio | 0 perdas e 0 duplicatas em teste com 200 inspeções e a nuvem derrubada por 2 min |
@@ -109,7 +109,7 @@ O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autoriza�
 | RNF-07 | Reprodutibilidade de ML | Seeds fixas, `training_config.json` e hash do split; teste de paridade torch × ONNX |
 | RNF-08 | Portabilidade | Python 3.12; `uv sync` reproduz o ambiente; roda no Arch Linux do notebook da equipe |
 | RNF-09 | Qualidade de código | ruff sem erros; pytest verde no CI; cobertura ≥ 80% em `qc_api.services` e `qc_edge.decision`/`outbox` |
-| RNF-10 | Operação | Cold start da API absorvido pelo outbox; checklist do dia da demo (`docs/deployment-plan.md`) |
+| RNF-10 | Operação | Nuvem indisponível (queda ou atualização da VPS, cold start da reserva no Render) absorvida pelo outbox; checklist do dia da demo (`docs/deployment-plan.md`) |
 
 ## 7. Métricas de sucesso
 
@@ -135,7 +135,7 @@ As metas são **iniciais** e serão revisadas depois do primeiro treino (S3). N�
 | Graus subjetivos, com rotuladores discordando | Modelo instável | Rubrica com % de área e regra de precedência; dupla rotulagem com kappa |
 | Pouco dado nos extremos (`perfect`, `unusable`) | Recall ruim | Meta por grau; peças novas para `perfect`; dano mecânico controlado para `unusable` |
 | Mudança de domínio (luz, fundo, celular) | Erro na demo | Dataset capturado com os mesmos celulares e o mesmo fundo; ensaio no local da apresentação |
-| Free tier hiberna ou pausa | Primeira chamada lenta ou banco pausado | Outbox; ping por GitHub Actions; checklist pré-demo |
+| Banco free tier pausa; VPS cai ou fica sem manutenção | Banco pausado ou nuvem fora do ar | Outbox; healthcheck da API e ping por GitHub Actions (mantêm o Supabase ativo); reserva fria no Render; checklist pré-demo (ADR-018) |
 | Escopo de ferramentas cresce demais | Atraso | Camadas; Fase 3 só se a Fase 2 fechar |
 | Professor não aceitar HTTP no lugar de MQTT ou o uso de agentes de IA | Retrabalho | `docs/professor-questions.md` respondido até a S2 |
 

@@ -55,5 +55,11 @@ A borda envia um heartbeat a cada 60 s, e o dashboard mostra cada dispositivo co
 
 1. ~~**Tag `security`:** a SPEC cria uma rota autenticada nova; pela skill `criar-spec`, deveria ter a tag `security` (o quadro do `docs/plan.md` só traz `contrato`).~~ Resolvido: a SPEC e o quadro do `docs/plan.md` têm as tags `contrato, security`.
 2. ~~`outbox_dead` pressupõe um estado "morto" no outbox da SPEC-009. Confirmar que ele existe e com que nome.~~ Resolvido: a SPEC-009 define o status `dead` no outbox (`mark_dead`, campo `dead` de `SinkStats`).
-3. Heartbeat a cada 60 s mantém o Render acordado enquanto a borda está ligada. Está dentro das 750 h/mês, mas vale registrar.
+3. ~~Heartbeat a cada 60 s mantém o Render acordado enquanto a borda está ligada. Está dentro das 750 h/mês, mas vale registrar.~~ Superado pelo ADR-018 (2026-10-18): a API fica sempre ligada na VPS, e o heartbeat não tem efeito de custo. Com a reserva no Render ativa, vale a nota antiga.
 4. O simulador (SPEC-014) deve enviar heartbeats com `source` simulado? O contrato do heartbeat não tem `source`; a página precisa distinguir dispositivos simulados (R-06)?
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
+| 2026-10-18 | §6, pergunta 3: nota do Render superada, porque a API fica sempre ligada na VPS. A SPEC continua `Draft`. | ADR-018 (hospedagem na VPS pessoal) | Orquestrador, a pedido do humano |

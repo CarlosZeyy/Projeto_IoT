@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Aceito |
+| Status | Substituído em parte por ADR-018 (hospedagem da API e do dashboard). Continua valendo para o banco (Supabase Free) e para o keep-alive (`keepalive.yml`) |
 | Data | 2026-10-12 |
 | Decisores | Dupla (redigido pelo agente architect) |
 | Relacionados | ADR-002, ADR-006, ADR-007, ADR-009, SPEC-009, SPEC-015, R-01, R-03, N-05 |

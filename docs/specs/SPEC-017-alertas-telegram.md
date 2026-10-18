@@ -27,7 +27,7 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 
 - `api/src/qc_api/services/alerts.py`: detecção do lote concluído e fora de controle, deduplicação e envio.
 - Migração `infra/migrations/NNN_alerts.sql`: tabela `alerts_sent(lot_id, source, kind, sent_at)`, com `unique (lot_id, source, kind)` e RLS ligado, sem políticas.
-- Variáveis `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e `ALERTS_ENABLED` (padrão `false`) no `.env.example` e no painel do Render.
+- Variáveis `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e `ALERTS_ENABLED` (padrão `false`) no `.env.example` e no `infra/.env.api` da VPS (ADR-018; no painel do Render só se a reserva estiver ativa).
 
 ### 3.2 Fora
 
@@ -58,7 +58,7 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 ## 6. Perguntas em aberto
 
 1. **O que é "lote concluído"?** O contrato não tem esse evento. Opções: nenhuma inspeção no lote há X minutos (ex.: 10); o mesmo dispositivo começou outro lote; ou um campo/endpoint novo de fechamento de lote (mudança de contrato).
-2. **Gatilho:** ingestão (acorda junto com o Render) × verificação periódica pelo GitHub Actions (gratuito em repositório público, mas cada execução acorda o Render; intervalo mínimo de 5 min).
+2. **Gatilho:** ingestão × verificação periódica. Desde o ADR-018, a API fica sempre ligada na VPS, e a verificação periódica pode rodar dentro do próprio compose, sem depender do GitHub Actions (que tem intervalo mínimo de 5 min e desliga agendamentos após 60 dias sem atividade). A hibernação do Render só importa se a reserva estiver ativa.
 3. Enquanto houver menos de `baseline_lots` lotes, `p̄` muda a cada lote novo e um lote antigo pode passar a ficar fora de controle. Alertar só o lote recém-concluído, avaliado no momento da conclusão?
 4. Permitir alertas de dados `simulated` na demo, com o selo "SIMULADO" no texto?
 5. Limite global de mensagens por hora para evitar spam em caso de bug.
@@ -69,3 +69,4 @@ Quando um lote `live` **recém-concluído** fica fora de controle, a API envia *
 |---|---|---|---|
 | 2026-10-17 | §4: a regra usa a seleção limitada da SPEC-026 (ADR-017) e nunca recalcula a história inteira; depende, na prática, da SPEC-026. A SPEC continua `Draft`. | SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`; RV-03 de `reviews/SPEC-006/r1-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-17 | §4: `lot_selection` sempre com tetos inteiros (`max_points=2` e `max_excluded=0`, preliminares), nunca `None`; CA-07 preliminar novo (espião e busca no `ast`). A SPEC continua `Draft`. | SEC-26-01 de `reviews/SPEC-026/r1-security-report.md` (= RV-02 de `reviews/SPEC-026/r1-review-report.md`) | Orquestrador, a pedido do humano |
+| 2026-10-18 | §3.1 e §6, pergunta 2: variáveis no `infra/.env.api` da VPS e o gatilho reavaliado com a API sempre ligada. A SPEC continua `Draft`. | ADR-018 (hospedagem na VPS pessoal) | Orquestrador, a pedido do humano |
