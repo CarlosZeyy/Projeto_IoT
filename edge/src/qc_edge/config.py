@@ -5,8 +5,10 @@ Read only from the process environment: no ``.env`` file is loaded here. Locally
 blank lines of ``.env.example`` keep their defaults. Validation errors never show the values that
 were provided (``hide_input_in_errors``), only the variable names (R-03).
 
-``DEVICE_API_KEY``, ``CLOUD_API_URL``, ``MODEL_DIR``, ``OUTBOX_PATH`` and the three thresholds
-are only read here; SPEC-008 and SPEC-009 validate them. ``DATASET_DIR`` (SPEC-010) is not
+``DEVICE_API_KEY``, ``CLOUD_API_URL`` and ``OUTBOX_PATH`` are only read here; SPEC-009
+validates them. ``MODEL_DIR`` is loaded by ``qc_edge.onnx_inferencer`` (SPEC-008); the three
+threshold overrides are checked here (a finite number in ``[0, 1]``, SPEC-008 section 4.2, item 6),
+so an invalid one stops the start with code 2 naming the variable. ``DATASET_DIR`` (SPEC-010) is not
 created here: the collect mode creates it, with mode ``0700``, on the first capture.
 
 SPEC-025: ``EDGE_HOST`` is an IPv4 literal only (with ``::`` uvicorn listens on IPv6 only, and
@@ -34,6 +36,9 @@ DEFAULT_EDGE_DATA_DIR = Path("edge/data")
 DEFAULT_DATASET_DIR = Path("ml/data")
 MIN_SESSION_TOKEN_LENGTH = 32
 
+# Threshold override (SPEC-008 section 4.2, item 6): a finite number in [0, 1].
+Threshold = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
+
 
 class EdgeSettings(BaseSettings):
     """``qc-edge`` configuration. Field names are the environment variable names."""
@@ -57,14 +62,16 @@ class EdgeSettings(BaseSettings):
     # Collect mode (SPEC-010): images and manifest.csv of the dataset; never served (R-02).
     DATASET_DIR: Path = DEFAULT_DATASET_DIR
 
-    # Read here, validated by later SPECs (008: model and thresholds; 009: cloud and outbox).
+    # Read here, validated by SPEC-009 (cloud and outbox).
     DEVICE_API_KEY: SecretStr | None = None
     CLOUD_API_URL: str | None = None
-    MODEL_DIR: Path | None = None
     OUTBOX_PATH: Path | None = None
-    TYPE_THRESHOLD: float | None = None
-    UNUSABLE_THRESHOLD: float | None = None
-    GRADE_REVIEW_THRESHOLD: float | None = None
+    # SPEC-008: model directory (unset or "" = no model; never stripped, so only spaces is an
+    # invalid directory, section 4.4) and the overrides of decision.json.
+    MODEL_DIR: Path | None = None
+    TYPE_THRESHOLD: Threshold | None = None
+    UNUSABLE_THRESHOLD: Threshold | None = None
+    GRADE_REVIEW_THRESHOLD: Threshold | None = None
 
     @field_validator("EDGE_HOST")
     @classmethod

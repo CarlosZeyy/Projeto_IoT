@@ -68,7 +68,8 @@ def test_console_from_loopback(settings: EdgeSettings, lan_ips: list[str], jpeg_
     assert "<svg" in page
     assert f"http://192.168.0.42:8000/capture?t={token}" in page
     assert 'href="/?ip=10.0.0.7"' in page
-    assert "carregado: stub-v0" in page
+    assert "carregado: stub-v0 (sha256 000000000000)" in page
+    assert re.search(r'id="model-thresholds">—<', page)
     assert re.search(r'id="sink-pending">12<', page)
     assert '<meta http-equiv="refresh" content="5">' in page
     assert "<script" not in page
@@ -198,7 +199,12 @@ def test_status(settings: EdgeSettings) -> None:
     body = client.get("/api/status", headers={"X-Session-Token": token}).json()
     assert set(body) == {"device_id", "contract_version", "model", "sink"}
     assert body["device_id"] == "edge-01"
-    assert body["model"] == {"loaded": True, "model_version": "stub-v0", "model_sha256": "0" * 64}
+    assert body["model"] == {
+        "loaded": True,
+        "model_version": "stub-v0",
+        "model_sha256": "0" * 64,
+        "thresholds": None,
+    }
     assert body["sink"] == {
         "pending": 0,
         "dead": 0,
@@ -219,7 +225,12 @@ def test_status_without_model_and_with_last_success(settings: EdgeSettings) -> N
     app = _app(settings, inferencer=None, sink=_Sink())
     body = TestClient(app).get("/api/status", headers={"X-Session-Token": app.state.session_token})
     payload = body.json()
-    assert payload["model"] == {"loaded": False, "model_version": None, "model_sha256": None}
+    assert payload["model"] == {
+        "loaded": False,
+        "model_version": None,
+        "model_sha256": None,
+        "thresholds": None,
+    }
     assert datetime.fromisoformat(payload["sink"]["last_success_at"]) == START
 
 

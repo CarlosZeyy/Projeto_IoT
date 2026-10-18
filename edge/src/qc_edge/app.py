@@ -11,6 +11,9 @@ Only the ``InspectionCreate`` of the inspect mode goes to the sink; the collect 
 the inferencer nor the sink. The session token is never logged (R-03); the request log records
 the route without the query string.
 
+SPEC-008: the console and ``/api/status`` show the loaded model (version and the first 12
+characters of the SHA-256) and the effective decision thresholds with their source.
+
 SPEC-025: the console also requires a loopback ``Host`` (DNS rebinding, SEC-01); the wait for a
 decode slot happens on the event loop, and only the request holding a slot uses a worker thread
 (SEC-03); ``captures/`` and its day directories are ``0700`` and the photos ``0600`` (SEC-06).
@@ -77,8 +80,9 @@ from qc_edge.collect import (
     empty_coverage,
 )
 from qc_edge.config import EdgeSettings
+from qc_edge.decision import THRESHOLD_NAMES, Thresholds
 from qc_edge.fsutil import DIR_MODE, create_private_file, make_private_dirs, set_mode
-from qc_edge.inference import InferenceError, Inferencer
+from qc_edge.inference import InferenceError, Inferencer, short_sha
 from qc_edge.jpeg import write_capture_jpeg
 from qc_edge.limits import CAPTURE_MAX_BYTES, CAPTURE_MAX_REQUEST_BYTES
 from qc_edge.middleware import (
@@ -138,6 +142,16 @@ NO_LAN_WARNING_HTML = (
     "ao hotspot do celular e espere o console recarregar.</p>"
 )
 
+# Console labels of the decision thresholds (SPEC-008 section 4.4).
+THRESHOLD_LABELS_PT = {
+    "type_threshold": "tipo (abaixo dele, desconhecido)",
+    "unusable_threshold": "inutilizável",
+    "grade_review_threshold": "revisão do grau",
+}
+THRESHOLD_SOURCE_LABELS_PT = {
+    "decision.json": "decision.json do modelo",
+    "env": "variável de ambiente",
+}
 CONNECTIVITY_LABELS_PT = {
     "online": "online",
     "offline": "offline",
@@ -567,6 +581,7 @@ def create_app(
                 "loaded": model is not None,
                 "model_version": model.model_version if model is not None else None,
                 "model_sha256": model.model_sha256 if model is not None else None,
+                "thresholds": _thresholds_status(inferencer),
             },
             "sink": {
                 "pending": stats.pending,
@@ -605,6 +620,7 @@ def create_app(
             capture_url=html.escape(capture_url),
             other_ips=_other_ips_html(ips, ip),
             model_state=html.escape(_model_state(inferencer)),
+            thresholds=_thresholds_html(inferencer),
             **_sink_fields(sink),
             rows="\n".join(_row_html(row) for row in rows),
             dataset_dir=html.escape(str(settings.DATASET_DIR.absolute())),
@@ -700,7 +716,39 @@ def _is_local_console_request(request: Request, port: int) -> bool:
 def _model_state(inferencer: Inferencer | None) -> str:
     if inferencer is None:
         return "não carregado (o modo inspeção responde 503)"
-    return f"carregado: {inferencer.model_info.model_version}"
+    info = inferencer.model_info
+    return f"carregado: {info.model_version} (sha256 {short_sha(info.model_sha256)})"
+
+
+def _thresholds_status(inferencer: Inferencer | None) -> dict[str, dict[str, Any]] | None:
+    """``{name: {"value", "source"}}`` of the effective thresholds (SPEC-008 section 4.4).
+
+    ``None`` without a model or with an inferencer that has no thresholds (``StubInferencer``).
+    """
+    thresholds = getattr(inferencer, "thresholds", None)
+    sources = getattr(inferencer, "threshold_sources", None)
+    if not isinstance(thresholds, Thresholds) or not isinstance(sources, dict):
+        return None
+    return {
+        name: {"value": getattr(thresholds, name), "source": sources.get(name)}
+        for name in THRESHOLD_NAMES
+    }
+
+
+def _thresholds_html(inferencer: Inferencer | None) -> str:
+    status = _thresholds_status(inferencer)
+    if status is None:
+        return "—"
+    items = []
+    for name, entry in status.items():
+        source = str(entry["source"])
+        items.append(
+            f'<li id="threshold-{name}">{html.escape(THRESHOLD_LABELS_PT[name])} '
+            f"(<code>{name}</code>): {entry['value']!r}, origem "
+            f"<code>{html.escape(source)}</code> "
+            f"({html.escape(THRESHOLD_SOURCE_LABELS_PT.get(source, '?'))})</li>"
+        )
+    return '<ul class="thresholds">' + "".join(items) + "</ul>"
 
 
 def _sink_fields(sink: InspectionSink) -> dict[str, str]:

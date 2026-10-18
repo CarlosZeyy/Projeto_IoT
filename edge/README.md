@@ -1,10 +1,10 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-010, SPEC-025)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-010, SPEC-025)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
 Estado atual:
 
-- o inferenciador real (ONNX) ainda não existe (SPEC-008). Sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
+- o inferenciador real é o `onnxruntime` na CPU, carregado de `MODEL_DIR` (SPEC-008, seção "Trocar o modelo"). Sem `MODEL_DIR` e sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
 - as inspeções aceitas vão para um `InMemorySink`, que só guarda em memória e não envia nada para lugar nenhum. O outbox e o envio para a nuvem são da SPEC-009;
 - o modo coleta (SPEC-010) monta o dataset: funciona sem modelo e não chama o inferenciador nem o sink (seção "Modo coleta").
 
@@ -15,12 +15,13 @@ uv sync --package qc-edge                                         # ou: uv sync 
 cp .env.example .env                                              # uma vez; ajuste o bloco qc-edge
 uv run --env-file .env --package qc-edge qc-edge --stub-model     # resultado falso, para testar a captura
 uv run --package qc-edge qc-edge                                  # sem .env: tudo no padrão, sem modelo
+MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o modelo real
 ```
 
 - O `qc-edge` não lê o `.env` sozinho: use `--env-file .env` ou exporte as variáveis.
 - Abra o console **no próprio notebook**, em <http://127.0.0.1:8000/> ou <http://localhost:8000/> (troque `8000` pelo seu `EDGE_PORT`). Ele só responde ao loopback (`127.0.0.1`/`::1`), recusa com 403 requisições com `X-Forwarded-For`, `Forwarded` ou `CF-Connecting-IP` e só aceita o header `Host` `127.0.0.1:<porta>`, `localhost:<porta>` ou `[::1]:<porta>`: outro nome ou IP na barra de endereço (inclusive o IP da LAN do próprio notebook) recebe 403. Isso impede que uma página hostil aberta no navegador do notebook leia o token por DNS rebinding (SPEC-025). O console mostra o QR code, a URL de pareamento, os outros IPs da máquina (links `/?ip=...`), o estado do modelo e do sink e as 10 últimas inspeções da sessão. Ele recarrega a cada 5 s, e os IPs são detectados de novo a cada recarga (útil ao trocar para o hotspot).
-- `--stub-model` responde sempre parafuso/bom (`model_version = stub-v0`). É só para desenvolvimento e **nunca** publica na nuvem (R-06).
-- Códigos de saída: `2` para configuração inválida (a mensagem cita a variável, nunca o valor) ou argumento desconhecido na linha de comando (o log cita só o nome da opção, nunca o valor: `unknown command-line argument(s): --stub-modle`); `1` se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` estiver ligada no processo (SEC-04).
+- `--stub-model` responde sempre parafuso/bom (`model_version = stub-v0`). É só para desenvolvimento e **nunca** publica na nuvem (R-06). Ele tem precedência sobre `MODEL_DIR`: com os dois, o log avisa (`--stub-model takes precedence: MODEL_DIR is not loaded`) e o diretório não é carregado.
+- Códigos de saída: `2` para configuração inválida (a mensagem cita a variável, nunca o valor), argumento desconhecido na linha de comando (o log cita só o nome da opção, nunca o valor: `unknown command-line argument(s): --stub-modle`) ou `MODEL_DIR` que não carrega (o log mostra `cannot load the model: ...` com o nome do arquivo); `1` se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` estiver ligada no processo (SEC-04).
 - O log do servidor nunca mostra o token nem o `DEVICE_API_KEY`. O access log do uvicorn fica desligado, porque imprimiria a query `?t=<token>`. No lugar dele, o `qc-edge` registra uma linha por requisição, com método, rota, status e duração, sem a query.
 
 ## Variáveis (`.env`, bloco `qc-edge`)
@@ -33,7 +34,9 @@ uv run --package qc-edge qc-edge                                  # sem .env: tu
 | `DEVICE_ID` | `edge-01` | `^[a-z0-9-]{3,32}$` (sem quebra de linha final) |
 | `EDGE_DATA_DIR` | `edge/data` (relativo ao diretório atual) | criado com `0700` se não existir (um diretório que já existe não é alterado); está no `.gitignore` |
 | `DATASET_DIR` | `ml/data` (relativo ao diretório atual) | modo coleta; se existir, tem de ser um diretório. Não é criado na subida: a primeira coleta o cria com `0700`. `ml/data/` está no `.gitignore`; outro caminho deve ficar fora do repositório |
-| `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio | lidas agora, validadas nas SPECs 008 e 009 |
+| `MODEL_DIR` | vazio (sem modelo) | diretório do modelo (seção "Trocar o modelo"); o nome do diretório resolvido (alvo do link, se for um link simbólico) é o `model_version`. Definido mas inválido, inclusive só com espaços → código 2 |
+| `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio (vale o `decision.json`) | opcionais; número de 0 a 1 que sobrescreve o limiar do `decision.json` (seção "Limiares de decisão"). Fora de `[0, 1]` ou não numérico → código 2 citando a variável. Sem `MODEL_DIR`, são ignorados (com aviso no log) |
+| `DEVICE_API_KEY`, `CLOUD_API_URL`, `OUTBOX_PATH` | vazio | lidas agora, validadas na SPEC-009 |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -45,7 +48,7 @@ Variável vazia vale como não definida (o padrão vale).
 | `GET /capture?t=<token>` | token na query | página do celular; token errado → 401 "Sessão inválida. Leia o QR code no console." |
 | `GET /static/capture.js`, `/static/capture.css` | livre | arquivos da página (sem segredo, sem recurso externo) |
 | `POST /api/capture` | header `X-Session-Token` | `multipart/form-data` com `image`, `lot_id` e `mode`; no modo `collect`, `item_id`, `object_type`, `grade`, `labeler`, `angle` e `notes` no lugar do `lot_id` |
-| `GET /api/status` | header `X-Session-Token` | `device_id`, `contract_version`, `model`, `sink` |
+| `GET /api/status` | header `X-Session-Token` | `device_id`, `contract_version`, `model` (`loaded`, `model_version`, `model_sha256`, `thresholds`), `sink` |
 
 Ordem das respostas de `POST /api/capture`: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`) → imagem (415) → modelo (503 `model not loaded`). Depois: falha do inferenciador → 500 `inference failed`; falha do sink → 503 `failed to persist inspection` (a foto é apagada). O modo `collect` segue a mesma ordem até a imagem (415) e depois grava no dataset (seção "Modo coleta").
 
@@ -59,6 +62,48 @@ Limites da rota (`qc_edge/limits.py`, SPEC-007 §4.7):
 No máximo 2 decodificações acontecem ao mesmo tempo, nos dois modos. Quem passa disso espera até 10 s e recebe 503 `server busy`. A espera não ocupa thread do servidor, então o console e o `/api/status` continuam respondendo durante uma rajada de capturas (SPEC-025). A página do celular sempre reduz a foto para no máximo 1280 px no lado maior e a reencoda em JPEG (q = 0,9) antes de enviar.
 
 A foto aceita é salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD em UTC>/<inspection_id>.jpg`, com nome sempre gerado pelo servidor. Um JPEG é salvo como chegou; um PNG é reencodado em JPEG q = 90. `captures/` e as pastas de dia ficam com `0700` e as fotos com `0600`, seja qual for o `umask` (só o dono lê; `captures/` recebe `0700` a cada subida). Se o `chmod` falhar, o log mostra um `WARNING` e a captura segue. Retenção e remoção dessas fotos: `docs/dataset-protocol.md` §9.
+
+## Trocar o modelo (SPEC-008)
+
+O modelo é um diretório com os artefatos de `docs/architecture.md` §7. O **nome do diretório é o `model_version`** gravado em cada inspeção (`^[a-z0-9.-]{3,40}$`, ex.: `partqc-mnv3-v1`): ao copiar o modelo para o notebook, preserve o nome `ml/models/<model_version>/`.
+
+O `MODEL_DIR` é resolvido antes de tudo (links simbólicos, `.` e `..`; a barra final não conta), e os arquivos são lidos do diretório resolvido. Por isso o `model_version` é o nome do **diretório alvo**, e não o do link: com `MODEL_DIR=ml/models/atual` e o link `atual → partqc-mnv3-v1`, as inspeções levam `partqc-mnv3-v1`. Trocar o modelo apontando um link de nome fixo para outro diretório funciona, e cada inspeção continua com a versão real. Um link para um diretório com nome fora da regex (ex.: `Dummy_V1`) impede a subida, mesmo que o nome do link seja válido.
+
+`MODEL_DIR` vazio (`MODEL_DIR=`) significa "sem modelo". O valor não é aparado: um `MODEL_DIR` só com espaços conta como definido e, como não é um diretório, a subida sai com código 2 (`cannot load the model: MODEL_DIR: not a directory`). Um caminho inexistente, um link quebrado ou um laço de links dão a mesma mensagem.
+
+| Arquivo | O que a borda confere na subida |
+|---|---|
+| `model.onnx` | carrega no `onnxruntime` (CPU), tem uma entrada `image` e as saídas `type_probs` e `grade_probs`; uma inferência de aquecimento com zeros `[1, 3, crop, crop]`, com o `crop` do `preprocessing.json` (a mesma forma que cada inferência envia; `[1,3,224,224]` com o `crop` padrão), tem de devolver as formas `[1, T]` (T = número de tipos do `labels.json`) e `[1, 5]`. Um `crop` que a entrada do modelo não aceita (ex.: `crop=256` com entrada fixa `[N,3,224,224]`) falha aqui, na subida, e não em cada captura; um modelo com dimensões espaciais dinâmicas aceita qualquer `crop` |
+| `model.sha256` | o primeiro token (64 hexadecimais, maiúsculas ou minúsculas; aceita a saída do `sha256sum`, `<hash>  model.onnx`) é igual ao SHA-256 do `model.onnx`. Senão: `model.onnx does not match model.sha256: expected <12 caracteres>, got <12 caracteres>` |
+| `labels.json` | exatamente as chaves `object_types` e `grades`; `grades` exatamente `["perfect","good","fair","poor","unusable"]`; `object_types` sem repetição, só com `other` e os tipos do contrato (`screw`, `nut`), nunca `unknown` |
+| `preprocessing.json` | lido por `qc_preprocess.PreprocessParams.from_json` |
+| `decision.json` | exatamente as chaves `type_threshold`, `unusable_threshold` e `grade_review_threshold`, cada uma um número de 0 a 1 |
+
+Qualquer falha impede a subida com código 2 e uma mensagem com o nome do arquivo. O hash é calculado sobre os mesmos bytes que o `onnxruntime` carrega, então trocar o `model.onnx` depois da conferência não tem efeito até a próxima subida.
+
+Para trocar de modelo:
+
+1. Baixe ou copie o diretório inteiro para `ml/models/<model_version>/` (o `model.onnx` não vai para o Git; ele vem do GitHub Release, conforme a SPEC-012):
+   ```bash
+   gh release download model-partqc-mnv3-v1 -p model.onnx -D ml/models/partqc-mnv3-v1
+   (cd ml/models/partqc-mnv3-v1 && sha256sum -c model.sha256)   # tem de mostrar "model.onnx: OK"
+   ```
+2. Aponte `MODEL_DIR` para ele (no `.env` ou na linha de comando) e reinicie o `qc-edge`. O modelo só é lido na subida.
+3. Confira no console (<http://127.0.0.1:8000/>) a linha **Modelo** (`carregado: <model_version> (sha256 <12 primeiros caracteres>)`) e os **Limiares de decisão**, ou no log da subida (`model loaded: model_version=... sha256=...` e uma linha `threshold ...` por limiar).
+
+### Limiares de decisão
+
+A regra de decisão (`qc_edge.decision.decide`, `docs/architecture.md` §6.2, passo 4) usa três limiares. Os valores vêm do `decision.json` do modelo (escolhidos na validação, SPEC-012) e podem ser sobrescritos por variável de ambiente, para ajuste na demo sem trocar o modelo:
+
+| Limiar | Variável | Efeito |
+|---|---|---|
+| `type_threshold` | `TYPE_THRESHOLD` | abaixo dele (comparação estrita: igual ao limiar não é `unknown`), o resultado é `unknown`; abaixo dele + 0,10, a inspeção é marcada para revisão (`needs_review`) |
+| `unusable_threshold` | `UNUSABLE_THRESHOLD` | `grade_probs[unusable]` maior ou igual a ele decide `unusable`, mesmo que outro grau tenha probabilidade maior |
+| `grade_review_threshold` | `GRADE_REVIEW_THRESHOLD` | `grade_confidence` abaixo dele marca a inspeção para revisão |
+
+O console e o `/api/status` (`model.thresholds`, `{nome: {"value", "source"}}`) mostram o valor efetivo de cada limiar e a origem: `decision.json` ou `env`.
+
+As comparações usam as probabilidades exatamente como o modelo as devolve. Só depois delas, os números gravados na inspeção são limitados às faixas do contrato: `type_confidence` e `grade_confidence` a `[0, 1]` e `grade_score` a `[0, 4]` (SPEC-008 §4.1, item 6). O `Softmax` em float32 dá, por exemplo, `p(unusable) = 1.0` com `p(poor) ≈ 6e-8`, o que faria `grade_score` passar um pouco de 4; a inspeção sai com `grade_score = 4.0`. O limite nunca muda o tipo, o grau nem o `needs_review`.
 
 ## Modo coleta (SPEC-010)
 

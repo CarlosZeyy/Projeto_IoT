@@ -1,12 +1,17 @@
 """``qc-edge`` command (SPEC-007 section 4.3): starts the gateway on the LAN.
 
-Exit codes: 2 for an invalid configuration (the message names the variable, never its value) or
-an unknown command-line argument (SPEC-025 section 4.5: only option names are logged, never a
-value); 1 when ``PIL.ImageFile.LOAD_TRUNCATED_IMAGES`` is enabled (SEC-04).
+Exit codes: 2 for an invalid configuration (the message names the variable, never its value), an
+unknown command-line argument (SPEC-025 section 4.5: only option names are logged, never a
+value) or a ``MODEL_DIR`` that cannot be loaded (SPEC-008 section 4.2: the message names the
+file); 1 when ``PIL.ImageFile.LOAD_TRUNCATED_IMAGES`` is enabled (SEC-04).
 
-With ``--stub-model`` the gateway answers with ``StubInferencer`` results. Nothing is ever
-published to the cloud in that mode (R-06): in this SPEC the sink is ``InMemorySink``, which
-sends nothing anywhere.
+Model (SPEC-008 section 4.4): ``MODEL_DIR`` set -> ``OnnxInferencer``, with the threshold
+overrides of the environment; unset or empty (``""``) -> no model (inspect mode answers 503).
+The value is not stripped: ``MODEL_DIR`` with only spaces is set, is not a directory and exits
+with code 2 (a typo in ``.env`` must not start the gateway without a model).
+``--stub-model`` takes precedence over ``MODEL_DIR`` (a warning is logged and the directory is not
+loaded): the gateway answers with ``StubInferencer`` results. Nothing is ever published to the
+cloud in that mode (R-06): the sink is ``InMemorySink``, which sends nothing anywhere.
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ from pydantic import ValidationError
 from qc_edge.app import create_app
 from qc_edge.argv import ArgumentsError, QuietArgumentParser, describe_arguments, resolve_argv
 from qc_edge.config import EdgeSettings
-from qc_edge.inference import Inferencer, StubInferencer
+from qc_edge.inference import Inferencer, StubInferencer, short_sha
+from qc_edge.onnx_inferencer import THRESHOLD_ENV_VARS, ModelLoadError, OnnxInferencer
 from qc_edge.sink import InMemorySink, InspectionSink
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -88,6 +94,47 @@ def _config_error_message(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
+def _threshold_overrides(settings: EdgeSettings) -> dict[str, float]:
+    """``{variable: value}`` of the threshold variables that are set (already in ``[0, 1]``)."""
+    overrides: dict[str, float] = {}
+    for variable in THRESHOLD_ENV_VARS.values():
+        value = getattr(settings, variable)
+        if value is not None:
+            overrides[variable] = value
+    return overrides
+
+
+def _load_inferencer(settings: EdgeSettings, stub_model: bool) -> Inferencer | None:
+    """SPEC-008 section 4.4. Exits with code 2 when ``MODEL_DIR`` cannot be loaded."""
+    overrides = _threshold_overrides(settings)
+    if stub_model:
+        if settings.MODEL_DIR is not None:
+            logger.warning("--stub-model takes precedence: MODEL_DIR is not loaded")
+        return StubInferencer()
+    if settings.MODEL_DIR is None:
+        if overrides:
+            logger.warning(
+                "no MODEL_DIR: threshold overrides ignored (%s)", ", ".join(sorted(overrides))
+            )
+        return None
+    try:
+        inferencer = OnnxInferencer(settings.MODEL_DIR, overrides=overrides)
+    except ModelLoadError as exc:
+        logger.error("cannot load the model: %s", exc)
+        sys.exit(EXIT_CONFIG_ERROR)
+    info = inferencer.model_info
+    logger.info(
+        "model loaded: model_version=%s sha256=%s",
+        info.model_version,
+        short_sha(info.model_sha256),
+    )
+    for name, source in inferencer.threshold_sources.items():
+        logger.info(
+            "threshold %s=%r (source: %s)", name, getattr(inferencer.thresholds, name), source
+        )
+    return inferencer
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Load the settings, build the app and run ``uvicorn`` on ``EDGE_HOST:EDGE_PORT``."""
     configure_logging()
@@ -98,11 +145,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         logger.error("invalid configuration: %s", _config_error_message(exc))
         sys.exit(EXIT_CONFIG_ERROR)
 
-    inferencer: Inferencer | None = StubInferencer() if args.stub_model else None
+    inferencer = _load_inferencer(settings, args.stub_model)
     sink: InspectionSink = InMemorySink()
 
-    # SEC-04: checked after every edge module (and, from SPEC-008, onnxruntime) is imported and
-    # before the server starts. No qc_edge module changes the flag.
+    # SEC-04: checked after every edge module and onnxruntime are imported (and the model is
+    # loaded) and before the server starts. No qc_edge module changes the flag.
     if ImageFile.LOAD_TRUNCATED_IMAGES:
         logger.error(
             "PIL.ImageFile.LOAD_TRUNCATED_IMAGES is enabled; refusing to start because "
