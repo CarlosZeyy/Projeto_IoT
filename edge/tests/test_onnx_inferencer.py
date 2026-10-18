@@ -104,6 +104,83 @@ def test_relative_dot_directory_and_trailing_slash(
     assert OnnxInferencer(Path(str(directory) + "/")).model_info.model_version == "dummy-v2"
 
 
+def test_symlink_gives_the_name_of_the_target(  # CA-21
+    tmp_path: Path, dummy_model: types.ModuleType
+) -> None:
+    directory = dummy_model.write_model_dir(tmp_path / "models")
+    link = tmp_path / "atual"
+    link.symlink_to(directory, target_is_directory=True)
+    inferencer = _load(link)
+    assert inferencer.model_info == ModelInfo(
+        "dummy-v1", dummy_model.sha256_of(directory / "model.onnx")
+    )
+    # A chain of links, a trailing slash and a relative link all resolve to the same target.
+    chain = tmp_path / "current"
+    chain.symlink_to(link, target_is_directory=True)
+    relative = tmp_path / "rel"
+    relative.symlink_to(Path("models") / "dummy-v1", target_is_directory=True)
+    assert _load(chain).model_info.model_version == "dummy-v1"
+    assert OnnxInferencer(Path(str(link) + "/")).model_info.model_version == "dummy-v1"
+    assert _load(relative).model_info.model_version == "dummy-v1"
+
+
+def test_symlink_to_a_directory_with_an_invalid_name(  # CA-21
+    tmp_path: Path, dummy_model: types.ModuleType
+) -> None:
+    directory = dummy_model.write_model_dir(tmp_path / "models", "Dummy_V1")
+    link = tmp_path / "atual"
+    link.symlink_to(directory, target_is_directory=True)
+    with pytest.raises(ModelLoadError, match="MODEL_DIR: the directory name is the model_version"):
+        _load(link)
+
+
+def test_valid_link_name_does_not_rescue_an_invalid_target(
+    tmp_path: Path, dummy_model: types.ModuleType
+) -> None:
+    directory = dummy_model.write_model_dir(tmp_path / "models", "ab")
+    link = tmp_path / "partqc-link-v2"
+    link.symlink_to(directory, target_is_directory=True)
+    with pytest.raises(ModelLoadError, match="MODEL_DIR"):
+        _load(link)
+
+
+def test_dot_dot_components_are_resolved(tmp_path: Path, dummy_model: types.ModuleType) -> None:
+    dummy_model.write_model_dir(tmp_path / "models")
+    (tmp_path / "other").mkdir()
+    path = tmp_path / "other" / ".." / "models" / "dummy-v1" / "."
+    assert _load(path).model_info.model_version == "dummy-v1"
+
+
+def test_files_are_read_from_the_resolved_directory(
+    tmp_path: Path, dummy_model: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = dummy_model.write_model_dir(tmp_path / "models")
+    link = tmp_path / "atual"
+    link.symlink_to(directory, target_is_directory=True)
+    opened: list[Path] = []
+    original_open = Path.open
+
+    def _spy(self: Path, *args: Any, **kwargs: Any) -> Any:
+        opened.append(self)
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _spy)
+    _load(link)
+    assert opened  # model.onnx, model.sha256 and the JSON files are opened through Path.open
+    assert all(path.parent == directory.resolve() for path in opened)
+
+
+def test_broken_link_or_link_loop_names_model_dir(tmp_path: Path) -> None:
+    broken = tmp_path / "broken-v1"
+    broken.symlink_to(tmp_path / "nowhere", target_is_directory=True)
+    loop_a, loop_b = tmp_path / "loop-a", tmp_path / "loop-b"
+    loop_a.symlink_to(loop_b, target_is_directory=True)
+    loop_b.symlink_to(loop_a, target_is_directory=True)
+    for path in (broken, loop_a, Path(str(tmp_path) + "/nul\x00-v1")):
+        with pytest.raises(ModelLoadError, match="^MODEL_DIR: not a directory$"):
+            _load(path)
+
+
 def test_model_with_type_labels_of_any_order(tmp_path: Path, dummy_model: types.ModuleType):
     directory = dummy_model.write_model_dir(
         tmp_path, object_types=("nut", "screw"), type_probs=(0.2, 0.8)
@@ -436,6 +513,66 @@ def test_the_hashed_bytes_are_the_ones_loaded(
     monkeypatch.setattr(onnx_inferencer.onnxruntime, "InferenceSession", _spy)
     _load(directory)
     assert seen == [(expected, ["CPUExecutionProvider"])]
+
+
+# ---------------------------------------------------------------- crop of preprocessing.json
+
+CROP_256 = {
+    "resize_shorter": 288,
+    "crop": 256,
+    "mean": [0.485, 0.456, 0.406],
+    "std": [0.229, 0.224, 0.225],
+}
+
+
+def test_crop_incompatible_with_a_fixed_input_fails_at_load(  # CA-22
+    tmp_path: Path, dummy_model: types.ModuleType
+) -> None:
+    directory = dummy_model.write_model_dir(tmp_path, preprocessing=CROP_256)
+    with pytest.raises(ModelLoadError, match=r"model\.onnx: warm-up inference failed"):
+        _load(directory)
+
+
+def test_warm_up_uses_the_crop_of_preprocessing(
+    tmp_path: Path, dummy_model: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = dummy_model.build_model(input_shape=dummy_model.DYNAMIC_INPUT_SHAPE)
+    directory = dummy_model.write_model_dir(tmp_path, model=model, preprocessing=CROP_256)
+    shapes: list[tuple[int, ...]] = []
+    original = onnx_inferencer.onnxruntime.InferenceSession
+
+    class _Session:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._session = original(*args, **kwargs)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._session, name)
+
+        def run(self, names: Any, feeds: dict[str, Any]) -> Any:
+            shapes.append(tuple(feeds["image"].shape))
+            return self._session.run(names, feeds)
+
+    monkeypatch.setattr(onnx_inferencer.onnxruntime, "InferenceSession", _Session)
+    _load(directory)
+    assert shapes == [(1, 3, 256, 256)]
+
+
+def test_dynamic_input_accepts_any_crop(  # CA-22
+    tmp_path: Path, dummy_model: types.ModuleType, photo: Image.Image
+) -> None:
+    model = dummy_model.build_model(input_shape=dummy_model.DYNAMIC_INPUT_SHAPE)
+    directory = dummy_model.write_model_dir(tmp_path, model=model, preprocessing=CROP_256)
+    inferencer = _load(directory)
+    result = inferencer.infer(photo)
+    assert (result.object_type, result.grade) == (ObjectType.SCREW, Grade.GOOD)
+
+
+def test_fixed_input_with_the_default_crop_still_loads(
+    tmp_path: Path, dummy_model: types.ModuleType, photo: Image.Image
+) -> None:
+    params = {**CROP_256, "resize_shorter": 256, "crop": 224}
+    directory = dummy_model.write_model_dir(tmp_path, preprocessing=params)
+    assert _load(directory).infer(photo).object_type is ObjectType.SCREW
 
 
 # ---------------------------------------------------------------- inference

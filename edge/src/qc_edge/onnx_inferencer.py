@@ -8,8 +8,9 @@ never the full path); ``qc-edge`` logs it and exits with code 2.
 
 The model bytes are read once, in blocks: the SHA-256 is computed over those bytes and the same
 bytes are given to ``onnxruntime``, so the file that runs is the one that was checked even if it
-changes on disk in between. ``model_version`` is the name of the model directory
-(docs/architecture.md section 7).
+changes on disk in between. ``MODEL_DIR`` is resolved first (symbolic links, ``.`` and ``..``) and
+every file is read from the resolved directory, whose name is the ``model_version``
+(docs/architecture.md section 7): a link ``current -> partqc-mnv3-v1`` gives ``partqc-mnv3-v1``.
 
 ``infer`` is safe to call from several threads: ``InferenceSession.run`` is thread-safe, and the
 preprocessing and the decision are pure functions over immutable state.
@@ -21,7 +22,6 @@ import hashlib
 import json
 import math
 import numbers
-import os
 import re
 import time
 from collections.abc import Mapping
@@ -58,7 +58,6 @@ INPUT_NAME = "image"
 TYPE_OUTPUT = "type_probs"
 GRADE_OUTPUT = "grade_probs"
 OUTPUT_NAMES = [TYPE_OUTPUT, GRADE_OUTPUT]
-WARMUP_SHAPE = (1, 3, 224, 224)
 PROVIDERS = ["CPUExecutionProvider"]
 
 # Environment variable of each threshold override (docs/architecture.md section 6.4).
@@ -232,9 +231,24 @@ def _apply_overrides(
     return sources
 
 
+def _resolve_model_dir(model_dir: Path) -> Path:
+    """Section 4.2, item 3 (done before item 1): ``MODEL_DIR`` with every symbolic link, ``.`` and
+    ``..`` resolved. A path that does not exist or is not a directory names ``MODEL_DIR``."""
+    try:
+        resolved = Path(model_dir).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        # OSError: missing or unreadable; RuntimeError: a link loop (Python 3.12); ValueError: a
+        # NUL byte. The path itself is never echoed.
+        raise ModelLoadError("MODEL_DIR: not a directory") from None
+    if not resolved.is_dir():
+        raise ModelLoadError("MODEL_DIR: not a directory")
+    return resolved
+
+
 def _model_version(model_dir: Path) -> str:
-    """Section 4.2, item 3: the directory name (``.`` and ``..`` resolved, links not followed)."""
-    name = Path(os.path.abspath(model_dir)).name
+    """Section 4.2, item 3: the name of the resolved model directory, checked with the contract
+    pattern."""
+    name = model_dir.name
     if re.fullmatch(MODEL_VERSION_PATTERN, name) is None:
         raise ModelLoadError(
             f"MODEL_DIR: the directory name is the model_version and must match "
@@ -243,8 +257,12 @@ def _model_version(model_dir: Path) -> str:
     return name
 
 
-def _create_session(model: bytes, type_count: int) -> onnxruntime.InferenceSession:
-    """Section 4.2, item 7: CPU session, names, and a warm-up run that checks the shapes."""
+def _create_session(model: bytes, type_count: int, crop: int) -> onnxruntime.InferenceSession:
+    """Section 4.2, item 7: CPU session, names, and a warm-up run that checks the shapes.
+
+    The warm-up input is zeros ``[1, 3, crop, crop]``, the shape ``infer`` will send, so a ``crop``
+    that the model input does not accept fails here, at load time, naming ``model.onnx``.
+    """
     try:
         session = onnxruntime.InferenceSession(model, providers=PROVIDERS)
     except Exception as exc:  # onnxruntime raises its own types, all derived from Exception
@@ -258,7 +276,7 @@ def _create_session(model: bytes, type_count: int) -> onnxruntime.InferenceSessi
         raise ModelLoadError(f"{MODEL_FILE}: missing outputs {missing}")
     try:
         type_out, grade_out = session.run(
-            OUTPUT_NAMES, {INPUT_NAME: np.zeros(WARMUP_SHAPE, dtype=np.float32)}
+            OUTPUT_NAMES, {INPUT_NAME: np.zeros((1, 3, crop, crop), dtype=np.float32)}
         )
     except Exception as exc:
         raise ModelLoadError(f"{MODEL_FILE}: warm-up inference failed ({_brief(exc)})") from None
@@ -291,7 +309,7 @@ class OnnxInferencer:
     """``onnxruntime`` (CPU) inferencer over a model directory (SPEC-008).
 
     Attributes:
-        model_info: ``ModelInfo(<directory name>, <sha256 of model.onnx, lowercase>)``.
+        model_info: ``ModelInfo(<resolved directory name>, <sha256 of model.onnx, lowercase>)``.
         labels: class order of the outputs (``labels.json``).
         thresholds: the effective thresholds (``decision.json``, then the overrides).
         threshold_sources: ``{threshold name: "decision.json" | "env"}``.
@@ -307,9 +325,8 @@ class OnnxInferencer:
     """
 
     def __init__(self, model_dir: Path, overrides: dict[str, float] | None = None) -> None:
-        model_dir = Path(model_dir)
-        if not model_dir.is_dir():
-            raise ModelLoadError("MODEL_DIR: not a directory")
+        # 3 (first half). Resolve links, ``.`` and ``..``; every file is read from here on.
+        model_dir = _resolve_model_dir(model_dir)
         # 1. Every artifact is there.
         missing = [name for name in REQUIRED_FILES if not (model_dir / name).is_file()]
         if missing:
@@ -322,7 +339,7 @@ class OnnxInferencer:
                 f"{MODEL_FILE} does not match {SHA256_FILE}: expected {short_sha(expected)}, "
                 f"got {short_sha(actual)}"
             )
-        # 3. model_version = directory name.
+        # 3. model_version = name of the resolved directory.
         model_version = _model_version(model_dir)
         # 4 to 6. Labels, preprocessing and thresholds.
         labels = _load_labels(model_dir / LABELS_FILE)
@@ -330,7 +347,7 @@ class OnnxInferencer:
         values = _load_decision(model_dir / DECISION_FILE)
         sources = _apply_overrides(values, overrides)
         # 7. onnxruntime session and warm-up.
-        session = _create_session(model, len(labels.object_types))
+        session = _create_session(model, len(labels.object_types), params.crop)
 
         self.model_info = ModelInfo(model_version=model_version, model_sha256=actual)
         self.labels = labels

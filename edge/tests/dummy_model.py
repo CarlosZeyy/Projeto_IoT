@@ -32,6 +32,9 @@ GRADES = ("perfect", "good", "fair", "poor", "unusable")
 TYPE_PROBS = (0.9, 0.05, 0.05)
 GRADE_PROBS = (0.05, 0.8, 0.05, 0.05, 0.05)
 DECISION = {"type_threshold": 0.5, "unusable_threshold": 0.4, "grade_review_threshold": 0.6}
+# Input shapes: spatial dimensions fixed at 224 (default) or dynamic (SPEC-008 section 6, CA-22).
+FIXED_INPUT_SHAPE: tuple[str | int, ...] = ("N", 3, 224, 224)
+DYNAMIC_INPUT_SHAPE: tuple[str | int, ...] = ("N", 3, "H", "W")
 PREPROCESSING = {
     "resize_shorter": 256,
     "crop": 224,
@@ -49,11 +52,13 @@ def build_model(
     grade_output: str = "grade_probs",
     opset: int = OPSET,
     ir_version: int = IR_VERSION,
+    input_shape: Sequence[str | int] = FIXED_INPUT_SHAPE,
 ) -> onnx.ModelProto:
-    """Model with input ``[N, 3, 224, 224]`` and constant outputs ``[N, T]`` and ``[N, G]``.
+    """Model with input ``input_shape`` and constant outputs ``[N, T]`` and ``[N, G]``.
 
     ``T`` and ``G`` are the lengths of ``type_probs`` and ``grade_probs``: a vector of the wrong
-    length gives a model of the wrong shape (CA-13).
+    length gives a model of the wrong shape (CA-13). The input is ``[N, 3, 224, 224]`` by default;
+    ``DYNAMIC_INPUT_SHAPE`` declares dynamic spatial dimensions (``ReduceMean`` takes any size).
     """
     types = np.asarray([list(type_probs)], dtype=np.float32)
     grades = np.asarray([list(grade_probs)], dtype=np.float32)
@@ -73,7 +78,7 @@ def build_model(
     graph = helper.make_graph(
         nodes,
         "partqc-dummy",
-        [helper.make_tensor_value_info(input_name, TensorProto.FLOAT, ["N", 3, 224, 224])],
+        [helper.make_tensor_value_info(input_name, TensorProto.FLOAT, list(input_shape))],
         [
             helper.make_tensor_value_info(type_output, TensorProto.FLOAT, ["N", types.shape[1]]),
             helper.make_tensor_value_info(grade_output, TensorProto.FLOAT, ["N", grades.shape[1]]),
