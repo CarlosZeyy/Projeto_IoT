@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Test |
+| Status | Blocked |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | — |
