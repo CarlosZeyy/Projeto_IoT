@@ -1,4 +1,4 @@
-"""Fixtures of the qc-dashboard author tests (SPEC-013).
+"""Fixtures of the qc-dashboard author tests (SPEC-013, SPEC-028).
 
 Only the HTTP boundary is mocked: ``httpx.MockTransport`` answers with bodies built from the
 ``qc_contracts`` models and records every request. No test touches the network. Keys are
@@ -188,6 +188,8 @@ class MockApi:
         self.inspections: list[InspectionRead] = [inspection()]
         self.inspections_total: int | None = None
         self.failure: Callable[[httpx.Request], httpx.Response] | None = None
+        # Routes (without the /api/v1 prefix) that time out while the others answer.
+        self.timing_out: set[str] = set()
 
     def _summary(self, request: httpx.Request) -> MetricsSummary:
         if request.url.params.get("source") == "simulated":
@@ -199,6 +201,8 @@ class MockApi:
         if self.failure is not None:
             return self.failure(request)
         path = request.url.path.removeprefix(api.API_PREFIX)
+        if path in self.timing_out:
+            raise httpx.ReadTimeout("timed out", request=request)
         if path == "/metrics/summary":
             return httpx.Response(200, json=self._summary(request).model_dump(mode="json"))
         if path == "/metrics/timeseries":
@@ -225,6 +229,29 @@ class MockApi:
 
     def to(self, path: str) -> list[httpx.Request]:
         return [r for r in self.requests if r.url.path == api.API_PREFIX + path]
+
+
+class MissingSecrets:
+    """Behaves like ``st.secrets`` without a secrets file."""
+
+    def __contains__(self, key: object) -> bool:
+        raise FileNotFoundError("No secrets found")
+
+    def __getitem__(self, key: str) -> object:
+        raise FileNotFoundError("No secrets found")
+
+
+@pytest.fixture(autouse=True)
+def _no_local_secrets_file(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Author tests never read a local ``.streamlit/secrets.toml`` (SPEC-028 §4.6).
+
+    The README recommends that file at the repository root, which is also where pytest runs;
+    Streamlit would read it, and the tests would depend on the machine. The acceptance tests
+    (``tests/acceptance/``, the tester's) keep their own isolation and are not touched.
+    """
+    if "acceptance" in request.node.path.parts:
+        return
+    monkeypatch.setattr(st, "secrets", MissingSecrets())
 
 
 @pytest.fixture(autouse=True)

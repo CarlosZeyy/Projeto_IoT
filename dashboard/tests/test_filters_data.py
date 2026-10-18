@@ -1,13 +1,19 @@
-"""Pure parts of ``qc_dashboard.filters`` and the cache of ``qc_dashboard.data`` (SPEC-013)."""
+"""Pure parts of ``qc_dashboard.filters`` and the cache of ``qc_dashboard.data``.
+
+SPEC-013 and SPEC-028 (§4.2 and §4.3).
+"""
 
 from __future__ import annotations
 
+import ast
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import httpx
 import pytest
 import streamlit as st
 
+from qc_contracts import Source
 from qc_dashboard import data, filters
 from qc_dashboard.api import ApiUnavailable, Filters
 
@@ -95,3 +101,79 @@ def test_errors_are_not_cached(mock_api, factory) -> None:
     mock_api.failure = None
     assert data.fetch_summary(Filters()).total == 40
     assert len(mock_api.requests) == 2
+
+
+# ---------- SPEC-028 §4.2 and §4.3 ----------
+
+
+def test_chart_badge_follows_only_the_chart_origin(mock_api) -> None:
+    assert filters.render_chart_badge(Source.SIMULATED) is True
+    assert filters.render_chart_badge(Source.LIVE) is False
+    assert mock_api.requests == []
+
+
+def test_spc_origin_caption() -> None:
+    assert filters.spc_origin_caption(Source.LIVE) == "Origem da carta: real"
+    assert filters.spc_origin_caption("simulated") == "Origem da carta: simulado"
+
+
+def test_badge_or_error_does_not_raise_and_is_conservative(mock_api) -> None:
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    mock_api.failure = timeout
+    assert filters.render_badge_or_error(Filters()) is True
+    mock_api.failure = lambda request: httpx.Response(401, json={"detail": "x"})
+    assert filters.render_badge_or_error(Filters()) is True
+    mock_api.failure = None
+    assert filters.render_badge_or_error(Filters()) is False
+    assert filters.render_badge_or_error(Filters(source="simulated")) is True
+
+
+def test_badge_or_error_without_configuration(no_config_env) -> None:
+    assert filters.render_badge_or_error(Filters()) is True
+    assert filters.render_badge_or_error(Filters(source="live")) is False
+
+
+def test_retry_only_reruns(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(st.cache_data, "clear", lambda: calls.append("clear"))
+    monkeypatch.setattr(st, "rerun", lambda: calls.append("rerun"))
+    filters._retry()
+    assert calls == ["rerun"]
+
+
+def test_every_cached_read_has_max_entries() -> None:
+    """Each ``@st.cache_data`` of ``data.py`` has ``ttl``, ``max_entries=256`` and no spinner."""
+    tree = ast.parse(Path(data.__file__).read_text(encoding="utf-8"))
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    assert {f.name for f in functions} == {
+        "fetch_health",
+        "fetch_summary",
+        "fetch_timeseries",
+        "fetch_spc",
+        "fetch_inspections",
+        "fetch_lots",
+    }
+    for function in functions:
+        (decorator,) = function.decorator_list
+        assert ast.unparse(decorator.func) == "st.cache_data", function.name
+        keywords = {k.arg: ast.unparse(k.value) for k in decorator.keywords}
+        assert keywords == {
+            "ttl": "CACHE_TTL_SECONDS",
+            "max_entries": "CACHE_MAX_ENTRIES",
+            "show_spinner": "False",
+        }, function.name
+    assert data.CACHE_MAX_ENTRIES == 256
+
+
+def test_full_cache_drops_the_oldest_entry(mock_api) -> None:
+    lots = [f"L-{i:03d}" for i in range(data.CACHE_MAX_ENTRIES + 1)]
+    for lot in lots:
+        data.fetch_summary(Filters(lot_id=lot))
+    assert len(mock_api.requests) == 257
+    data.fetch_summary(Filters(lot_id=lots[-1]))
+    assert len(mock_api.requests) == 257
+    data.fetch_summary(Filters(lot_id=lots[0]))
+    assert len(mock_api.requests) == 258
+    assert mock_api.requests[-1].url.params["lot_id"] == "L-000"

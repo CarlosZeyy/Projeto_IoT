@@ -3,6 +3,11 @@
 One SPC request per render, with a single ``source``, and one figure (R-06): the ``live`` and
 ``simulated`` charts are never drawn together. The chart uses the whole history of the origin;
 the sidebar period does not apply.
+
+The badge follows only the chart origin, and the origin is always written under the title,
+outside the figure (SPEC-028 §4.3). In a new session the chart starts in ``Real``; it follows
+the sidebar (``Simulado`` there -> ``Simulado`` here; ``Real`` or ``Todos`` -> ``Real``), and the
+user can change it in the "Origem da carta" radio.
 """
 
 from __future__ import annotations
@@ -82,6 +87,7 @@ def _number(label: str, key: str, bounds: tuple[int, int, int], column) -> int:
 
 st.title("Controle estatístico")
 selected = filters.render_sidebar()
+origin_caption_slot = st.empty()
 badge_slot = st.container()
 st.caption(PERIOD_CAPTION)
 _sync_origin_with_sidebar(selected.source)
@@ -110,12 +116,16 @@ max_points = _number("Lotes na carta", KEY_MAX_POINTS, MAX_POINTS_RANGE, control
 
 source = SOURCE_BY_ORIGIN[origin]
 
+# Badge if, and only if, the chart is simulated; no badge check through the API (§4.3).
+with badge_slot:
+    filters.render_chart_badge(source)
+origin_caption_slot.caption(filters.spc_origin_caption(source))
+
 with filters.api_guard():
-    with badge_slot:
-        filters.render_badge(selected, simulated=source is Source.SIMULATED)
     spc = data.fetch_spc(
         source, TYPE_BY_OPTION[type_option], baseline_lots, min_lot_size, max_points
     )
+origin_caption_slot.caption(filters.spc_origin_caption(spc.source))
 
 if spc.excluded_lots:
     listed = ", ".join(f"{lot.lot_id} (n={lot.n})" for lot in spc.excluded_lots)
@@ -140,7 +150,7 @@ if valid_total is not None and valid_total > len(spc.points):
         f"A linha central usa os primeiros {spc.baseline_lots} lotes válidos do histórico."
     )
 
-st.plotly_chart(charts.p_chart(spc), key="spc_chart")
+st.plotly_chart(charts.p_chart(spc), key="spc_chart", config=charts.plotly_config())
 st.dataframe(
     pd.DataFrame(formatting.spc_rows(spc), columns=list(formatting.SPC_COLUMNS)),
     hide_index=True,
