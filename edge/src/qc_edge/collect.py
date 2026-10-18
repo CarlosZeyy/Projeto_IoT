@@ -9,6 +9,11 @@ Every field that becomes part of a file name or path is validated with ``re.full
 equality, before anything touches the disk (``docs/architecture.md`` section 3.2). Everything this
 module creates under ``DATASET_DIR`` gets an exact mode, whatever the ``umask``: ``0700`` for
 directories and ``0600`` for files (SEC-06, R-14).
+
+SPEC-025: a JPEG is stored without its private segments (APP1, APP13, COM and the bytes after
+the EOI, ``qc_edge.jpeg.strip_private_segments``), every new directory entry is made durable with
+``fsync_dir`` before the manifest row is appended (SEC-10-02), and ``notes`` and
+``capture_device`` never carry line separators nor bidi controls (SEC-10-03).
 """
 
 from __future__ import annotations
@@ -28,11 +33,20 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import BinaryIO
 
 from PIL import Image
 
 from qc_contracts import GRADE_ORDER, Grade
-from qc_edge.jpeg import write_capture_jpeg
+from qc_edge import jpeg
+from qc_edge.fsutil import (
+    FILE_MODE,
+    create_private_file,
+    fsync_dir,
+    make_private_dirs,
+    set_mode,
+)
+from qc_edge.jpeg import JPEG_SIGNATURE, JpegStructureError, write_capture_jpeg
 
 logger = logging.getLogger("qc_edge")
 
@@ -60,12 +74,11 @@ LABELERS = frozenset({"a", "b"})
 GRADE_VALUES = frozenset(grade.value for grade in Grade)
 NOTES_MAX_LENGTH = 200
 CAPTURE_DEVICE_MAX_LENGTH = 60
-# Unicode categories refused in ``notes``: control characters (C0, DEL, C1, including "\r", "\n"
-# and "\t") and lone surrogates (they cannot be written as UTF-8).
-_FORBIDDEN_NOTE_CATEGORIES = frozenset({"Cc", "Cs"})
-
-DIR_MODE = 0o700
-FILE_MODE = 0o600
+# Unicode categories refused in ``notes`` and replaced by a space in ``capture_device``: control
+# characters (C0, DEL, C1, including "\r", "\n" and "\t"), lone surrogates (they cannot be
+# written as UTF-8), format characters (bidi controls, soft hyphen) and the line and paragraph
+# separators U+2028/U+2029 (SPEC-025 section 4.11).
+FORBIDDEN_TEXT_CATEGORIES = frozenset({"Cc", "Cs", "Cf", "Zl", "Zp"})
 
 FILE_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 CAPTURED_AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -145,6 +158,13 @@ class DatasetWriteError(CollectError):
     detail = "failed to write dataset"
 
 
+class UnsupportedJpegStructureError(CollectError):
+    """415: ``load_capture_image`` accepted the JPEG, but its markers cannot be walked."""
+
+    status_code = 415
+    detail = "invalid image: unsupported JPEG structure"
+
+
 # -------------------------------------------------------------------------------------- request
 
 
@@ -216,10 +236,24 @@ def _parse_grade(value: object, object_type: DatasetObjectType) -> Grade | None:
     return Grade(value)
 
 
+def _is_forbidden_char(char: str) -> bool:
+    return unicodedata.category(char) in FORBIDDEN_TEXT_CATEGORIES
+
+
 def _valid_notes(notes: str) -> bool:
     if len(notes) > NOTES_MAX_LENGTH:
         return False
-    return not any(unicodedata.category(char) in _FORBIDDEN_NOTE_CATEGORIES for char in notes)
+    return not any(_is_forbidden_char(char) for char in notes)
+
+
+def capture_device_from_user_agent(user_agent: str) -> str:
+    """``capture_device`` of the manifest (SPEC-025 section 4.11).
+
+    Each character of a forbidden category becomes a space, and only then the value is cut to
+    ``CAPTURE_DEVICE_MAX_LENGTH`` characters. The ``User-Agent`` never refuses a capture.
+    """
+    cleaned = "".join(" " if _is_forbidden_char(char) else char for char in user_agent)
+    return cleaned[:CAPTURE_DEVICE_MAX_LENGTH]
 
 
 @dataclass(frozen=True)
@@ -329,43 +363,43 @@ def _coverage_key(row: Mapping[str, str | None]) -> _CellKey | None:
 # --------------------------------------------------------------------------------------- writer
 
 
-def _set_mode(path: Path, mode: int, fd: int | None = None) -> None:
-    """Exact mode on something this module created; a failure is a WARNING, not an error."""
-    try:
-        if fd is None:
-            os.chmod(path, mode)
-        else:
-            os.fchmod(fd, mode)
-    except OSError as exc:
-        logger.warning("cannot set mode %s on %s: %s", oct(mode), path, exc.strerror or exc)
-
-
-def _make_dirs(path: Path) -> None:
-    """Create ``path`` and its missing parents; only the ones created here get ``0700``."""
-    missing: list[Path] = []
-    current = path
-    while not os.path.lexists(current):
-        missing.append(current)
-        current = current.parent
-    for directory in reversed(missing):
-        try:
-            directory.mkdir(mode=DIR_MODE)
-        except FileExistsError:  # created meanwhile by someone else: not ours, left as it is
-            continue
-        _set_mode(directory, DIR_MODE)
-
-
-def _open_file(path: Path, flags: int) -> tuple[int, bool]:
+def open_private_file(path: Path, flags: int) -> tuple[int, bool]:
     """Open ``path`` (never through a symlink), creating it with ``0600`` when missing.
 
     Returns the descriptor and whether this call created the file.
     """
     try:
-        fd = os.open(path, flags | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, FILE_MODE)
+        fd = create_private_file(path, flags)
     except FileExistsError:
         return os.open(path, flags | os.O_NOFOLLOW), False
-    _set_mode(path, FILE_MODE, fd)
     return fd, True
+
+
+@contextlib.contextmanager
+def manifest_file_lock(dataset_dir: Path) -> Iterator[None]:
+    """``fcntl.flock`` on ``dataset_dir/manifest.csv.lock`` (created with ``0600``).
+
+    The same lock serialises the collect mode and ``python -m qc_edge.privacy --fix``.
+    """
+    fd, _ = open_private_file(dataset_dir / MANIFEST_LOCK_NAME, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # also releases the flock
+
+
+def dataset_image_bytes(data: bytes) -> bytes:
+    """Bytes stored for an uploaded image: a JPEG without its private segments; a PNG as is
+    (``write_capture_jpeg`` re-encodes it).
+
+    Raises:
+        JpegStructureError: the JPEG markers cannot be walked.
+    """
+    if data.startswith(JPEG_SIGNATURE):
+        # Looked up at call time on the module (SPEC-025 CA-16 replaces it in the tests).
+        return jpeg.strip_private_segments(data)
+    return data
 
 
 def _csv_line(values: tuple[str, ...]) -> str:
@@ -408,30 +442,31 @@ class DatasetWriter:
         """Save the image and append its manifest row.
 
         ``data`` is the uploaded file and ``image`` its decoded form (``load_capture_image``):
-        a JPEG is written as received, a PNG re-encoded as JPEG q=90.
+        a JPEG is written without its private segments (``dataset_image_bytes``), a PNG
+        re-encoded as JPEG q=90.
 
         Raises:
+            UnsupportedJpegStructureError: 415, checked before the disk is touched.
             ManifestHeaderMismatchError, ManifestUnreadableError: 500, nothing written.
             ItemTypeConflictError, CaptureExistsError: 409, nothing written.
             DatasetWriteError: 500; an image already written is removed.
         """
         try:
+            data = dataset_image_bytes(data)
+        except JpegStructureError:
+            raise UnsupportedJpegStructureError() from None
+        try:
             with self._lock:
-                _make_dirs(self._root)
-                with self._file_lock():
+                self._make_dirs(self._root)
+                with manifest_file_lock(self._root):
                     return self._write_locked(request, data, image, capture_device)
         except OSError as exc:
             logger.error("collect not stored: %s (%s)", type(exc).__name__, exc.strerror or exc)
             raise DatasetWriteError() from exc
 
-    @contextlib.contextmanager
-    def _file_lock(self) -> Iterator[None]:
-        fd, _ = _open_file(self._root / MANIFEST_LOCK_NAME, os.O_RDWR)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            os.close(fd)  # also releases the flock
+    def _make_dirs(self, path: Path) -> None:
+        """Missing directories with ``0700``; the parent of each one gets ``fsync_dir``."""
+        make_private_dirs(path, sync=True, relative_to=self._root)
 
     def _write_locked(
         self, request: CollectRequest, data: bytes, image: Image.Image, capture_device: str
@@ -451,7 +486,7 @@ class DatasetWriter:
         if os.path.lexists(target):
             raise CaptureExistsError()
 
-        _make_dirs(target.parent)
+        self._make_dirs(target.parent)
         self._save_image(target, data, image)  # 4. image
         row = (
             image_path,
@@ -509,19 +544,13 @@ class DatasetWriter:
             raise ManifestUnreadableError() from None
 
     def _save_image(self, target: Path, data: bytes, image: Image.Image) -> None:
-        """Temporary file (``0600``) in the same directory, then ``rename`` (keeps the mode)."""
-        fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
-        tmp = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                _set_mode(tmp, FILE_MODE, handle.fileno())
-                write_capture_jpeg(handle, data, image)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.rename(tmp, target)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+        """Temporary file (``0600``) in the same directory, then ``rename`` (keeps the mode).
+
+        The directory gets ``fsync_dir`` after the ``rename``, before the manifest row.
+        """
+        write_private_file_atomically(
+            target, lambda handle: write_capture_jpeg(handle, data, image), root=self._root
+        )
 
     def _append(self, row: tuple[str, ...]) -> None:
         """Append ``row``; creates the manifest (``0600``, with the header) when missing.
@@ -530,7 +559,7 @@ class DatasetWriter:
         created it), so a half-written row never stays behind.
         """
         line = _csv_line(row)
-        fd, created = _open_file(self.manifest_path, os.O_RDWR | os.O_APPEND)
+        fd, created = open_private_file(self.manifest_path, os.O_RDWR | os.O_APPEND)
         size = 0
         try:
             size = os.fstat(fd).st_size
@@ -540,6 +569,8 @@ class DatasetWriter:
                 line = "\n" + line  # a hand-edited manifest without the final line break
             _write_all(fd, line.encode("utf-8"))
             os.fsync(fd)
+            if created:  # the new directory entry of the manifest (SPEC-025 section 4.10)
+                fsync_dir(self._root, relative_to=self._root)
         except BaseException:
             if created:
                 self.manifest_path.unlink(missing_ok=True)
@@ -549,3 +580,28 @@ class DatasetWriter:
             raise
         finally:
             os.close(fd)
+
+
+def write_private_file_atomically(
+    target: Path, write: Callable[[BinaryIO], object], *, root: Path
+) -> None:
+    """Write ``target`` through a temporary file (``0600``) in the same directory.
+
+    ``write`` fills the temporary file, which then gets ``fsync``, ``os.replace`` over
+    ``target`` and ``fsync_dir`` of the directory (shown relative to ``root`` in a warning).
+    On failure the temporary file is removed and ``target`` is left untouched.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            # mkstemp creates the file with 0600 minus the umask: the mode is set exactly.
+            set_mode(tmp, FILE_MODE, handle.fileno())
+            write(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    fsync_dir(target.parent, relative_to=root)

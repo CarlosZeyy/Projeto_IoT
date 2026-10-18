@@ -149,14 +149,78 @@ def test_stub_model_flag(edge_env: Path, uvicorn_spy: _UvicornSpy, jpeg_bytes: b
     assert response.json()["inspection"]["model_version"] == "stub-v0"
 
 
-def test_unknown_arguments_are_ignored(
-    edge_env: Path, uvicorn_spy: _UvicornSpy, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("argv", "shown"),
+    [
+        (["--stub-modle"], "--stub-modle"),
+        (["-q", "--stub", "--opt=hidden-value", "edge/tests"], "-q, --stub, --opt, 1 other"),
+        (["--Token=hidden-value"], "1 other"),
+        (["--" + "x" * 40], "1 other"),
+        (["hidden-value"], "1 other"),
+    ],
+)
+def test_unknown_arguments_exit_2_without_values(
+    edge_env: Path,
+    uvicorn_spy: _UvicornSpy,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    shown: str,
 ) -> None:
-    with caplog.at_level(logging.WARNING, logger="qc_edge"):
-        cli.main(["-q", "--stub", "--opt=hidden-value", "edge/tests"])
-    assert len(uvicorn_spy.calls) == 1
-    assert "ignoring 4 unknown command-line argument(s): -q --stub --opt" in caplog.text
-    assert "hidden-value" not in caplog.text
+    loaded: list[bool] = []
+    monkeypatch.setattr(cli, "EdgeSettings", lambda: loaded.append(True))
+    with caplog.at_level(logging.INFO, logger="qc_edge"), pytest.raises(SystemExit) as excinfo:
+        cli.main(argv)
+    assert excinfo.value.code == 2
+    assert uvicorn_spy.calls == []
+    assert loaded == []  # the configuration is not even loaded
+    assert f"unknown command-line argument(s): {shown}" in caplog.text
+    captured = capsys.readouterr()
+    for text in (caplog.text, captured.out, captured.err):
+        assert "hidden-value" not in text
+        assert "x" * 40 not in text
+
+
+def test_argparse_errors_never_echo_the_value(
+    edge_env: Path,
+    uvicorn_spy: _UvicornSpy,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # argparse itself would print "ignored explicit argument 'hidden-value'".
+    with caplog.at_level(logging.INFO, logger="qc_edge"), pytest.raises(SystemExit) as excinfo:
+        cli.main(["--stub-model=hidden-value"])
+    assert excinfo.value.code == 2
+    assert uvicorn_spy.calls == []
+    assert "invalid command-line argument(s): --stub-model" in caplog.text
+    captured = capsys.readouterr()
+    for text in (caplog.text, captured.out, captured.err):
+        assert "hidden-value" not in text
+
+
+def test_help_still_exits_0(edge_env: Path, uvicorn_spy: _UvicornSpy, capsys: Any) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--help"])
+    assert excinfo.value.code == 0
+    assert "--stub-model" in capsys.readouterr().out
+    assert uvicorn_spy.calls == []
+
+
+@pytest.mark.parametrize("value", ["::", "::1", "fe80::1", "localhost"])
+def test_ipv6_or_name_edge_host_exits_2(
+    edge_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    uvicorn_spy: _UvicornSpy,
+    value: str,
+) -> None:
+    monkeypatch.setenv("EDGE_HOST", value)
+    with caplog.at_level(logging.INFO, logger="qc_edge"), pytest.raises(SystemExit) as excinfo:
+        cli.main([])
+    assert excinfo.value.code == 2
+    assert "EDGE_HOST" in caplog.text
+    assert uvicorn_spy.calls == []
 
 
 def test_main_without_argv_reads_sys_argv(
@@ -187,7 +251,9 @@ def test_logs_never_contain_the_token_or_the_device_key(
     with caplog.at_level(logging.DEBUG):
         cli.main(["--stub-model"])
         ((app, _),) = uvicorn_spy.calls
-        with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        with TestClient(
+            app, client=("127.0.0.1", 50000), base_url="http://127.0.0.1:8000"
+        ) as client:
             client.get(f"/capture?t={token}")
             client.get("/")
             for headers, image in (

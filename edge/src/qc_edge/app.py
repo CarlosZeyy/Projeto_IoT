@@ -10,6 +10,10 @@ collect-mode images and the manifest under ``DATASET_DIR``, and no route serves 
 Only the ``InspectionCreate`` of the inspect mode goes to the sink; the collect mode never calls
 the inferencer nor the sink. The session token is never logged (R-03); the request log records
 the route without the query string.
+
+SPEC-025: the console also requires a loopback ``Host`` (DNS rebinding, SEC-01); the wait for a
+decode slot happens on the event loop, and only the request holding a slot uses a worker thread
+(SEC-03); ``captures/`` and its day directories are ``0700`` and the photos ``0600`` (SEC-06).
 """
 
 # No ``from __future__ import annotations`` here: FastAPI resolves the ``Depends`` annotations of
@@ -19,6 +23,7 @@ import csv
 import html
 import logging
 import math
+import os
 import re
 import threading
 import uuid
@@ -32,6 +37,8 @@ from string import Template
 from typing import Annotated, Any
 from urllib.parse import quote
 
+import anyio
+import anyio.to_thread
 import qrcode
 import qrcode.image.svg
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -53,9 +60,8 @@ from qc_contracts import (
     is_defective,
 )
 from qc_contracts import __version__ as contract_version
-from qc_edge import netinfo
+from qc_edge import limits, netinfo
 from qc_edge.collect import (
-    CAPTURE_DEVICE_MAX_LENGTH,
     GRADED_MIN_ITEMS,
     GRADED_TARGET_IMAGES,
     GRADED_TARGET_ITEMS,
@@ -67,12 +73,14 @@ from qc_edge.collect import (
     DatasetObjectType,
     DatasetWriter,
     InvalidCollectFieldError,
+    capture_device_from_user_agent,
     empty_coverage,
 )
 from qc_edge.config import EdgeSettings
+from qc_edge.fsutil import DIR_MODE, create_private_file, make_private_dirs, set_mode
 from qc_edge.inference import InferenceError, Inferencer
 from qc_edge.jpeg import write_capture_jpeg
-from qc_edge.limits import CAPTURE_MAX_BYTES, CAPTURE_MAX_REQUEST_BYTES, load_capture_image
+from qc_edge.limits import CAPTURE_MAX_BYTES, CAPTURE_MAX_REQUEST_BYTES
 from qc_edge.middleware import (
     BodySizeLimitMiddleware,
     RequestLogMiddleware,
@@ -81,6 +89,7 @@ from qc_edge.middleware import (
 from qc_edge.security import (
     SESSION_TOKEN_HEADER,
     SESSION_TOKEN_QUERY,
+    is_allowed_console_host,
     resolve_session_token,
     token_matches,
 )
@@ -229,18 +238,30 @@ class _CaptureStore:
     File names are always generated here (``<inspection_id>.jpg``); nothing from the client is
     used. The lock covers "create the day directory and the file" and "remove the file and the
     empty day directory", so a cleanup never removes a directory another request is writing to.
+    Directories created here are ``0700`` and photos ``0600``, whatever the ``umask`` (SPEC-025
+    section 4.4); the JPEG is written as received (only the collect mode strips metadata).
     """
 
     def __init__(self, data_dir: Path) -> None:
         self._root = data_dir / CAPTURES_SUBDIR
         self._lock = threading.Lock()
 
+    def prepare(self) -> None:
+        """Startup: ``captures/`` created with ``0700`` when missing, or set to ``0700``."""
+        try:
+            created = make_private_dirs(self._root)
+        except OSError as exc:
+            logger.warning("cannot create %s: %s", self._root, exc.strerror or exc)
+            return
+        if self._root not in created:
+            set_mode(self._root, DIR_MODE)
+
     def save(self, inspection: InspectionCreate, data: bytes, image: Image.Image) -> Path:
         day_dir = self._root / inspection.inspected_at.astimezone(UTC).strftime("%Y-%m-%d")
         path = day_dir / f"{inspection.inspection_id}.jpg"
         with self._lock:
-            day_dir.mkdir(parents=True, exist_ok=True)
-            handle = path.open("xb")
+            make_private_dirs(day_dir)
+            handle = os.fdopen(create_private_file(path), "wb")
         try:
             with handle:
                 write_capture_jpeg(handle, data, image)
@@ -279,7 +300,9 @@ def create_app(
     _validate_limiter(max_concurrent_decodes, decode_wait_s)
 
     session_token = resolve_session_token(settings)
-    decode_slots = threading.BoundedSemaphore(max_concurrent_decodes)
+    # SEC-03 (SPEC-025 section 4.2): created outside an event loop, the anyio semaphore binds to
+    # the loop on first use. The wait for a slot happens on the event loop, never in a thread.
+    decode_slots = anyio.Semaphore(max_concurrent_decodes, max_value=max_concurrent_decodes)
     recent: deque[RecentInspection] = deque(maxlen=RECENT_INSPECTIONS)
     recent_lock = threading.Lock()
     store = _CaptureStore(settings.EDGE_DATA_DIR)
@@ -297,6 +320,7 @@ def create_app(
                 "PIL.ImageFile.LOAD_TRUNCATED_IMAGES is enabled; the edge gateway refuses to "
                 "start because truncated images would be accepted"
             )
+        store.prepare()  # SEC-06: captures/ is 0700 before any request is served
         started: list[BackgroundService] = []
         try:
             for service in services:
@@ -381,7 +405,9 @@ def create_app(
                 lot_id=None,
                 mode=capture_mode,
                 collect=collect_request,
-                capture_device=request.headers.get("user-agent", "")[:CAPTURE_DEVICE_MAX_LENGTH],
+                capture_device=capture_device_from_user_agent(
+                    request.headers.get("user-agent", "")
+                ),
             )
         if not isinstance(lot_id, str) or re.fullmatch(LOT_ID_PATTERN, lot_id) is None:
             raise _unprocessable("lot_id")
@@ -390,7 +416,7 @@ def create_app(
     def decode(data: bytes) -> Image.Image | JSONResponse:
         """``load_capture_image`` (415 or 500 as a response); called holding a decode slot."""
         try:
-            return load_capture_image(data)
+            return limits.load_capture_image(data)
         except InvalidImageError as exc:
             logger.info("capture refused: invalid image (%s)", exc)
             return _error(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"invalid image: {exc}")
@@ -400,7 +426,11 @@ def create_app(
             return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, DETAIL_INTERNAL)
 
     def collect(form: CaptureForm) -> JSONResponse:
-        """SPEC-010 section 4.2; runs while holding a decode slot. No inferencer, no sink."""
+        """SPEC-010 section 4.2; runs in a worker thread holding a decode slot.
+
+        No inferencer, no sink. The JPEG is stored without its private segments (SPEC-025
+        section 4.8); a JPEG whose markers cannot be walked is a 415, with nothing written.
+        """
         if form.collect is None:  # read_capture_form always sets it in collect mode
             return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, DETAIL_INTERNAL)
         image = decode(form.image)
@@ -422,7 +452,7 @@ def create_app(
         )
 
     def inspect(form: CaptureForm) -> JSONResponse:
-        """Steps 3 to 8 of section 4.5; runs while holding a decode slot."""
+        """Steps 3 to 8 of section 4.5; runs in a worker thread holding a decode slot."""
         image = decode(form.image)
         if isinstance(image, JSONResponse):
             return image
@@ -503,17 +533,25 @@ def create_app(
         )
 
     @app.post("/api/capture")
-    def capture(form: Annotated[CaptureForm, Depends(read_capture_form)]) -> JSONResponse:
-        """Synchronous on purpose: decoding, inference and file writes run in the threadpool."""
-        # SEC-02: every decode of qc_edge (header probe included) holds one of these slots, in
-        # both modes (SPEC-010 section 4.1).
-        if not decode_slots.acquire(timeout=decode_wait_s):
+    async def capture(form: Annotated[CaptureForm, Depends(read_capture_form)]) -> JSONResponse:
+        """Waits for a decode slot on the event loop, then runs the blocking work in one thread.
+
+        SEC-02: every decode of qc_edge (header probe included) holds one of these slots, in both
+        modes (SPEC-010 section 4.1). SEC-03: a request waiting for a slot uses no worker thread,
+        so the console and ``/api/status`` keep answering during a burst.
+        """
+        acquired = False
+        with anyio.move_on_after(decode_wait_s):
+            await decode_slots.acquire()
+            acquired = True
+        if not acquired:
             logger.warning("capture refused: no decode slot within %.1f s", decode_wait_s)
             return _error(status.HTTP_503_SERVICE_UNAVAILABLE, DETAIL_SERVER_BUSY)
         try:
-            if form.mode is CaptureMode.COLLECT:
-                return collect(form)
-            return inspect(form)
+            work = collect if form.mode is CaptureMode.COLLECT else inspect
+            # A single call; abandon_on_cancel stays False, so a client that disconnects keeps
+            # the slot until the thread really finishes.
+            return await anyio.to_thread.run_sync(work, form)
         finally:
             decode_slots.release()
 
@@ -549,7 +587,7 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def console(request: Request) -> HTMLResponse:
-        if not _is_local_console_request(request):
+        if not _is_local_console_request(request, settings.EDGE_PORT):
             return HTMLResponse(
                 FORBIDDEN_HTML, status_code=status.HTTP_403_FORBIDDEN, headers=PAGE_HEADERS
             )
@@ -639,12 +677,23 @@ def _unprocessable(field: str) -> HTTPException:
     )
 
 
-def _is_local_console_request(request: Request) -> bool:
-    """Loopback client and no proxy header (docs/architecture.md sections 8 and 9)."""
+def _is_local_console_request(request: Request, port: int) -> bool:
+    """Loopback client, no proxy header and one loopback ``Host`` (docs/architecture.md §9).
+
+    The ``Host`` check (SPEC-025 section 4.1) stops DNS rebinding: a hostile page whose name
+    resolves to ``127.0.0.1`` connects from the loopback, but sends its own name as ``Host``.
+    """
     client = request.client
     if client is None or client.host not in LOOPBACK_HOSTS:
         return False
-    return not any(name in request.headers for name in PROXY_HEADERS)
+    if any(name in request.headers for name in PROXY_HEADERS):
+        return False
+    hosts = request.headers.getlist("host")
+    if len(hosts) != 1 or not is_allowed_console_host(hosts[0], port):
+        # The value comes from the client: only the reason is logged.
+        logger.warning("console refused: host not allowed")
+        return False
+    return True
 
 
 def _model_state(inferencer: Inferencer | None) -> str:

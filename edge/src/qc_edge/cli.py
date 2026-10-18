@@ -1,7 +1,8 @@
 """``qc-edge`` command (SPEC-007 section 4.3): starts the gateway on the LAN.
 
-Exit codes: 2 for an invalid configuration (the message names the variable, never its value);
-1 when ``PIL.ImageFile.LOAD_TRUNCATED_IMAGES`` is enabled (SEC-04).
+Exit codes: 2 for an invalid configuration (the message names the variable, never its value) or
+an unknown command-line argument (SPEC-025 section 4.5: only option names are logged, never a
+value); 1 when ``PIL.ImageFile.LOAD_TRUNCATED_IMAGES`` is enabled (SEC-04).
 
 With ``--stub-model`` the gateway answers with ``StubInferencer`` results. Nothing is ever
 published to the cloud in that mode (R-06): in this SPEC the sink is ``InMemorySink``, which
@@ -21,6 +22,7 @@ from PIL import ImageFile
 from pydantic import ValidationError
 
 from qc_edge.app import create_app
+from qc_edge.argv import ArgumentsError, QuietArgumentParser, describe_arguments, resolve_argv
 from qc_edge.config import EdgeSettings
 from qc_edge.inference import Inferencer, StubInferencer
 from qc_edge.sink import InMemorySink, InspectionSink
@@ -53,7 +55,12 @@ def configure_logging() -> None:
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
+    """Parse the command line; any unknown or invalid argument exits with 2.
+
+    Neither the log nor the stderr ever shows a value from the command line (R-03).
+    """
+    arguments = resolve_argv(argv)
+    parser = QuietArgumentParser(
         prog="qc-edge", description="PartQC edge gateway (LAN)", allow_abbrev=False
     )
     parser.add_argument(
@@ -61,16 +68,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="answer with a fixed stub result (development only; nothing is published)",
     )
-    # Unknown arguments are ignored with a warning, so ``main()`` can be called from a host
-    # process with its own command line (e.g. tests).
-    args, unknown = parser.parse_known_args(argv)
-    flags = [arg.split("=", 1)[0] for arg in unknown if arg.startswith("-")]
+    try:
+        args, unknown = parser.parse_known_args(arguments)
+    except ArgumentsError:
+        logger.error("invalid command-line argument(s): %s", describe_arguments(arguments))
+        sys.exit(EXIT_CONFIG_ERROR)
     if unknown:
-        logger.warning(
-            "ignoring %d unknown command-line argument(s)%s",
-            len(unknown),
-            f": {' '.join(flags)}" if flags else "",
-        )
+        logger.error("unknown command-line argument(s): %s", describe_arguments(unknown))
+        sys.exit(EXIT_CONFIG_ERROR)
     return args
 
 

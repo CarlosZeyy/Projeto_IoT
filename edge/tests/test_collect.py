@@ -1,8 +1,10 @@
-"""qc_edge.collect: validation, paths, manifest, permissions, lock and coverage (SPEC-010)."""
+"""qc_edge.collect: validation, paths, manifest, permissions, lock and coverage (SPEC-010);
+metadata removal, directory fsync and text filters (SPEC-025)."""
 
 from __future__ import annotations
 
 import csv
+import errno
 import io
 import logging
 import os
@@ -18,6 +20,7 @@ from PIL import Image
 
 from qc_contracts import Grade
 from qc_edge import collect as collect_module
+from qc_edge import jpeg as jpeg_module
 from qc_edge.collect import (
     MANIFEST_COLUMNS,
     CaptureExistsError,
@@ -29,9 +32,13 @@ from qc_edge.collect import (
     ItemTypeConflictError,
     ManifestHeaderMismatchError,
     ManifestUnreadableError,
+    UnsupportedJpegStructureError,
+    capture_device_from_user_agent,
     compute_coverage,
     empty_coverage,
 )
+from qc_edge.fsutil import fsync_dir
+from qc_edge.jpeg import JpegStructureError, strip_private_segments
 from qc_preprocess import load_image
 
 NOW = datetime(2026, 10, 22, 14, 15, 3, tzinfo=UTC)
@@ -708,3 +715,164 @@ def test_write_waits_for_the_file_lock_of_another_holder(
     thread.join(timeout=5)
     assert done.is_set()
     assert len(_rows(root)) == 1
+
+
+# ------------------------------------------------------ SPEC-025 sections 4.8, 4.10 and 4.11
+
+
+@pytest.mark.parametrize("char", [" ", " ", "‪", "‮", "⁦", "⁩", "‎", "‏", "؜", "­", "﻿"])
+def test_notes_refuse_separators_and_format_characters(char: str) -> None:
+    with pytest.raises(InvalidCollectFieldError) as excinfo:
+        _request(notes=f"dúvida {char} fair")
+    assert excinfo.value.field == "notes"
+
+
+def test_notes_keep_other_unicode_verbatim() -> None:
+    text = "dúvida fair/poor — ç ã 日本 🙂  "
+    assert _request(notes=text).notes == text
+
+
+@pytest.mark.parametrize(
+    ("user_agent", "expected"),
+    [
+        ("Phone\x85X\tY" + "z" * 70, "Phone X Y" + "z" * 51),
+        ("A B C‮D­E", "A B C D E"),
+        ("M" * 80, "M" * 60),
+        ("", ""),
+        ("Mozilla/5.0 (Linux; Android 14) ç", "Mozilla/5.0 (Linux; Android 14) ç"),
+        ("\x00" * 70, " " * 60),
+    ],
+)
+def test_capture_device_replaces_controls_before_the_cut(user_agent: str, expected: str) -> None:
+    assert capture_device_from_user_agent(user_agent) == expected
+
+
+def test_metadata_jpeg_is_stored_clean(
+    make_writer: Callable[..., DatasetWriter], root: Path, jpeg_tools: Any
+) -> None:
+    data, marker = jpeg_tools.with_metadata()
+    image = load_image(data)
+    result = make_writer().write(_request(), data, image, "")
+    stored = (root / result.image_path).read_bytes()
+    assert stored == strip_private_segments(data)
+    for needle in (b"Exif\x00\x00", b"ns.adobe.com", b"Photoshop 3.0", marker, b"ftypmp42"):
+        assert needle not in stored
+    assert jpeg_tools.pixels(stored).tolist() == jpeg_tools.pixels(data).tolist()
+
+
+def test_clean_jpeg_is_stored_byte_for_byte(
+    make_writer: Callable[..., DatasetWriter], root: Path
+) -> None:
+    data, image = _encoded()
+    result = make_writer().write(_request(), data, image, "")
+    assert (root / result.image_path).read_bytes() == data
+
+
+def test_unwalkable_jpeg_is_415_before_touching_the_disk(
+    make_writer: Callable[..., DatasetWriter], root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(data: bytes) -> bytes:
+        raise JpegStructureError("unsupported")
+
+    monkeypatch.setattr(jpeg_module, "strip_private_segments", broken)
+    data, image = _encoded()
+    with pytest.raises(UnsupportedJpegStructureError) as excinfo:
+        make_writer().write(_request(), data, image, "")
+    assert excinfo.value.status_code == 415
+    assert excinfo.value.detail == "invalid image: unsupported JPEG structure"
+    assert not root.exists()
+
+
+def test_png_is_never_walked(
+    make_writer: Callable[..., DatasetWriter], root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(data: bytes) -> bytes:
+        raise AssertionError("PNG must not be walked as JPEG")
+
+    monkeypatch.setattr(jpeg_module, "strip_private_segments", broken)
+    data, image = _encoded("PNG")
+    result = make_writer().write(_request(), data, image, "")
+    assert (root / result.image_path).read_bytes().startswith(b"\xff\xd8\xff")
+
+
+class _FsyncSpy:
+    """Records the path of every ``os.fsync``; optionally refuses directories."""
+
+    def __init__(self, refuse_dirs: bool = False) -> None:
+        self.paths: list[str] = []
+        self.refuse_dirs = refuse_dirs
+        self.original = os.fsync
+
+    def __call__(self, fd: int) -> None:
+        path = os.readlink(f"/proc/self/fd/{fd}")
+        self.paths.append(path)
+        if self.refuse_dirs and stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "Invalid argument")
+        self.original(fd)
+
+
+def test_directories_are_synced_in_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "dataset"
+    spy = _FsyncSpy()
+    monkeypatch.setattr(os, "fsync", spy)
+    data, image = _encoded()
+    result = DatasetWriter(root, clock=_Clock()).write(_request(), data, image, "")
+    paths = [Path(p) for p in spy.paths]
+    image_dir = root / "raw/screw/fair"
+    created_parents = [tmp_path, root, root / "raw", root / "raw/screw"]
+    assert paths[:4] == created_parents
+    temp = paths[4]
+    assert temp.parent == image_dir and temp.name.startswith(".")
+    assert paths[5:] == [image_dir, root / "manifest.csv", root]
+    assert (root / result.image_path).is_file()
+
+
+def test_existing_manifest_is_not_followed_by_a_directory_sync(
+    make_writer: Callable[..., DatasetWriter], root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writer = make_writer(_Clock(step=timedelta(seconds=1)))
+    data, image = _encoded()
+    writer.write(_request(), data, image, "")
+    spy = _FsyncSpy()
+    monkeypatch.setattr(os, "fsync", spy)
+    writer.write(_request(angle="3"), data, image, "")
+    paths = [Path(p) for p in spy.paths]
+    assert paths[1:] == [root / "raw/screw/fair", root / "manifest.csv"]
+
+
+def test_directory_sync_failures_are_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    root = tmp_path / "dataset"
+    spy = _FsyncSpy(refuse_dirs=True)
+    monkeypatch.setattr(os, "fsync", spy)
+    data, image = _encoded()
+    with caplog.at_level(logging.WARNING, logger="qc_edge"):
+        result = DatasetWriter(root, clock=_Clock()).write(_request(), data, image, "")
+    assert (root / result.image_path).is_file()
+    assert len(_rows(root)) == 1
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    fsync_warnings = [w for w in warnings if w.startswith("cannot fsync directory")]
+    assert len(fsync_warnings) == 6  # parent, root, raw, raw/screw, raw/screw/fair, root
+    assert all("Invalid argument" in w for w in fsync_warnings)
+    assert "cannot fsync directory raw/screw/fair: Invalid argument" in fsync_warnings
+    assert all(str(tmp_path) not in w for w in fsync_warnings)
+
+
+def test_fsync_dir_open_failure_is_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="qc_edge"):
+        fsync_dir(tmp_path / "missing", relative_to=tmp_path)
+    assert "cannot fsync directory missing" in caplog.text
+
+
+def test_manifest_has_one_line_per_record(
+    make_writer: Callable[..., DatasetWriter], root: Path
+) -> None:
+    data, image = _encoded()
+    device = capture_device_from_user_agent("Phone\x85X Y\tZ")
+    make_writer().write(_request(notes='a, "b" c'), data, image, device)
+    text = (root / "manifest.csv").read_text(encoding="utf-8")
+    assert len(text.splitlines()) == 2
+    assert _rows(root)[0]["capture_device"] == "Phone X Y Z"

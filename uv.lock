@@ -1197,6 +1197,7 @@ name = "qc-edge"
 version = "0.0.0"
 source = { editable = "edge" }
 dependencies = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "onnxruntime" },
@@ -1210,6 +1211,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.15" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "onnxruntime" },

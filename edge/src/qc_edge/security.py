@@ -1,4 +1,5 @@
-"""Session token of the capture page (SPEC-007 section 4.3, docs/architecture.md section 6.1).
+"""Session token of the capture page (SPEC-007 section 4.3, docs/architecture.md section 6.1)
+and the ``Host`` rule of the console (SPEC-025 section 4.1).
 
 The token comes from ``EDGE_SESSION_TOKEN`` or is generated at startup with
 ``secrets.token_urlsafe(32)`` (43 URL-safe characters). It is compared in constant time and never
@@ -16,6 +17,9 @@ SESSION_TOKEN_QUERY = "t"
 GENERATED_TOKEN_BYTES = 32
 # Longer values are refused before the comparison (a generated token has 43 characters).
 MAX_TOKEN_LENGTH = 512
+# Names of this machine accepted in the ``Host`` of the console (SPEC-025 section 4.1).
+CONSOLE_HOST_NAMES = ("127.0.0.1", "localhost", "[::1]")
+DEFAULT_HTTP_PORT = 80
 
 
 def resolve_session_token(settings: EdgeSettings) -> str:
@@ -33,3 +37,18 @@ def token_matches(provided: str | None, expected: str) -> bool:
     return secrets.compare_digest(
         provided.encode("utf-8", "surrogatepass"), expected.encode("utf-8", "surrogatepass")
     )
+
+
+def is_allowed_console_host(host: str | None, port: int) -> bool:
+    """``True`` only for ``127.0.0.1``, ``localhost`` or ``[::1]`` followed by ``:<port>``.
+
+    The comparison ignores ASCII case and nothing else: no ``strip()``, no name resolution, no
+    prefix or suffix match (``localhost.`` and ``127.0.0.1.nip.io`` are refused). With
+    ``port == 80`` the names are also accepted without a port, as browsers omit the default one.
+    """
+    if not host or not host.isascii():
+        return False
+    value = host.lower()
+    if value in {f"{name}:{port}" for name in CONSOLE_HOST_NAMES}:
+        return True
+    return port == DEFAULT_HTTP_PORT and value in CONSOLE_HOST_NAMES
