@@ -1,8 +1,9 @@
 """Where accepted inspections go before the response (SPEC-007 section 4.2).
 
-``SqliteOutbox`` (the durable sink) and its publisher come with SPEC-009. Here there is only the
-``InspectionSink`` protocol, the ``InMemorySink`` used by this SPEC and the ``BackgroundService``
-protocol that the app starts and stops with its lifespan.
+Here there are the ``InspectionSink`` protocol, the ``InMemorySink`` (tests; nothing is ever sent)
+and the ``BackgroundService`` protocol that the app starts and stops with its lifespan. The durable
+sink used by ``qc-edge`` is ``qc_edge.outbox.SqliteOutbox`` and its publisher is
+``qc_edge.publish_loop.PublishLoop`` (SPEC-009).
 """
 
 from __future__ import annotations

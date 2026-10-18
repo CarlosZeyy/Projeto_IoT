@@ -17,6 +17,10 @@ characters of the SHA-256) and the effective decision thresholds with their sour
 SPEC-025: the console also requires a loopback ``Host`` (DNS rebinding, SEC-01); the wait for a
 decode slot happens on the event loop, and only the request holding a slot uses a worker thread
 (SEC-03); ``captures/`` and its day directories are ``0700`` and the photos ``0600`` (SEC-06).
+
+SPEC-009: the sink is the SQLite outbox; the console shows its ``pending`` and ``dead`` counts, the
+last successful publication and the cloud connectivity (PT-BR label, with the code in
+``data-connectivity``), and ``/api/status`` returns the same ``SinkStats``.
 """
 
 # No ``from __future__ import annotations`` here: FastAPI resolves the ``Depends`` annotations of
@@ -157,6 +161,10 @@ CONNECTIVITY_LABELS_PT = {
     "offline": "offline",
     "auth_error": "erro de autenticação",
     "disabled": "desativada (nada é enviado à nuvem)",
+}
+# SPEC-009: what the operator does about a state (only auth_error needs an action).
+CONNECTIVITY_HINTS_PT = {
+    "auth_error": "envio pausado: confira o DEVICE_API_KEY e reinicie o qc-edge",
 }
 VERDICT_APPROVED = "aprovada"
 VERDICT_REJECTED = "reprovada"
@@ -754,10 +762,15 @@ def _thresholds_html(inferencer: Inferencer | None) -> str:
 def _sink_fields(sink: InspectionSink) -> dict[str, str]:
     stats = sink.stats()
     last = stats.last_success_at
+    label = CONNECTIVITY_LABELS_PT.get(stats.connectivity, "?")
+    hint = CONNECTIVITY_HINTS_PT.get(stats.connectivity)
+    if hint is not None:
+        label = f"{label} ({hint})"
     return {
         "sink_pending": str(stats.pending),
         "sink_dead": str(stats.dead),
-        "connectivity": html.escape(CONNECTIVITY_LABELS_PT.get(stats.connectivity, "?")),
+        "connectivity": html.escape(label),
+        "connectivity_code": html.escape(str(stats.connectivity), quote=True),
         "last_success_at": html.escape(
             last.astimezone().strftime("%d/%m %H:%M:%S") if last is not None else "—"
         ),
