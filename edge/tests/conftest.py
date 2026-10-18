@@ -3,14 +3,17 @@
 Images are generated in memory, never stored in the repository (R-14). The JPEG samples of
 SPEC-025 (``jpeg_tools``) insert, right after the SOI of a Pillow JPEG, an EXIF APP1 with a GPS
 IFD, an XMP APP1, an IPTC APP13 and a COM, and append a Motion-Photo-like trailer after the EOI;
-the rotated samples carry an EXIF (or XMP) ``Orientation``.
+the rotated samples carry an EXIF (or XMP) ``Orientation``. The ``dummy_model`` fixture
+(SPEC-008) gives the helper that builds dummy ONNX models and model directories.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import secrets
 import struct
+import sys
 import types
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -20,6 +23,20 @@ import pytest
 from PIL import Image, TiffImagePlugin
 
 from qc_edge.config import EdgeSettings
+
+
+def _load_dummy_model() -> types.ModuleType:
+    """``edge/tests/dummy_model.py`` loaded by path (SPEC-008; not on ``sys.path``)."""
+    name = "qc_edge_tests_dummy_model"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("dummy_model.py"))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
 
 XMP_PREFIX = b"http://ns.adobe.com/xap/1.0/\x00"
 IPTC_PREFIX = b"Photoshop 3.0\x00"
@@ -232,3 +249,10 @@ def jpeg_tools() -> types.SimpleNamespace:
         pixels=pixels,
         markers=markers,
     )
+
+
+@pytest.fixture
+def dummy_model() -> types.ModuleType:
+    """The ``edge/tests/dummy_model.py`` helper (SPEC-008): ``build_model``, ``write_model_dir``,
+    ``sha256_of`` and the default constants."""
+    return _load_dummy_model()

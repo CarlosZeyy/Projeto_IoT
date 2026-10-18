@@ -1,8 +1,9 @@
 """Inference interface of the edge (SPEC-007 section 4.2).
 
-The real ``OnnxInferencer`` and the decision rule come with SPEC-008. Here there is only the
-``Inferencer`` protocol and ``StubInferencer``, used by ``qc-edge --stub-model`` and by tests.
-A stub result is never published to the cloud (R-06).
+Here there are the ``Inferencer`` protocol and ``StubInferencer``, used by
+``qc-edge --stub-model`` and by tests; a stub result is never published to the cloud (R-06). The
+real inferencer (``qc_edge.onnx_inferencer.OnnxInferencer``) and the decision rule
+(``qc_edge.decision``) come with SPEC-008.
 """
 
 from __future__ import annotations
@@ -17,6 +18,13 @@ from qc_contracts import Grade, ObjectType
 
 STUB_MODEL_VERSION = "stub-v0"
 STUB_MODEL_SHA256 = "0" * 64
+# SPEC-008: the console, the log and the integrity errors show the first 12 characters of a hash.
+SHORT_SHA_LENGTH = 12
+
+
+def short_sha(sha256: str) -> str:
+    """The first 12 characters of a SHA-256."""
+    return sha256[:SHORT_SHA_LENGTH]
 
 
 @dataclass(frozen=True)
