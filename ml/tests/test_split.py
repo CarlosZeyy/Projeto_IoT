@@ -14,6 +14,8 @@ from qc_ml import split
 from qc_ml.data import load_manifest
 from qc_ml.errors import SplitError, SplitIntegrityError
 from qc_ml.split import (
+    item_history,
+    item_id_resolver,
     item_strata,
     load_split,
     make_split,
@@ -382,3 +384,216 @@ def test_small_stratum_of_new_items_has_a_scope(dataset: Path) -> None:
     assert result.warnings == [
         {"code": "small_stratum", "stratum": "screw/perfect", "n_items": 1, "scope": "new_items"}
     ]
+
+
+# ---------- split history (SPEC-011 §4.4, r3) ----------
+
+
+def _frame(rows: list[tuple[str, str]], name: str | None = None) -> pd.DataFrame:
+    frame = pd.DataFrame(
+        {"image_path": [r[0] for r in rows], "split": [r[1] for r in rows]}, dtype=object
+    )
+    if name is not None:
+        frame.attrs["split_file"] = name
+    return frame
+
+
+def _df(rows: list[tuple[str, str]], excluded_items: dict | None = None) -> pd.DataFrame:
+    df = pd.DataFrame({"image_path": [r[0] for r in rows], "item_id": [r[1] for r in rows]})
+    if excluded_items is not None:
+        df.attrs["excluded_items"] = excluded_items
+    return df
+
+
+SPEC010 = "raw/screw/good/S-007__0__20261022T140000Z.jpg"
+
+
+def test_resolver_sources_and_precedence() -> None:
+    df = _df(
+        [("raw/a.jpg", "S-001"), (SPEC010, "N-002")],
+        excluded_items={
+            "raw/a.jpg": "S-009",  # source 1 wins over source 2
+            "raw/b.jpg": "N-003",
+            "raw/screw/good/S-008__1__20261022T140000Z.jpg": "N-004",  # 2 wins over 3
+            "raw/screw/good/S-005__1__20261022T140000Z.jpg": "X-1",  # invalid -> source 3
+            "raw/c.jpg": "bad",  # invalid, no file-name match -> None
+        },
+    )
+    resolve = item_id_resolver(df)
+    assert resolve("raw/a.jpg") == "S-001"
+    assert resolve(SPEC010) == "N-002"  # source 1 wins over the file name
+    assert resolve("raw/b.jpg") == "N-003"
+    assert resolve("raw/screw/good/S-008__1__20261022T140000Z.jpg") == "N-004"
+    assert resolve("raw/screw/good/S-005__1__20261022T140000Z.jpg") == "S-005"
+    assert resolve("raw/c.jpg") is None
+    assert resolve("raw/other/_/O-001__9__20261022T140000Z.jpg") is None  # angle 9
+    assert resolve("raw/other/_/O-001__0__20261022T140000Z.JPG") is None  # SPEC-010 is .jpg
+    assert item_id_resolver(_df([]))("raw/x/T-010__4__20261022T140000Z.jpg") == "T-010"
+
+
+def test_item_history_one_and_three_versions() -> None:
+    df = _df([("raw/a.jpg", "S-001"), ("raw/b.jpg", "S-002")])
+    v1 = _frame([("raw/a.jpg", "test"), (SPEC010, "val")], "split_v1.csv")
+    assert item_history([v1], df) == {"S-001": "test", "S-007": "val"}
+    v2 = _frame([("raw/a.jpg", "test")], "split_v2.csv")  # S-007 left the split
+    v3 = _frame([("raw/a.jpg", "test"), ("raw/b.jpg", "train")], "split_v3.csv")
+    assert item_history([v1, v2, v3], df) == {"S-001": "test", "S-007": "val", "S-002": "train"}
+    assert item_history([], df) == {}
+
+
+def test_item_history_conflicts_are_never_resolved() -> None:
+    df = _df([("raw/a.jpg", "S-001"), ("raw/b.jpg", "S-001")])
+    inside = _frame([("raw/a.jpg", "test"), ("raw/b.jpg", "train")], "split_v1.csv")
+    with pytest.raises(SplitIntegrityError, match="S-001") as info:
+        item_history([inside], df)
+    assert "split_v1.csv" in str(info.value)
+    v1 = _frame([("raw/a.jpg", "test")], "split_v1.csv")
+    v2 = _frame([("raw/a.jpg", "test"), ("raw/b.jpg", "val")], "split_v2.csv")
+    with pytest.raises(SplitIntegrityError) as info:
+        item_history([v1, v2], df)
+    message = str(info.value)
+    assert "S-001" in message and "split_v1.csv" in message and "split_v2.csv" in message
+    with pytest.raises(SplitIntegrityError) as info:
+        item_history([_frame([("raw/a.jpg", "test")]), _frame([("raw/b.jpg", "val")])], df)
+    assert "#0" in str(info.value) and "#1" in str(info.value)
+
+
+def _history_case(large_dataset: Path) -> tuple[pd.DataFrame, pd.DataFrame, str, str, list[str]]:
+    df = load_manifest(large_dataset)
+    v1 = make_split(df, seed=42).frame
+    items = dict(zip(df["image_path"], df["item_id"], strict=True))
+    pairs = zip(v1["image_path"], v1["split"], strict=True)
+    tests = sorted({items[p] for p, s in pairs if s == "test"})
+    p_item, q_item = tests[0], tests[1]
+    e = list(df[df["item_id"] == p_item]["image_path"])
+    v2 = make_split(df[~df["image_path"].isin(e)], seed=42, previous=v1, excluded=frozenset(e))
+    rows = df[df["item_id"] == p_item].iloc[:2]
+    new = rows.assign(image_path=["raw/new/p-1.jpg", "raw/new/p-2.jpg"])
+    df3 = pd.concat([df[~df["image_path"].isin(e)], new], ignore_index=True)
+    return df3, v2.frame, p_item, q_item, list(new["image_path"])
+
+
+def test_make_split_with_history(large_dataset: Path) -> None:
+    df3, v2, p_item, q_item, new = _history_case(large_dataset)
+    result = make_split(df3, seed=42, previous=v2, history={p_item: "test"})
+    got = dict(zip(result.frame["image_path"], result.frame["split"], strict=True))
+    assert [got[p] for p in new] == ["test", "test"]
+    assert all(got[p] == s for p, s in zip(v2["image_path"], v2["split"], strict=True))
+    # Without history the item would be new (v2 has none of its images): train/val only.
+    plain = make_split(df3, seed=42, previous=v2)
+    plain_map = dict(zip(plain.frame["image_path"], plain.frame["split"], strict=True))
+    assert {plain_map[p] for p in new} <= {"train", "val"}
+    # History entries without images in df are ignored; history never adds warnings.
+    extra = make_split(df3, seed=42, previous=v2, history={p_item: "test", "S-999": "val"})
+    assert extra.frame.equals(result.frame) and extra.warnings == result.warnings
+
+
+def test_make_split_history_validation(large_dataset: Path) -> None:
+    df3, v2, p_item, q_item, _ = _history_case(large_dataset)
+    with pytest.raises(SplitIntegrityError, match=q_item):
+        make_split(df3, seed=42, previous=v2, history={p_item: "test", q_item: "train"})
+    with pytest.raises(SplitError):
+        make_split(df3, seed=42, previous=v2, history={p_item: "holdout"})
+    with pytest.raises(SplitError):
+        make_split(df3, seed=42, history={p_item: "test"})
+    assert make_split(df3, seed=42, history={}).frame.equals(make_split(df3, seed=42).frame)
+
+
+def _snapshot(directory: Path) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in sorted(directory.iterdir())}
+
+
+def test_cli_rephoto_after_an_intermediate_split(
+    large_dataset: Path, tmp_path: Path, rows_io
+) -> None:
+    read_rows, _, write_csv = rows_io
+    splits_dir = tmp_path / "splits"
+    assert _run(large_dataset, splits_dir) == 0
+    v1 = _split_map(splits_dir / "split_v1.csv")
+    df = load_manifest(large_dataset)
+    p_t = _item_in(v1, df, "test", "screw")
+    p_v = _item_in(v1, df, "val", "nut")
+    old = _rows_of(read_rows, large_dataset, p_t) + _rows_of(read_rows, large_dataset, p_v)
+    for row in old:
+        (large_dataset / row["image_path"]).unlink()
+    write_csv(
+        large_dataset / "exclusions.csv",
+        ["image_path", "reason"],
+        [[r["image_path"], "person"] for r in old],
+    )
+    assert _run(large_dataset, splits_dir) == 0  # split_v2 without P_t and P_v
+    v2 = _split_map(splits_dir / "split_v2.csv")
+    new_t = add_synthetic_item(large_dataset, p_t, "screw", old[0]["grade"], seed=5)
+    new_v = add_synthetic_item(large_dataset, p_v, "nut", old[-1]["grade"], seed=6)
+    assert _run(large_dataset, splits_dir) == 0
+    v3 = _split_map(splits_dir / "split_v3.csv")
+    assert [v3[p] for p in new_t] == ["test", "test"]
+    assert [v3[p] for p in new_v] == ["val", "val"]
+    assert all(v3[p] == s for p, s in v2.items())
+    items = {r["image_path"]: r["item_id"] for r in read_rows(large_dataset)}
+    assert {items[p] for p, s in v3.items() if s == "test"} == {
+        items[p] for p, s in v1.items() if s == "test"
+    }
+
+
+def _two_versions(dataset: Path, splits_dir: Path) -> None:
+    assert _run(dataset, splits_dir) == 0
+    for k in range(5):
+        add_synthetic_item(dataset, f"S-{101 + k}", "screw", "fair", seed=k)
+    assert _run(dataset, splits_dir) == 0
+    add_synthetic_item(dataset, "S-120", "screw", "fair", seed=20)  # something to write
+
+
+@pytest.mark.parametrize("gone", [1, 2])
+def test_cli_gap_in_the_history(dataset: Path, tmp_path: Path, capsys, gone: int) -> None:
+    splits_dir = tmp_path / "splits"
+    _two_versions(dataset, splits_dir)
+    if gone == 2:  # a gap in the middle: v1, v3 present, v2 missing
+        (splits_dir / "split_v2.csv").rename(splits_dir / "split_v3.csv")
+        (splits_dir / "split_v2.sha256").unlink()
+    else:
+        (splits_dir / "split_v1.csv").unlink()  # .sha256 and .json stay
+    before = _snapshot(splits_dir)
+    capsys.readouterr()
+    assert _run(dataset, splits_dir) == 2
+    err = capsys.readouterr().err
+    assert "split history incomplete" in err and f"split_v{gone}.csv" in err
+    assert _snapshot(splits_dir) == before
+
+
+def test_cli_hash_mismatch_in_an_old_version(dataset: Path, tmp_path: Path, capsys) -> None:
+    splits_dir = tmp_path / "splits"
+    _two_versions(dataset, splits_dir)
+    path = splits_dir / "split_v1.csv"
+    path.write_text(path.read_text().replace(",test\n", ",train\n", 1))
+    before = _snapshot(splits_dir)
+    capsys.readouterr()
+    assert _run(dataset, splits_dir) == 2
+    assert "split_v1.csv" in capsys.readouterr().err
+    assert _snapshot(splits_dir) == before
+
+
+def test_cli_conflict_in_the_history(dataset: Path, tmp_path: Path, capsys) -> None:
+    splits_dir = tmp_path / "splits"
+    _two_versions(dataset, splits_dir)
+    v1 = _split_map(splits_dir / "split_v1.csv")
+    df = load_manifest(dataset)
+    item = _item_in(v1, df, "test", "screw")
+    paths = set(df[df["item_id"] == item]["image_path"])
+    edited = {p: ("val" if p in paths else s) for p, s in v1.items()}
+    frame = pd.DataFrame({"image_path": list(edited), "split": list(edited.values())})
+    content = split_csv_bytes(frame)
+    (splits_dir / "split_v1.csv").write_bytes(content)
+    digest = hashlib.sha256(content).hexdigest()
+    (splits_dir / "split_v1.sha256").write_text(f"{digest}  split_v1.csv\n")
+    before = _snapshot(splits_dir)
+    capsys.readouterr()
+    assert _run(dataset, splits_dir) == 2
+    err = capsys.readouterr().err
+    assert item in err and "split_v1.csv" in err and "split_v2.csv" in err
+    assert _snapshot(splits_dir) == before
+    with pytest.raises(SplitIntegrityError, match=item):
+        item_history(
+            [load_split(splits_dir / "split_v1.csv"), load_split(splits_dir / "split_v2.csv")],
+            load_manifest(dataset),
+        )

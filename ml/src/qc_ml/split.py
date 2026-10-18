@@ -22,7 +22,7 @@ import re
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path, PurePosixPath
@@ -45,6 +45,8 @@ SPLIT_COLUMNS: tuple[str, str] = ("image_path", "split")
 SPLIT_FILE_PATTERN = re.compile(r"split_v([1-9][0-9]*)\.csv")
 # File name written by the collect mode (SPEC-010): <item_id>__<angle>__<ts>.jpg.
 IMAGE_FILE_PATTERN = re.compile(r"([SNOT]-[0-9]{3})__[0-4]__[0-9]{8}T[0-9]{6}Z\.jpg")
+# A valid item_id (SPEC-011 §4.4, source 2): excluded rows skip the row checks of load_manifest.
+ITEM_ID_PATTERN = re.compile(r"[SNOT]-[0-9]{3}")
 DEFAULT_RATIOS: tuple[float, float, float] = (0.70, 0.15, 0.15)
 OUTDATED_MESSAGE = "split outdated: run qc_ml.split"
 MIN_STRATUM_ITEMS = 3
@@ -153,28 +155,69 @@ def _previous_map(previous: pd.DataFrame) -> dict[str, str]:
     return mapping
 
 
-def _previous_item_ids(
-    prev: dict[str, str], df: pd.DataFrame, excluded_items: dict[str, str]
-) -> dict[str, str]:
-    """``item_id`` of each image of the previous split, when it can be known.
+def item_id_resolver(df: pd.DataFrame) -> Callable[[str], str | None]:
+    """Resolve the ``item_id`` of an image of a previous split (SPEC-011 §4.4, sources).
 
-    Sources, in order: the current rows of ``df``; the excluded manifest rows
-    (``df.attrs["excluded_items"]``, set by ``load_manifest``); the SPEC-010 file name
-    ``<item_id>__<angle>__<ts>.jpg`` (an image removed from the manifest). An image without any of
-    them is left out.
+    The first source that gives a result wins:
+
+    1. the row of ``df`` with that ``image_path``, including a row that is in ``excluded``;
+    2. ``df.attrs["excluded_items"]`` (set by ``load_manifest``), only if the ``item_id`` matches
+       ``[SNOT]-[0-9]{3}``; otherwise the image goes on to source 3;
+    3. the SPEC-010 file name ``<item_id>__<angle>__<ts>.jpg`` (last path component).
+
+    An image without any source resolves to ``None`` and is ignored by the callers.
     """
-    current = dict(zip(df["image_path"], df["item_id"], strict=True))
-    items: dict[str, str] = {}
-    for image_path in prev:
-        if image_path in current:
-            items[image_path] = str(current[image_path])
-        elif image_path in excluded_items:
-            items[image_path] = str(excluded_items[image_path])
-        else:
-            match = IMAGE_FILE_PATTERN.fullmatch(PurePosixPath(image_path).name)
-            if match:
-                items[image_path] = match.group(1)
-    return items
+    rows = {str(p): str(i) for p, i in zip(df["image_path"], df["item_id"], strict=True)}
+    excluded_items = df.attrs.get("excluded_items") or {}
+
+    def resolve(image_path: str) -> str | None:
+        if image_path in rows:
+            return rows[image_path]
+        item_id = excluded_items.get(image_path)
+        if isinstance(item_id, str) and ITEM_ID_PATTERN.fullmatch(item_id):
+            return item_id
+        match = IMAGE_FILE_PATTERN.fullmatch(PurePosixPath(image_path).name)
+        return match.group(1) if match else None
+
+    return resolve
+
+
+def item_history(splits: Sequence[pd.DataFrame], df: pd.DataFrame) -> dict[str, str]:
+    """``item_id -> split`` over every split version in ``splits`` (SPEC-011 §4.4).
+
+    Each frame is in the ``load_split`` format; the ``item_id`` of each ``image_path`` comes from
+    ``item_id_resolver(df)``. No file is read and no hash is checked here.
+
+    Raises:
+        SplitIntegrityError: an item has images in two or more splits, over all rows of all
+            frames (inside one frame too). The message has the ``item_id`` and, for each split,
+            the files it came from (``attrs["split_file"]``, or ``#<index in the list>``). The
+            conflict is never resolved here.
+    """
+    resolve = item_id_resolver(df)
+    seen: dict[str, dict[str, list[str]]] = defaultdict(dict)
+    for index, frame in enumerate(splits):
+        source = str(frame.attrs.get("split_file") or f"#{index}")
+        for image_path, split in zip(frame["image_path"], frame["split"], strict=True):
+            item_id = resolve(str(image_path))
+            if item_id is None:
+                continue
+            files = seen[item_id].setdefault(str(split), [])
+            if source not in files:
+                files.append(source)
+    conflicts = []
+    for item_id in sorted(seen):
+        by_split = seen[item_id]
+        if len(by_split) > 1:
+            where = "; ".join(
+                f"{split} in {', '.join(by_split[split])}" for split in sorted(by_split)
+            )
+            conflicts.append(f"item {item_id} is in more than one split: {where}")
+    if conflicts:
+        raise SplitIntegrityError(
+            "split history conflict (R-11; never resolved automatically): " + " | ".join(conflicts)
+        )
+    return {item_id: next(iter(by_split)) for item_id, by_split in seen.items()}
 
 
 def check_item_integrity(df: pd.DataFrame, splits: Sequence[str] | pd.Series) -> None:
@@ -193,6 +236,7 @@ def make_split(
     ratios: tuple[float, float, float] = DEFAULT_RATIOS,
     previous: pd.DataFrame | None = None,
     excluded: frozenset[str] = frozenset(),
+    history: Mapping[str, str] | None = None,
 ) -> SplitResult:
     """Split ``df`` (from ``load_manifest``) by item, stratified by (type, dominant grade).
 
@@ -201,28 +245,33 @@ def make_split(
 
     With ``previous`` (the last split): items already there keep their split, new images of an
     old item inherit it; new items go to train/val only (70:15 per stratum, same rules). An item
-    is "already there" when **any** image of it is in ``previous``, including images that were
-    excluded or removed since (their ``item_id`` comes from ``df.attrs["excluded_items"]`` or from
-    the SPEC-010 file name), so a re-photographed test item stays in test (R-11). A
+    is old when its ``item_id`` is in ``history`` (every earlier version, from ``item_history``)
+    or when any image of ``previous`` resolves to it (``item_id_resolver``), so a re-photographed
+    test item stays in test (R-11). A
     previous image in ``excluded`` leaves the split with ``excluded_previous_image``; any other
     previous image missing from ``df`` is a ``SplitError`` in test and ``missing_previous_image``
     in train/val.
 
+    ``history`` (``item_id -> split``) is only accepted with ``previous``; the warnings and the
+    error about missing images look only at ``previous``. A ``history`` entry without images in
+    ``df`` is ignored.
+
     Raises:
-        SplitError: invalid ratios or previous split, or a frozen test image is missing.
-        SplitIntegrityError: an item would end up in two splits.
+        SplitError: invalid ratios, previous split or ``history`` value, ``history`` without
+            ``previous``, or a frozen test image is missing.
+        SplitIntegrityError: an item would end up in two splits, its images in ``previous`` are
+            in two splits, or ``history`` disagrees with ``previous`` for it.
     """
     _, r_val, r_test = _check_ratios(ratios)
     r_train = Decimal(1) - r_val - r_test
+    history = dict(history or {})
+    if history and previous is None:
+        raise SplitError("history needs previous: the split history starts at split_v1")
+    invalid = sorted(f"{i}={s!r}" for i, s in history.items() if s not in SPLIT_NAMES)
+    if invalid:
+        raise SplitError(f"history has invalid splits: {', '.join(invalid)}")
     rng = np.random.default_rng(seed)
-    excluded_items: dict[str, str] = dict(df.attrs.get("excluded_items") or {})
-    excluded_items.update(
-        zip(
-            df.loc[df["image_path"].isin(list(excluded)), "image_path"],
-            df.loc[df["image_path"].isin(list(excluded)), "item_id"],
-            strict=True,
-        )
-    )
+    resolve = item_id_resolver(df)  # before the excluded rows leave df (source 1)
     df = df[~df["image_path"].isin(list(excluded))]
     strata = item_strata(df)
     images_by_item: dict[str, list[str]] = defaultdict(list)
@@ -261,8 +310,10 @@ def make_split(
                 + ", ".join(missing_test)
             )
         previous_splits: dict[str, set[str]] = defaultdict(set)
-        for image_path, item_id in _previous_item_ids(prev, df, excluded_items).items():
-            previous_splits[item_id].add(prev[image_path])
+        for image_path, split in prev.items():
+            item_id = resolve(image_path)
+            if item_id is not None:
+                previous_splits[item_id].add(split)
         assignment = {}
         new_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
         for item_id in sorted(images_by_item):
@@ -272,7 +323,15 @@ def make_split(
                     f"item {item_id} is in more than one split of the previous split: "
                     f"{', '.join(old)}"
                 )
-            if old:
+            earlier = history.get(item_id)
+            if earlier is not None and old and old[0] != earlier:
+                raise SplitIntegrityError(
+                    f"item {item_id} is in {earlier} in the split history but in {old[0]} in "
+                    "the previous split"
+                )
+            if earlier is not None:
+                assignment[item_id] = earlier
+            elif old:
                 assignment[item_id] = old[0]
             else:
                 new_groups[strata[item_id]].append(item_id)
@@ -479,7 +538,13 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point; 0 when a split was written or nothing changed, 2 on any error."""
+    """Entry point; 0 when a split was written or nothing changed, 2 on any error.
+
+    Steps of SPEC-011 §4.4: manifest and exclusions; list ``split_v<N>.csv``; require versions
+    ``1..M`` without gaps; read all of them with ``load_split``; ``previous`` = version ``M`` and
+    ``history = item_history(all versions)``; ``make_split``; write ``split_v{M+1}`` only if it
+    changed. Nothing is written on any error.
+    """
     configure_logging()
     try:
         args = _parser().parse_args(argv)
@@ -497,16 +562,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_ERROR
 
     versions = split_versions(args.splits_dir)
-    previous = None
+    previous: pd.DataFrame | None = None
+    history: dict[str, str] | None = None
     if versions:
+        # 3. Complete history: versions 1..M, no gap, no renumbering.
+        missing = sorted(set(range(1, versions[-1] + 1)) - set(versions))
+        if missing:
+            names = ", ".join(f"split_v{k}.csv" for k in missing)
+            print(
+                f"split history incomplete: missing {names} (restore it from Git; old split "
+                "versions are never deleted or renumbered)",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        # 4. Every version, hash checked.
+        frames: list[pd.DataFrame] = []
+        for version in versions:
+            name = f"split_v{version}.csv"
+            try:
+                frames.append(load_split(args.splits_dir / name))
+            except (SplitError, OSError) as exc:
+                print(f"split error: {name}: {exc}", file=sys.stderr)
+                return EXIT_ERROR
+        # 5. previous = version M; history over all versions.
+        previous = frames[-1]
         try:
-            previous = load_split(args.splits_dir / f"split_v{versions[-1]}.csv")
-        except (SplitError, OSError) as exc:
+            history = item_history(frames, df)
+        except SplitIntegrityError as exc:
             print(f"split error: {exc}", file=sys.stderr)
             return EXIT_ERROR
 
     try:
-        result = make_split(df, seed=args.seed, previous=previous, excluded=excluded)
+        result = make_split(
+            df, seed=args.seed, previous=previous, excluded=excluded, history=history
+        )
     except SplitError as exc:
         print(f"split error: {exc}", file=sys.stderr)
         return EXIT_ERROR
