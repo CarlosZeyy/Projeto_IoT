@@ -2,15 +2,18 @@
 
 Checks the images already in the dataset, including the ones collected before SPEC-025 or copied
 by hand into ``raw/``, for the segments the collect mode never stores (APP1 with EXIF or XMP,
-APP13 with IPTC, COM and data after the EOI, such as the video of a Motion Photo). It runs before
+APP13 with IPTC, COM and data after the EOI, such as the video of a Motion Photo), and for an
+EXIF rotation (finding ``orientation``, ``qc_edge.jpeg.has_exif_rotation``). It runs before
 every backup of the dataset to the Drive (``docs/dataset-protocol.md`` section 8).
 
 * Without ``--fix`` it only reads: exit code 0 when no image has findings, 1 otherwise.
 * With ``--fix``, holding the same ``flock`` as the collect mode, it rewrites every image with
-  findings (except ``invalid``) without those segments, through a ``0600`` temporary file,
-  ``os.replace`` and ``fsync`` of the directory. ``manifest.csv`` never changes. Exit code 0 when
-  only clean files remain, 1 when an ``invalid`` file (or a file that could not be fixed)
-  remains.
+  findings (except ``invalid`` and ``orientation``) without those segments, through a ``0600``
+  temporary file, ``os.replace`` and ``fsync`` of the directory. ``manifest.csv`` never changes.
+  Exit code 0 when only clean files remain, 1 when an ``invalid`` or ``orientation`` file (or a
+  file that could not be fixed) remains. An ``orientation`` file is never stripped: without the
+  APP1, ``qc_preprocess.load_image`` would no longer rotate it (ADR-004); the photo is taken
+  again through the ``/capture`` page.
 * An invalid ``--dataset-dir`` or an unknown argument exits with 2; only option names are
   logged, never a value (R-03).
 
@@ -45,12 +48,15 @@ logger = logging.getLogger("qc_edge.privacy")
 EXIT_CLEAN = 0
 EXIT_FINDINGS = 1
 FINDING_INVALID = "invalid"
+FINDING_ORIENTATION = "orientation"
+# Findings that ``--fix`` never rewrites: the file stays and the exit code is 1.
+UNFIXABLE_FINDINGS = frozenset({FINDING_INVALID, FINDING_ORIENTATION})
 IMAGE_SUFFIX = ".jpg"
 
 
 @dataclass(frozen=True)
 class ImageFinding:
-    """An image of ``raw/`` with private data (or an ``invalid`` structure)."""
+    """An image of ``raw/`` with private data, an EXIF rotation or an ``invalid`` structure."""
 
     path: Path
     relative: str
@@ -87,10 +93,14 @@ def _read(path: Path) -> bytes:
 
 
 def _findings(data: bytes) -> frozenset[str]:
+    """``jpeg_private_findings`` plus ``orientation``; any ``JpegStructureError`` is ``invalid``."""
     try:
-        return jpeg.jpeg_private_findings(data)
+        findings = jpeg.jpeg_private_findings(data)
+        if jpeg.has_exif_rotation(data):
+            findings |= {FINDING_ORIENTATION}
     except jpeg.JpegStructureError:
         return frozenset({FINDING_INVALID})
+    return findings
 
 
 def _fix(item: ImageFinding, data: bytes, dataset_dir: Path) -> bool:
@@ -126,7 +136,7 @@ def scan(dataset_dir: Path, *, fix: bool, out: TextIO) -> int:
         with_findings += 1
         item = ImageFinding(path=path, relative=relative, findings=findings)
         out.write(f"{item.line}\n")
-        if not fix or FINDING_INVALID in findings:
+        if not fix or findings & UNFIXABLE_FINDINGS:
             remaining = True
             continue
         if _fix(item, data, dataset_dir):

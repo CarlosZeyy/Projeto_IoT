@@ -20,11 +20,14 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
+from qc_edge import jpeg as jpeg_module
 from qc_edge import privacy
 from qc_edge.collect import MANIFEST_COLUMNS
-from qc_edge.jpeg import jpeg_private_findings
+from qc_edge.jpeg import JpegStructureError, jpeg_private_findings
+from qc_preprocess import load_image
 
 HEADER = ",".join(MANIFEST_COLUMNS) + "\n"
 
@@ -149,6 +152,102 @@ def test_invalid_images_are_reported_and_never_rewritten(
         "checked 2 images, 2 with private data",
     ]
     assert (other / "broken.jpg").read_bytes() == broken
+
+
+@pytest.fixture
+def rotated(tmp_path: Path, jpeg_tools: types.SimpleNamespace) -> types.SimpleNamespace:
+    """``e.jpg`` with ``Orientation=6`` (and GPS), ``f.jpg`` with ``Orientation=1`` (and GPS),
+    ``g.jpg`` with ``tiff:Orientation="8"`` only in the XMP."""
+    root = tmp_path / "rotated"
+    fair = root / "raw" / "screw" / "fair"
+    fair.mkdir(parents=True)
+    (root / "manifest.csv").write_text(HEADER, encoding="utf-8")
+    (fair / "e.jpg").write_bytes(jpeg_tools.rotated_jpeg(6))
+    (fair / "f.jpg").write_bytes(jpeg_tools.rotated_jpeg(1))
+    (fair / "g.jpg").write_bytes(jpeg_tools.xmp_orientation_jpeg(8))
+    return types.SimpleNamespace(root=root, fair=fair)
+
+
+def test_orientation_is_a_finding_without_fix(
+    rotated: types.SimpleNamespace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert privacy.main(["--dataset-dir", str(rotated.root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw/screw/fair/e.jpg: app1, orientation",
+        "raw/screw/fair/f.jpg: app1",
+        "raw/screw/fair/g.jpg: app1, orientation",
+        "checked 3 images, 3 with private data",
+    ]
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o277])
+def test_fix_never_rewrites_an_orientation_finding(
+    rotated: types.SimpleNamespace,
+    capsys: pytest.CaptureFixture[str],
+    restore_umask: Callable[[int], int],
+    mask: int,
+) -> None:
+    before = {name: (rotated.fair / name).read_bytes() for name in ("e.jpg", "f.jpg", "g.jpg")}
+    restore_umask(mask)
+    code = privacy.main(["--dataset-dir", str(rotated.root), "--fix"])
+    restore_umask(0o022)
+    out = capsys.readouterr().out.splitlines()
+    assert code == 1
+    assert out == [
+        "raw/screw/fair/e.jpg: app1, orientation",
+        "raw/screw/fair/f.jpg: app1",
+        "fixed raw/screw/fair/f.jpg",
+        "raw/screw/fair/g.jpg: app1, orientation",
+        "checked 3 images, 3 with private data",
+    ]
+    for name in ("e.jpg", "g.jpg"):
+        assert (rotated.fair / name).read_bytes() == before[name]
+    fixed = rotated.fair / "f.jpg"
+    assert jpeg_private_findings(fixed.read_bytes()) == frozenset()
+    assert stat.S_IMODE(fixed.stat().st_mode) == 0o600
+    assert load_image(fixed).size == load_image(before["f.jpg"]).size
+    assert np.array_equal(np.asarray(load_image(fixed)), np.asarray(load_image(before["f.jpg"])))
+    assert privacy.main(["--dataset-dir", str(rotated.root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw/screw/fair/e.jpg: app1, orientation",
+        "raw/screw/fair/g.jpg: app1, orientation",
+        "checked 3 images, 2 with private data",
+    ]
+
+
+def test_unreadable_orientation_is_only_invalid(
+    rotated: types.SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def broken(data: bytes) -> bool:
+        raise JpegStructureError("cannot read the JPEG EXIF orientation")
+
+    monkeypatch.setattr(jpeg_module, "has_exif_rotation", broken)
+    before = (rotated.fair / "f.jpg").read_bytes()
+    assert privacy.main(["--dataset-dir", str(rotated.root), "--fix"]) == 1
+    out = capsys.readouterr().out.splitlines()
+    assert out == [
+        "raw/screw/fair/e.jpg: invalid",
+        "raw/screw/fair/f.jpg: invalid",
+        "raw/screw/fair/g.jpg: invalid",
+        "checked 3 images, 3 with private data",
+    ]
+    assert (rotated.fair / "f.jpg").read_bytes() == before
+
+
+def test_rotation_is_not_checked_when_the_walk_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def never(data: bytes) -> bool:
+        raise AssertionError("has_exif_rotation runs only after jpeg_private_findings")
+
+    monkeypatch.setattr(jpeg_module, "has_exif_rotation", never)
+    root = tmp_path / "d"
+    (root / "raw").mkdir(parents=True)
+    (root / "raw" / "x.jpg").write_bytes(b"not a jpeg")
+    assert privacy.main(["--dataset-dir", str(root)]) == 1
+    assert capsys.readouterr().out.splitlines()[0] == "raw/x.jpg: invalid"
 
 
 def test_dataset_without_raw_is_clean(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
