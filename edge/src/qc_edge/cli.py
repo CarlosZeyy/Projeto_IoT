@@ -6,7 +6,9 @@ value) or a ``MODEL_DIR`` that cannot be loaded (SPEC-008 section 4.2: the messa
 file); 1 when ``PIL.ImageFile.LOAD_TRUNCATED_IMAGES`` is enabled (SEC-04).
 
 Model (SPEC-008 section 4.4): ``MODEL_DIR`` set -> ``OnnxInferencer``, with the threshold
-overrides of the environment; unset or empty -> no model (inspect mode answers 503).
+overrides of the environment; unset or empty (``""``) -> no model (inspect mode answers 503).
+The value is not stripped: ``MODEL_DIR`` with only spaces is set, is not a directory and exits
+with code 2 (a typo in ``.env`` must not start the gateway without a model).
 ``--stub-model`` takes precedence over ``MODEL_DIR`` (a warning is logged and the directory is not
 loaded): the gateway answers with ``StubInferencer`` results. Nothing is ever published to the
 cloud in that mode (R-06): the sink is ``InMemorySink``, which sends nothing anywhere.

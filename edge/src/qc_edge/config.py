@@ -66,7 +66,8 @@ class EdgeSettings(BaseSettings):
     DEVICE_API_KEY: SecretStr | None = None
     CLOUD_API_URL: str | None = None
     OUTBOX_PATH: Path | None = None
-    # SPEC-008: model directory (unset or empty = no model) and the overrides of decision.json.
+    # SPEC-008: model directory (unset or "" = no model; never stripped, so only spaces is an
+    # invalid directory, section 4.4) and the overrides of decision.json.
     MODEL_DIR: Path | None = None
     TYPE_THRESHOLD: Threshold | None = None
     UNUSABLE_THRESHOLD: Threshold | None = None

@@ -162,6 +162,64 @@ def test_missing_model_dir_exits_2(
     assert uvicorn_spy.calls == []
 
 
+@pytest.mark.parametrize("value", ["   ", " ", "\t", " \n "])
+def test_blank_model_dir_is_not_stripped_and_exits_2(  # CA-23
+    edge_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    uvicorn_spy: _UvicornSpy,
+    value: str,
+) -> None:
+    monkeypatch.setenv("MODEL_DIR", value)
+    with caplog.at_level(logging.INFO, logger="qc_edge"), pytest.raises(SystemExit) as excinfo:
+        cli.main([])
+    assert excinfo.value.code == 2
+    assert "cannot load the model: MODEL_DIR: not a directory" in caplog.text
+    assert uvicorn_spy.calls == []
+
+
+def test_blank_model_dir_is_kept_by_the_settings(clean_edge_env: None, tmp_path: Path) -> None:
+    settings = EdgeSettings(EDGE_DATA_DIR=tmp_path / "data", MODEL_DIR="   ")
+    assert str(settings.MODEL_DIR) == "   "
+
+
+def test_empty_model_dir_means_no_model(
+    edge_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    uvicorn_spy: _UvicornSpy,
+) -> None:
+    monkeypatch.setenv("MODEL_DIR", "")
+    with caplog.at_level(logging.INFO, logger="qc_edge"):
+        cli.main([])
+    ((app, _),) = uvicorn_spy.calls
+    assert _status(app)["model"]["loaded"] is False
+    assert "no model loaded" in caplog.text
+
+
+def test_symlinked_model_dir_sends_the_target_name(  # CA-21 through the CLI
+    edge_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    uvicorn_spy: _UvicornSpy,
+    dummy_model: types.ModuleType,
+    make_image: Any,
+) -> None:
+    directory = dummy_model.write_model_dir(tmp_path / "models", "partqc-mnv3-v1")
+    link = tmp_path / "models" / "atual"
+    link.symlink_to(directory, target_is_directory=True)
+    monkeypatch.setenv("MODEL_DIR", str(link))
+    with caplog.at_level(logging.INFO, logger="qc_edge"):
+        cli.main([])
+    ((app, _),) = uvicorn_spy.calls
+    assert "model loaded: model_version=partqc-mnv3-v1 " in caplog.text
+    assert _status(app)["model"]["model_version"] == "partqc-mnv3-v1"
+    response = _capture(TestClient(app), app.state.session_token, make_image((1280, 960)))
+    assert response.status_code == 200
+    assert response.json()["inspection"]["model_version"] == "partqc-mnv3-v1"
+
+
 @pytest.mark.parametrize("value", ["1.5", "abc", "-0.1", "nan", "inf"])
 @pytest.mark.parametrize("with_model", [True, False])
 def test_invalid_threshold_variable_exits_2(
@@ -250,6 +308,27 @@ def test_capture_with_invalid_model_output_is_500(
     assert response.json() == {"detail": "inference failed"}
     assert sink.items == []
     assert files_under() == before
+
+
+def test_confident_unusable_softmax_output_is_stored_with_score_4(  # CA-20
+    settings: EdgeSettings, tmp_path: Path, dummy_model: types.ModuleType, make_image: Any
+) -> None:
+    directory = dummy_model.write_model_dir(
+        tmp_path / "models",
+        type_probs=(0.98, 0.01, 0.01),
+        grade_probs=(2.506e-10, 2.235e-10, 7.39e-11, 5.899e-08, 1.0),
+    )
+    sink = InMemorySink()
+    app = create_app(settings, OnnxInferencer(directory), sink)
+    response = _capture(TestClient(app), app.state.session_token, make_image((1280, 960)))
+    assert response.status_code == 200
+    inspection = response.json()["inspection"]
+    assert inspection["grade"] == "unusable"
+    assert inspection["grade_score"] == 4.0
+    assert inspection["grade_confidence"] == 1.0
+    (stored,) = sink.items
+    assert stored.grade_score == 4.0
+    assert len(list((settings.EDGE_DATA_DIR / "captures").rglob("*.jpg"))) == 1
 
 
 def test_unknown_result_goes_to_the_sink(

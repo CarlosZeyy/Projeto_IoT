@@ -34,7 +34,7 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 | `DEVICE_ID` | `edge-01` | `^[a-z0-9-]{3,32}$` (sem quebra de linha final) |
 | `EDGE_DATA_DIR` | `edge/data` (relativo ao diretório atual) | criado com `0700` se não existir (um diretório que já existe não é alterado); está no `.gitignore` |
 | `DATASET_DIR` | `ml/data` (relativo ao diretório atual) | modo coleta; se existir, tem de ser um diretório. Não é criado na subida: a primeira coleta o cria com `0700`. `ml/data/` está no `.gitignore`; outro caminho deve ficar fora do repositório |
-| `MODEL_DIR` | vazio (sem modelo) | diretório do modelo (seção "Trocar o modelo"); o nome dele é o `model_version`. Definido mas inválido → código 2 |
+| `MODEL_DIR` | vazio (sem modelo) | diretório do modelo (seção "Trocar o modelo"); o nome do diretório resolvido (alvo do link, se for um link simbólico) é o `model_version`. Definido mas inválido, inclusive só com espaços → código 2 |
 | `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio (vale o `decision.json`) | opcionais; número de 0 a 1 que sobrescreve o limiar do `decision.json` (seção "Limiares de decisão"). Fora de `[0, 1]` ou não numérico → código 2 citando a variável. Sem `MODEL_DIR`, são ignorados (com aviso no log) |
 | `DEVICE_API_KEY`, `CLOUD_API_URL`, `OUTBOX_PATH` | vazio | lidas agora, validadas na SPEC-009 |
 
@@ -67,9 +67,13 @@ A foto aceita é salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD em UTC>/<inspectio
 
 O modelo é um diretório com os artefatos de `docs/architecture.md` §7. O **nome do diretório é o `model_version`** gravado em cada inspeção (`^[a-z0-9.-]{3,40}$`, ex.: `partqc-mnv3-v1`): ao copiar o modelo para o notebook, preserve o nome `ml/models/<model_version>/`.
 
+O `MODEL_DIR` é resolvido antes de tudo (links simbólicos, `.` e `..`; a barra final não conta), e os arquivos são lidos do diretório resolvido. Por isso o `model_version` é o nome do **diretório alvo**, e não o do link: com `MODEL_DIR=ml/models/atual` e o link `atual → partqc-mnv3-v1`, as inspeções levam `partqc-mnv3-v1`. Trocar o modelo apontando um link de nome fixo para outro diretório funciona, e cada inspeção continua com a versão real. Um link para um diretório com nome fora da regex (ex.: `Dummy_V1`) impede a subida, mesmo que o nome do link seja válido.
+
+`MODEL_DIR` vazio (`MODEL_DIR=`) significa "sem modelo". O valor não é aparado: um `MODEL_DIR` só com espaços conta como definido e, como não é um diretório, a subida sai com código 2 (`cannot load the model: MODEL_DIR: not a directory`). Um caminho inexistente, um link quebrado ou um laço de links dão a mesma mensagem.
+
 | Arquivo | O que a borda confere na subida |
 |---|---|
-| `model.onnx` | carrega no `onnxruntime` (CPU), tem uma entrada `image` e as saídas `type_probs` e `grade_probs`; uma inferência de aquecimento com zeros `[1,3,224,224]` tem de devolver as formas `[1, T]` (T = número de tipos do `labels.json`) e `[1, 5]` |
+| `model.onnx` | carrega no `onnxruntime` (CPU), tem uma entrada `image` e as saídas `type_probs` e `grade_probs`; uma inferência de aquecimento com zeros `[1, 3, crop, crop]`, com o `crop` do `preprocessing.json` (a mesma forma que cada inferência envia; `[1,3,224,224]` com o `crop` padrão), tem de devolver as formas `[1, T]` (T = número de tipos do `labels.json`) e `[1, 5]`. Um `crop` que a entrada do modelo não aceita (ex.: `crop=256` com entrada fixa `[N,3,224,224]`) falha aqui, na subida, e não em cada captura; um modelo com dimensões espaciais dinâmicas aceita qualquer `crop` |
 | `model.sha256` | o primeiro token (64 hexadecimais, maiúsculas ou minúsculas; aceita a saída do `sha256sum`, `<hash>  model.onnx`) é igual ao SHA-256 do `model.onnx`. Senão: `model.onnx does not match model.sha256: expected <12 caracteres>, got <12 caracteres>` |
 | `labels.json` | exatamente as chaves `object_types` e `grades`; `grades` exatamente `["perfect","good","fair","poor","unusable"]`; `object_types` sem repetição, só com `other` e os tipos do contrato (`screw`, `nut`), nunca `unknown` |
 | `preprocessing.json` | lido por `qc_preprocess.PreprocessParams.from_json` |
@@ -98,6 +102,8 @@ A regra de decisão (`qc_edge.decision.decide`, `docs/architecture.md` §6.2, pa
 | `grade_review_threshold` | `GRADE_REVIEW_THRESHOLD` | `grade_confidence` abaixo dele marca a inspeção para revisão |
 
 O console e o `/api/status` (`model.thresholds`, `{nome: {"value", "source"}}`) mostram o valor efetivo de cada limiar e a origem: `decision.json` ou `env`.
+
+As comparações usam as probabilidades exatamente como o modelo as devolve. Só depois delas, os números gravados na inspeção são limitados às faixas do contrato: `type_confidence` e `grade_confidence` a `[0, 1]` e `grade_score` a `[0, 4]` (SPEC-008 §4.1, item 6). O `Softmax` em float32 dá, por exemplo, `p(unusable) = 1.0` com `p(poor) ≈ 6e-8`, o que faria `grade_score` passar um pouco de 4; a inspeção sai com `grade_score = 4.0`. O limite nunca muda o tipo, o grau nem o `needs_review`.
 
 ## Modo coleta (SPEC-010)
 
