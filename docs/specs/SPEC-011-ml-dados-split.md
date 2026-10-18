@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
-| Rodada atual | r2 |
+| Status | In Dev |
+| Rodada atual | r3 |
 | Autor da implementação | ml-engineer |
 | Tags | — |
 | Depende de | SPEC-001, SPEC-002, SPEC-010 |
@@ -11,7 +11,7 @@
 | Requisitos cobertos | RF-08 (consumo do manifest), RNF-07; meta de concordância do PRD §7; R-11; R-14 (exclusão de foto com pessoa) |
 | ADRs relevantes | ADR-001, ADR-004, ADR-014 |
 
-> **Aguardando reaprovação humana** (2026-10-18): correção do SPEC_ISSUE-01 de `reviews/SPEC-011/r2-review-report.md` (histórico do split, §4.4; CAs novos CA-33 a CA-35). Ver o Histórico.
+> **Reaprovada pelo humano em 2026-10-18**: correção do SPEC_ISSUE-01 de `reviews/SPEC-011/r2-review-report.md` (histórico do split, §4.4; CAs novos CA-33 a CA-35). Ver o Histórico.
 
 ## 1. Contexto
 
@@ -246,3 +246,4 @@ Nada é mockado além do sistema de arquivos temporário. O CA-25 usa `pytest.im
 | 2026-10-17 | Mudanças: (a) §1 com as pendências da SPEC-010; (b) §3: `load_exclusions` e órfãos no `data.py`; a varredura de privacidade fica na SPEC-025; (c) §4.1: leitura só com `csv`/`pandas`, `exclusions.csv` (`image_path,reason`, `reason` ∈ `person`/`other`) e problemas novos `orphan_image`, `exclusion_unknown_image`, `exclusion_invalid_reason` e `excluded_file_present`; (d) §4.2: `n_excluded`; (e) §4.3: exclusões na concordância e `n_excluded_pairs`; (f) §4.4: parâmetro `excluded` e aviso `excluded_previous_image` (imagem excluída sai do split novo, inclusive do teste, sem `SplitError`); (g) CA-18 passa a apagar também o arquivo (senão o `orphan_image` passaria o CA pelo motivo errado); CAs novos CA-29 a CA-32; (h) §7: planilhas, `flock` e exclusões. Nenhum outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | SEC-10-02, SEC-10-03, SEC-10-04, SEC-10-06 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-18 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-18 | Correção do SPEC_ISSUE-01 (r2), pelo mecanismo (A) do reviewer. Mudanças: (a) §2: nenhuma peça muda de conjunto em relação a qualquer versão anterior; (b) §3.1: `item_history`; (c) §4.4: "peça antiga" passa a ser a peça com imagem em **qualquer** versão anterior do split, e não só na de maior N; `make_split` ganha o parâmetro `history: Mapping[str, str] \| None = None` (`item_id → split`), validado (valor inválido ou sem `previous` → `SplitError`; divergente do `previous` → `SplitIntegrityError`); função nova `item_history(splits, df)`, que monta o histórico e acusa conflito com `SplitIntegrityError`, sem resolvê-lo; a CLI exige as versões `1…M` sem lacuna, lê todas com `load_split` (hash) e passa `previous` = versão `M` e `history`; os avisos e o `SplitError` de imagens ausentes continuam olhando só o `previous`; nenhum formato de arquivo muda; (d) §4.4 registra o que a r2 já implementou: as três fontes do `item_id` de uma imagem antiga (linha de `df` > `df.attrs["excluded_items"]` > nome de arquivo da SPEC-010) e o `"scope": "new_items"` do `small_stratum` de peças novas (RV-03 da r1); a fonte `excluded_items` passa a exigir `item_id` válido (RV-06 da r2, código novo na r3); (e) §4.1: `df.attrs` (`manifest_sha256`, `n_excluded`, `excluded_items`), `orphan_image` sem diferenciar maiúsculas na extensão (RV-02 da r1) e os códigos `unreadable_csv`, `malformed_row` e `invalid_image_path` (RV-04 da r1); (f) §4.3: `qwk = null` quando o kappa é indefinido e `exclusions.csv` validado por inteiro na concordância (RV-04 da r1); (g) CAs novos CA-33 (sequência do T-02, peça de teste e de validação), CA-34 (lacuna, hash divergente e conflito no histórico) e CA-35 (`make_split` com `history`); (h) §6 e §7 atualizadas. Nenhum CA existente muda: com uma única versão anterior, o `history` coincide com o `previous`. O que a r2 já implementou (itens d e e, exceto o RV-06) não exige código novo. SPEC marcada como "Aguardando reaprovação humana". | SPEC_ISSUE-01 / RV-05 de `reviews/SPEC-011/r2-review-report.md` (= T-02 de `r2-test-report.md`): o congelamento olhava só o split de maior N, e uma peça de teste que saía por inteiro de uma versão intermediária voltava como peça nova, contra a R-11, o ADR-014 e o `docs/dataset-protocol.md` §2, passo 6. RV-02 e RV-04 de `reviews/SPEC-011/r1-review-report.md`; RV-06 de `r2-review-report.md`; correção da r2 descrita em `reviews/SPEC-011/r2-dev-report.md` | Orquestrador |
+| 2026-10-18 | Correção do SPEC_ISSUE-01 da r2 reaprovada; `Blocked` → `In Dev` na r3 (última rodada, R-10). A nota só de texto na SPEC-012 não exige reaprovação (decisão do humano). | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
