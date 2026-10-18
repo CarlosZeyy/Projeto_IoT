@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-004, SPEC-007, SPEC-025 (validação do `Host` do console: tem de estar `Done` antes do merge desta, SEC-01 de `reviews/SPEC-007/r1-security-report.md`) |

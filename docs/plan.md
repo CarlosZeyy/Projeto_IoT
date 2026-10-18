@@ -43,8 +43,8 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Done |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Done |
 | [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Done (CA-20/21 manual confirmado pelo humano) |
-| [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | In Review (r2) |
-| [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007, 025 | S3 | Ready |
+| [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | Done (CA-16 manual pendente até o modelo real) |
+| [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007, 025 | S3 | In Dev (r1) |
 | [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | Done (CA-17 manual confirmado pelo humano) |
 | [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready |
 | [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | Ready |
