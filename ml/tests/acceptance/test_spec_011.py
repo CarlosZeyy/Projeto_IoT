@@ -1431,25 +1431,49 @@ def test_extra_image_path_cannot_escape_the_dataset(ds: Path, bad_path: str) -> 
     assert any(p.image_path == bad_path for p in problems_of(excinfo))
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="T-01: an item of the frozen test set whose previous images were all excluded is "
-    "treated as a new item when re-photographed (SPEC-011 §4.4: items already present keep "
-    "their split, new images of an old item inherit it)",
-)
-def test_bug_t01_rephotographed_test_item_keeps_test(ds: Path, tmp_path: Path, capsys) -> None:
+# ---- RV-01 / T-01 (r2): re-photographed items keep the split of their old images ----------
+
+
+def safe_unlink(root: Path, rel: str) -> None:
+    """Delete ``root/rel`` only if it resolves inside ``root`` (always a tmp_path dataset)."""
+    target = (root / rel).resolve()
+    assert target.is_relative_to(root.resolve()), target
+    target.unlink()
+
+
+def exclude_item(ds: Path, item: str) -> list[dict[str, str]]:
+    """Delete every image of ``item`` and append them to exclusions.csv (dataset-protocol §8.1)."""
+    old_rows = [r for r in read_rows(ds) if r["item_id"] == item]
+    assert old_rows
+    for r in old_rows:
+        safe_unlink(ds, r["image_path"])
+    path = ds / "exclusions.csv"
+    previous: list[list[str]] = []
+    if path.exists():
+        with path.open(encoding="utf-8", newline="") as fh:
+            previous = [[r["image_path"], r["reason"]] for r in csv.DictReader(fh)]
+    write_csv(
+        path, ["image_path", "reason"], previous + [[r["image_path"], "person"] for r in old_rows]
+    )
+    return old_rows
+
+
+def first_item_in(v: dict[str, str], which: str, object_type: str = "screw") -> str:
+    return sorted(
+        item_of(p) for p, w in v.items() if w == which and p.startswith(f"raw/{object_type}/")
+    )[0]
+
+
+def other_grade(grade: str) -> str:
+    return GRADES[(GRADES.index(grade) + 1) % len(GRADES)]
+
+
+def test_extra_t01_rephotographed_test_item_keeps_test(ds: Path, tmp_path: Path, capsys) -> None:
     splits = tmp_path / "splits"
     assert split_cli(ds, splits, capsys)[0] == 0
     v1 = read_split_csv(splits / "split_v1.csv")
-    item = sorted(item_of(p) for p, w in v1.items() if w == "test" and p.startswith("raw/screw"))[0]
-    old_rows = [r for r in read_rows(ds) if r["item_id"] == item]
-    for r in old_rows:
-        (ds / r["image_path"]).unlink()
-    write_csv(
-        ds / "exclusions.csv",
-        ["image_path", "reason"],
-        [[r["image_path"], "person"] for r in old_rows],
-    )
+    item = first_item_in(v1, "test")
+    old_rows = exclude_item(ds, item)
     grade = old_rows[0]["grade"]
     new = [
         add_image(ds, item, "screw", grade, 0, "20261104T100000Z"),
@@ -1458,6 +1482,184 @@ def test_bug_t01_rephotographed_test_item_keeps_test(ds: Path, tmp_path: Path, c
     assert split_cli(ds, splits, capsys)[0] == 0
     v2 = read_split_csv(splits / "split_v2.csv")
     assert [v2[p] for p in new] == ["test", "test"]
+
+
+@pytest.mark.parametrize("which", ["test", "val", "train"])
+def test_extra_rephotographed_item_keeps_its_split(
+    ds: Path, tmp_path: Path, capsys, which: str
+) -> None:
+    """All old images excluded; re-photographed at a later corrosion stage (another grade)."""
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v1 = read_split_csv(splits / "split_v1.csv")
+    item = first_item_in(v1, which, "nut")
+    old_rows = exclude_item(ds, item)
+    grade = other_grade(old_rows[0]["grade"])
+    new = [
+        add_image(ds, item, "nut", grade, 2, "20261105T100000Z"),
+        add_image(ds, item, "nut", grade, 3, "20261105T100100Z"),
+        add_image(ds, item, "nut", grade, 4, "20261105T100200Z"),
+    ]
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v2 = read_split_csv(splits / "split_v2.csv")
+    assert [v2[p] for p in new] == [which] * 3
+    old_paths = {r["image_path"] for r in old_rows}
+    assert {p: w for p, w in v1.items() if p not in old_paths} == {
+        p: w for p, w in v2.items() if p not in new
+    }
+    meta = json.loads((splits / "split_v2.json").read_text(encoding="utf-8"))
+    excluded_warnings = [w for w in meta["warnings"] if w.get("code") == "excluded_previous_image"]
+    assert sorted(w["image_path"] for w in excluded_warnings) == sorted(old_paths)
+    assert {w["split"] for w in excluded_warnings} == {which}
+    # integrity of the new version (R-11)
+    assert all(len(s) == 1 for s in item_splits(v2).values())
+
+
+def test_extra_removed_without_exclusion_val_item_keeps_val(
+    ds: Path, tmp_path: Path, capsys
+) -> None:
+    """Old val images removed from the manifest and the disk (no exclusion): file-name fallback."""
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v1 = read_split_csv(splits / "split_v1.csv")
+    item = first_item_in(v1, "val")
+    old_rows = [r for r in read_rows(ds) if r["item_id"] == item]
+    write_rows(ds, [r for r in read_rows(ds) if r["item_id"] != item])
+    for r in old_rows:
+        safe_unlink(ds, r["image_path"])
+    new = add_image(ds, item, "screw", old_rows[0]["grade"], 0, "20261106T100000Z")
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v2 = read_split_csv(splits / "split_v2.csv")
+    assert v2[new] == "val"
+    meta = json.loads((splits / "split_v2.json").read_text(encoding="utf-8"))
+    missing = [w for w in meta["warnings"] if w.get("code") == "missing_previous_image"]
+    assert sorted(w["image_path"] for w in missing) == sorted(r["image_path"] for r in old_rows)
+
+
+def test_extra_removed_without_exclusion_test_item_still_errors(
+    ds: Path, tmp_path: Path, capsys
+) -> None:
+    """Re-photographing does not legalize test images removed without exclusions.csv (CA-18)."""
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v1 = read_split_csv(splits / "split_v1.csv")
+    item = first_item_in(v1, "test")
+    old_rows = [r for r in read_rows(ds) if r["item_id"] == item]
+    write_rows(ds, [r for r in read_rows(ds) if r["item_id"] != item])
+    for r in old_rows:
+        safe_unlink(ds, r["image_path"])
+    add_image(ds, item, "screw", old_rows[0]["grade"], 0, "20261106T110000Z")
+    before = tree_snapshot(splits)
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 2
+    assert old_rows[0]["image_path"] in out
+    assert tree_snapshot(splits) == before
+
+
+def test_extra_make_split_without_attrs_uses_file_names(ds: Path) -> None:
+    df = load_manifest(ds)
+    v1 = make_split(df, seed=42).frame
+    mapping = dict(zip(v1["image_path"], v1["split"], strict=True))
+    item = first_item_in(mapping, "test")
+    old_rows = exclude_item(ds, item)
+    add_image(ds, item, "screw", old_rows[0]["grade"], 0, "20261107T100000Z")
+    df2 = load_manifest(ds)
+    df2.attrs = {}  # a DataFrame built by hand: no excluded_items
+    result = make_split(df2, seed=42, previous=v1, excluded=load_exclusions(ds))
+    got = dict(zip(result.frame["image_path"], result.frame["split"], strict=True))
+    assert got[f"raw/screw/{old_rows[0]['grade']}/{item}__0__20261107T100000Z.jpg"] == "test"
+
+
+def test_extra_old_images_in_two_splits_is_an_integrity_error(ds: Path) -> None:
+    """A (hand-made) previous split with the old images of one item in two splits."""
+    df = load_manifest(ds)
+    v1 = make_split(df, seed=42).frame.copy()
+    mapping = dict(zip(v1["image_path"], v1["split"], strict=True))
+    item = first_item_in(mapping, "train")
+    paths = sorted(p for p in mapping if item_of(p) == item)
+    v1.loc[v1["image_path"] == paths[0], "split"] = "val"
+    # excluded image (manifest row kept) in val, the remaining one in train
+    safe_unlink(ds, paths[0])
+    write_csv(ds / "exclusions.csv", ["image_path", "reason"], [[paths[0], "person"]])
+    df2 = load_manifest(ds)
+    with pytest.raises(SplitIntegrityError):
+        make_split(df2, seed=42, previous=v1, excluded=load_exclusions(ds))
+    # same conflict through the file-name fallback (row removed, no exclusion)
+    (ds / "exclusions.csv").unlink()
+    write_rows(ds, [r for r in read_rows(ds) if r["image_path"] != paths[0]])
+    df3 = load_manifest(ds)
+    with pytest.raises(SplitIntegrityError):
+        make_split(df3, seed=42, previous=v1)
+
+
+def test_extra_split_cli_conflict_in_previous_exits_2(ds: Path, tmp_path: Path, capsys) -> None:
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    path = splits / "split_v1.csv"
+    v1 = read_split_csv(path)
+    item = first_item_in(v1, "train")
+    paths = sorted(p for p in v1 if item_of(p) == item)
+    lines = path.read_text(encoding="utf-8").split("\n")
+    lines = [f"{paths[0]},val" if ln == f"{paths[0]},train" else ln for ln in lines]
+    body = "\n".join(lines).encode("utf-8")
+    path.write_bytes(body)  # a previous split edited and re-hashed by hand
+    (splits / "split_v1.sha256").write_text(
+        f"{hashlib.sha256(body).hexdigest()}  split_v1.csv\n", encoding="utf-8"
+    )
+    exclude_item(ds, item)
+    add_image(ds, item, "screw", "good", 0, "20261108T100000Z")
+    before = tree_snapshot(splits)
+    rc, out = split_cli(ds, splits, capsys)
+    assert rc == 2
+    assert item in out
+    assert tree_snapshot(splits) == before
+
+
+def test_extra_previous_image_with_foreign_name_is_ignored(ds: Path) -> None:
+    df = load_manifest(ds)
+    v1 = make_split(df, seed=42).frame
+    legacy = pd.DataFrame({"image_path": ["raw/screw/good/legacy-photo.jpg"], "split": ["val"]})
+    previous = pd.concat([v1, legacy], ignore_index=True)
+    result = make_split(df, seed=42, previous=previous)
+    assert "missing_previous_image" in json.dumps(result.warnings)
+    assert "raw/screw/good/legacy-photo.jpg" not in set(result.frame["image_path"])
+
+
+def test_extra_small_stratum_of_new_items_has_scope(ds: Path, tmp_path: Path, capsys) -> None:
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    add_image(ds, "S-150", "screw", "fair", 0, "20261109T100000Z")
+    assert split_cli(ds, splits, capsys)[0] == 0
+    meta = json.loads((splits / "split_v2.json").read_text(encoding="utf-8"))
+    small = [w for w in meta["warnings"] if w.get("code") == "small_stratum"]
+    assert small and all(w.get("scope") == "new_items" for w in small)
+    # the split_v1 rule (CA-14) has no "new_items" scope
+    df = fake_frame([("S-001", "screw", ["good"]), ("S-002", "screw", ["good"])])
+    first = make_split(df, seed=42).warnings
+    assert first and all(w.get("scope") != "new_items" for w in first)
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason="T-02: a test item excluded, then a split version written, then re-photographed "
+    "goes to train (the item is no longer in the latest split)",
+)
+def test_bug_t02_rephoto_after_an_intermediate_split_keeps_test(
+    ds: Path, tmp_path: Path, capsys
+) -> None:
+    splits = tmp_path / "splits"
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v1 = read_split_csv(splits / "split_v1.csv")
+    item = first_item_in(v1, "test")
+    old_rows = exclude_item(ds, item)
+    assert split_cli(ds, splits, capsys)[0] == 0  # split_v2: the item left the test set
+    new = [
+        add_image(ds, item, "screw", old_rows[0]["grade"], 0, "20261110T100000Z"),
+        add_image(ds, item, "screw", old_rows[0]["grade"], 1, "20261110T100100Z"),
+    ]
+    assert split_cli(ds, splits, capsys)[0] == 0
+    v3 = read_split_csv(splits / "split_v3.csv")
+    assert [v3[p] for p in new] == ["test", "test"]
 
 
 def test_extra_parts_dataset_train_mode(ds: Path) -> None:
