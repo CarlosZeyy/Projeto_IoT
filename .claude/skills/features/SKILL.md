@@ -16,7 +16,7 @@ SPEC alvo: `$ARGUMENTS`. Se vier vazio, pergunte ao humano qual SPEC entregar.
 2. **Status:**
    - deve ser `Ready`;
    - se for `Draft`, peça a aprovação do humano antes de seguir;
-   - se estiver marcada como "Aguardando reaprovação humana", peça a reaprovação.
+   - se estiver marcada como "Aguardando reaprovação humana", peça a reaprovação; se estiver "Aguardando reaprovação (ADR-019)", siga a §4, passo 3.
 3. As dependências ("Depende de") devem estar `Done` em `docs/plan.md`. Se não estiverem, informe e pergunte se deve seguir mesmo assim.
 4. `git status` limpo e `main` atualizada (`git pull --ff-only` se houver remoto).
 5. Identifique o **autor**:
@@ -49,7 +49,7 @@ Atualize o status da SPEC para `In Dev`, com "Rodada atual: r1", no arquivo da S
    3. `CHANGES_REQUESTED`: N+1 e volte ao passo 1.
 4. **SECURITY:** só se as tags da SPEC incluírem `security` ou `deploy`.
    1. Status `In Security`.
-   2. Chame o `security-devops` (modo 1) ou, se ele foi o autor, o `reviewer` com a instrução de gerar o `rN-security-report.md`.
+   2. Chame o `security-devops` (modo 1) ou, se ele foi o autor, o `reviewer` com a instrução de gerar o `rN-security-report.md`. Se houve reaprovação sob o ADR-019 nesta branch, peça a conferência dela (checklist §6).
    3. `FAIL`: N+1 e volte ao passo 1.
 
 **Entre as etapas:**
@@ -68,13 +68,14 @@ Atualize o status da SPEC para `In Dev`, com "Rodada atual: r1", no arquivo da S
      - link da SPEC;
      - tabela com os relatórios da última rodada e os veredictos;
      - checklist R-09;
+     - a seção "Reaprovações sob o ADR-019" (SPEC, itens, commit do architect, commit da aprovação e motivo; ou "nenhuma");
      - a linha de atribuição exigida pelo sistema.
-  4. **Merge sob delegação (R-09, ADR-016):** espere os checks do PR (`gh pr checks <N> --watch`) e confira **todas** as condições da R-09: checks verdes (inclusive o scanner de segredos), test PASS e review APPROVED da última rodada, security PASS se a tag exigir, CAs manuais registrados se a Definição de pronto exigir, nenhum `SPEC_ISSUE` aberto, PR sem conflito, sem rótulo `hold` e sem veto do humano na sessão. Se tudo valer:
+  4. **Merge sob delegação (R-09, ADR-016):** espere os checks do PR (`gh pr checks <N> --watch`) e confira **todas** as condições da R-09: checks verdes (inclusive o scanner de segredos), test PASS e review APPROVED da última rodada, security PASS se a tag exigir, CAs manuais registrados se a Definição de pronto exigir, nenhum `SPEC_ISSUE` aberto, reaprovações sob o ADR-019 confirmadas no review-report e, com a tag `security` ou `deploy`, no security-report da última rodada, PR sem conflito, sem rótulo `hold` e sem veto do humano na sessão. Se tudo valer:
      - comente no PR a conferência, terminando com "Merge feito pelo orquestrador sob delegação (ADR-016).";
      - `GH_TOKEN="$(gh auth token --user CarlosZeyy)" gh pr merge <N> --merge --match-head-commit <sha>` (merge commit, nunca squash, `--force` ou `--admin`).
 
      Se alguma condição falhar (por exemplo, um CA manual pendente), **não** faça o merge: informe ao humano o link do PR e o que falta.
-  5. Informe ao humano o link do PR, o resultado do merge e o que testar manualmente, se houver.
+  5. Informe ao humano o link do PR, o resultado do merge, as reaprovações feitas sob o ADR-019 e o que testar manualmente, se houver.
   6. **Diário de entregas (local, nunca commitado):** se existir `notas-locais/diario-de-entregas.md`, acrescente uma entrada no formato do modelo do próprio arquivo:
      - nome da feature (SPEC e título), data e PR;
      - o que entrega e como funciona, em linguagem simples, para quem não programa;
@@ -93,6 +94,8 @@ Atualize o status da SPEC para `In Dev`, com "Rodada atual: r1", no arquivo da S
 ## 4. SPEC_ISSUE
 
 1. Pare o loop e mude o status para `Blocked`.
-2. Chame o `architect` com o relatório que levantou o problema.
-3. Apresente ao humano a correção proposta e peça a reaprovação.
-4. Aprovada a correção, retome na **mesma rodada**.
+2. Chame o `architect` com o relatório que levantou o problema. Ele corrige a SPEC e a classifica pelo ADR-019 (`elegível` ou `exige humano`). Não sugira o conteúdo da correção nem a classificação.
+3. Decida quem reaprova:
+   - **Classificada `elegível`:** confira no `git show` do commit do architect cada critério E-1 a E-5 e cada exclusão X-1 a X-9 do ADR-019 (a X-8 foi removida; a tag `security`/`deploy` não impede a delegação). Se tudo vale, registre a reaprovação num commit só de status (`Agent: orchestrator`): o aviso no topo vira "Reaprovada pelo orquestrador sob o ADR-019 em <data UTC>", e o Histórico ganha a linha `| <data> | Correção do SPEC_ISSUE-NN (<itens>) aprovada pelo orquestrador sob o ADR-019 (commit do architect <sha>). | <relatório e achado> | Orquestrador (ADR-019) |`. Informe o humano na sessão (texto antigo, texto novo e motivo) e siga sem esperar a resposta.
+   - **Classificada `exige humano`, se você discorda da classificação ou na dúvida:** apresente ao humano a correção proposta e peça a reaprovação.
+4. Aprovada a correção, retome na **mesma rodada**. Se o humano vetar uma reaprovação delegada, volte ao passo 1 (aviso "Aguardando reaprovação humana") e não faça o merge até ele decidir.

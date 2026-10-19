@@ -21,7 +21,7 @@ Cada SPEC passa por um ciclo com papéis separados. Quem faz não aprova o que f
 | Reviewer | `reviewer` | Editar código ou testes |
 | Security | `security-devops` (se não for o autor) | Editar código |
 | Orquestrador | Sessão principal | Implementar, testar ou aprovar no lugar dos agentes; pular etapa |
-| Humano | Dupla | — (aprova SPECs e ADRs, decide escalonamentos e pode vetar merges; o merge é delegado ao orquestrador, ADR-016) |
+| Humano | Dupla | — (aprova SPECs e ADRs, reaprova as correções de SPEC fora dos limites do ADR-019, decide escalonamentos e pode vetar merges e reaprovações delegadas; o merge é delegado ao orquestrador, ADR-016) |
 
 ## Passo a passo do orquestrador
 
@@ -88,4 +88,9 @@ Severidades:
 
 ## Quando o problema está na SPEC
 
-Se qualquer agente concluir que a SPEC está errada, ambígua ou contradiz `architecture.md` ou um ADR, ele **não improvisa**: registra no relatório como `SPEC_ISSUE`. O orquestrador então para o loop e chama o `architect` para propor a correção. Uma SPEC alterada precisa de nova aprovação humana, e o loop reinicia na rodada atual.
+Se qualquer agente concluir que a SPEC está errada, ambígua ou contradiz `architecture.md` ou um ADR, ele **não improvisa**: registra no relatório como `SPEC_ISSUE`. O orquestrador então para o loop (status `Blocked`) e chama o `architect`. O architect propõe a correção e a classifica no Histórico pelo ADR-019 (`elegível` ou `exige humano`).
+
+- **Correção pequena (ADR-019):** o orquestrador confere no diff do architect todos os critérios E-1 a E-5 e nenhuma das exclusões X-1 a X-9 (a X-8 foi removida). Se tudo vale, ele registra a reaprovação num commit só de status ("aprovada pelo orquestrador sob o ADR-019", com o motivo), avisa o humano e retoma o loop. O reviewer confere essa reaprovação no portão da rodada. Quando a SPEC tem a tag `security` ou `deploy`, o portão de segurança (o `security-devops` ou, se ele for o autor, o reviewer) também a confere. O PR a lista na seção "Reaprovações sob o ADR-019".
+- **Qualquer outro caso, ou na dúvida:** a SPEC alterada precisa de nova aprovação humana.
+
+Em ambos os casos, o loop reinicia na rodada atual. O humano pode vetar uma reaprovação delegada a qualquer momento, e o veto reabre a SPEC (`Blocked`, "Aguardando reaprovação humana").

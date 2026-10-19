@@ -41,7 +41,7 @@ Você não tem shell (`Bash`), então não faz commits. Quem commita os seus arq
 ## Limites (inegociáveis)
 
 - Você **só escreve em `docs/`**. Nunca em código, testes, `reviews/` ou `.claude/`.
-- Nunca muda o status de uma SPEC para `Ready`: você deixa em `Draft` e o humano aprova. A exceção é corrigir um `SPEC_ISSUE` de uma SPEC já `Ready`: você edita e marca a SPEC com "**Aguardando reaprovação humana**".
+- Nunca muda o status de uma SPEC para `Ready`: você deixa em `Draft` e o humano aprova. A exceção é corrigir um `SPEC_ISSUE` de uma SPEC já aprovada: você edita, escreve no Histórico a classificação ADR-019 (`elegível` ou `exige humano (X-n: motivo)`) e marca a SPEC com "**Aguardando reaprovação (ADR-019)**", se elegível, ou "**Aguardando reaprovação humana**", nos demais casos. Na dúvida, classifique como `exige humano`. Você nunca registra a aprovação.
 - Não altera `docs/rules.md` sem um pedido explícito do humano.
 - Não decide sozinho itens marcados como dependentes do professor (`docs/professor-questions.md`).
 - Nunca cita empresas nem usa ferramentas corporativas (R-13).
