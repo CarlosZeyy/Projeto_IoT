@@ -1,4 +1,5 @@
-"""The CI has no torch: the data modules must import without it (SPEC-011 §4.5); R-02/R-14."""
+"""The CI has no torch: the data modules (SPEC-011 §4.5) and the evaluation modules (SPEC-012
+CA-27) must import without it; R-02/R-14."""
 
 from __future__ import annotations
 
@@ -11,14 +12,30 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULES = ("qc_ml.data", "qc_ml.split", "qc_ml.agreement", "qc_ml.augment", "qc_ml.synthetic")
+# SPEC-012 CA-27, plus the torch-free helpers they use and the pipeline entry point.
+EVALUATION_MODULES = (
+    "qc_ml.predict",
+    "qc_ml.decision",
+    "qc_ml.thresholds",
+    "qc_ml.evaluate",
+    "qc_ml.parity",
+    "qc_ml.report",
+    "qc_ml.config",
+    "qc_ml.artifacts",
+    "qc_ml.plots",
+    "qc_ml.steps",
+    "qc_ml.pipeline",
+    "qc_ml.train",
+)
 
 
-def test_modules_import_without_torch() -> None:
+@pytest.mark.parametrize("modules", [MODULES, EVALUATION_MODULES], ids=["spec011", "spec012"])
+def test_modules_import_without_torch(modules: tuple[str, ...]) -> None:
     code = (
         "import sys\n"
         "sys.modules['torch'] = None\n"
         "import importlib\n"
-        f"for name in {MODULES!r}:\n"
+        f"for name in {modules!r}:\n"
         "    importlib.import_module(name)\n"
         "assert sys.modules['torch'] is None\n"
         "print('ok')\n"
