@@ -446,47 +446,87 @@ def test_gitignore_covers_the_vps_env_files(path: str, ignored: bool) -> None:
 # ---------------------------------------------------------------- R-03: secret scan (CA-05)
 
 # Built at run time, so that this file does not match the patterns itself.
-SECRET_PATTERNS = [
-    re.compile("postgres(ql)?" + r"://[^\s:/@]+:[^\s@]+@"),
+# Patterns with no exception (CA-05, first item).
+STRICT_SECRET_PATTERNS = [
     re.compile("ey" + r"J[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"),
     re.compile("-----BEGIN " + r"[A-Z ]*PRIVATE KEY-----"),
     re.compile("service" + r"_role\s*[:=]\s*\S{20,}"),
 ]
-ALLOWED_CREDENTIALS = (
-    "<user>:<password>",
-    "postgres:" + "postgres@localhost",
+# Postgres URL with credentials (CA-05, second item), accepted only by one of the three rules.
+POSTGRES_URL = re.compile("postgres(ql)?" + r"://(?P<user>[^\s:/@]+):(?P<password>[^\s@]+)@")
+DOC_MARKER = re.compile(r"^<[a-z][a-z_-]*>$")
+RUNTIME_VALUE = re.compile(r"^\$?\{[A-Za-z_][A-Za-z0-9_]*\}$")
+ELLIPSIS = "\u2026"
+KNOWN_FICTITIOUS = (
     "u:pw@" + "127.0.0.1",
     "u:s3cr3t-pw@" + "127.0.0.1",
+    "postgres:" + "postgres@localhost",
+    "postgres:" + "postgres@...",
+    "u:senha@" + ELLIPSIS,
 )
 
 
-def _tracked_text_files() -> list[Path]:
+def postgres_url_allowed(text: str, match: re.Match[str]) -> bool:
+    """Rules 1 to 3 of CA-05 for one occurrence of ``POSTGRES_URL`` in ``text``."""
+    password = match.group("password")
+    if DOC_MARKER.fullmatch(password) or password in {ELLIPSIS, "..."}:
+        return True  # 1. documentation marker
+    if RUNTIME_VALUE.fullmatch(password):
+        return True  # 2. value built at run time (the file holds a variable name)
+    after_scheme = text[match.start() + match.group(0).index("://") + 3 :]
+    return after_scheme.startswith(KNOWN_FICTITIOUS)  # 3. known fictitious credential
+
+
+def secret_findings(text: str) -> list[str]:
+    found = [p.pattern for p in STRICT_SECRET_PATTERNS if p.search(text)]
+    found += [m.group(0) for m in POSTGRES_URL.finditer(text) if not postgres_url_allowed(text, m)]
+    return found
+
+
+def _ca05_files() -> list[Path]:
+    """Every tracked file outside ``docs/`` that exists in the working tree (none skipped)."""
     out = subprocess.run(
         ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True, timeout=30
     ).stdout.decode("utf-8")
-    # Author scan of the product and configuration files: docs/, reviews/ and the test suites
-    # (which hold fictitious credentials built at run time) are left to the CA-05 acceptance test.
-    paths = [
-        ROOT / rel
-        for rel in out.split("\0")
-        if rel and not rel.startswith(("docs/", "reviews/", "tests/")) and "/tests/" not in rel
-    ]
-    return [p for p in paths if p.is_file() and p.suffix not in {".onnx", ".npz", ".png"}]
+    paths = [ROOT / rel for rel in out.split("\0") if rel and not rel.startswith("docs/")]
+    return [path for path in paths if path.is_file()]
 
 
 def test_no_secret_material_in_tracked_files() -> None:
     found: list[str] = []
-    for path in _tracked_text_files():
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        for pattern in SECRET_PATTERNS:
-            for match in pattern.finditer(text):
-                line = text[text.rfind("\n", 0, match.start()) + 1 : text.find("\n", match.end())]
-                if not any(allowed in line for allowed in ALLOWED_CREDENTIALS):
-                    found.append(f"{path.relative_to(ROOT)}: {pattern.pattern}")
+    for path in _ca05_files():
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        found += [f"{path.relative_to(ROOT)}: {item}" for item in secret_findings(text)]
     assert found == []
+
+
+@pytest.mark.parametrize(
+    ("sample", "allowed"),
+    [
+        ("postgresql://" + "<user>:<password>@<host>:6543/postgres", True),
+        ("postgres://" + ELLIPSIS + ":" + ELLIPSIS + "@", True),
+        ("postgresql://" + "postgres:<senha>@host", True),
+        ("postgresql://" + "u:{SECRET}@127.0.0.1:1/x", True),
+        ("postgresql://" + "u:${DB_PASSWORD}@db", True),
+        ("postgresql://" + "u:s3cr3t-pw@127.0.0.1:6543/x_test", True),
+        ("postgresql://" + "postgres:" + "postgres@localhost:55432/partqc_test", True),
+        ("postgresql://" + "u:senha@" + ELLIPSIS, True),
+        ("postgresql://" + "u:s3cr3t-pw@db.example.org/x", False),
+        ("postgresql://" + "postgres.abc:Real" + "Pass123@aws-0-sa-east-1.pooler", False),
+        ("postgresql://" + "u:{SECRET}x@db", False),
+        ("postgresql://" + "u:<Password>@db", False),
+    ],
+)
+def test_ca05_rules(sample: str, allowed: bool) -> None:
+    assert (secret_findings(sample) == []) is allowed
+
+
+def test_ca05_strict_patterns_have_no_exception() -> None:
+    jwt = "ey" + "J" + "a" * 24 + "." + "b" * 24
+    key = "-----BEGIN " + "RSA PRIVATE KEY-----"
+    role = "service" + "_role = " + "x" * 24
+    for sample in (jwt, key, role):
+        assert secret_findings(sample) != []
 
 
 # ---------------------------------------------------------------- docs/deployment-plan.md
