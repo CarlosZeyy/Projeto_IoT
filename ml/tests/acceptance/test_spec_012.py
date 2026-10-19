@@ -664,7 +664,8 @@ def test_ca13_perturbed_fixture_fails_parity(tmp_path: Path) -> None:
     np.savez_compressed(fixture_path, **arrays)
     result = check_parity(copy)
     assert result.ok is False
-    assert result.max_abs_diff >= 1e-3, result.max_abs_diff
+    # CA-13 (r2, SPEC_ISSUE-01): 1e-3 -/+ 1e-4, never an exact 1e-3 bound (float32 noise).
+    assert 9e-4 < result.max_abs_diff < 1.1e-3, result.max_abs_diff
 
 
 def test_ca14_tiny_fixture_files_size_and_git() -> None:
