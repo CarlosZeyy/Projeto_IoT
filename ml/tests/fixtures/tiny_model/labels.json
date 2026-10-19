@@ -1,0 +1,14 @@
+{
+  "object_types": [
+    "screw",
+    "nut",
+    "other"
+  ],
+  "grades": [
+    "perfect",
+    "good",
+    "fair",
+    "poor",
+    "unusable"
+  ]
+}

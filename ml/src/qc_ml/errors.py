@@ -1,4 +1,4 @@
-"""Errors raised by the qc_ml data pipeline (SPEC-011 section 3.1)."""
+"""Errors raised by the qc_ml pipeline (SPEC-011 section 3.1, SPEC-012)."""
 
 from __future__ import annotations
 
@@ -42,3 +42,23 @@ class SplitError(ValueError):
 
 class SplitIntegrityError(SplitError):
     """A split was used against R-11 (an item in two splits, or the wrong split for a step)."""
+
+
+class ConfigError(ValueError):
+    """The training configuration is invalid (SPEC-012 section 4.2)."""
+
+
+class TrainError(RuntimeError):
+    """Training cannot run or failed (SPEC-012 section 4.2)."""
+
+
+class ModelArtifactError(ValueError):
+    """A model directory is incomplete or does not match its ``model.sha256`` (SPEC-012 4.5)."""
+
+
+class ExportError(RuntimeError):
+    """The ONNX export or its parity check failed (SPEC-012 sections 4.3 and 4.4)."""
+
+
+class EvaluationError(RuntimeError):
+    """The thresholds or the evaluation cannot run (SPEC-012 sections 4.6 and 4.7)."""

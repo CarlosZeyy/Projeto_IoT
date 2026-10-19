@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -60,3 +61,56 @@ def write_csv(path: Path, header: list[str], rows: list[list[str]]) -> None:
 def rows_io() -> tuple[Callable, Callable, Callable]:
     """``(read_rows, write_rows, write_csv)`` helpers."""
     return read_rows, write_rows, write_csv
+
+
+# ---------------------------------------------------------------------------------------------
+# SPEC-012: dataset with split, the tiny model fixture and configs in tmp_path
+# ---------------------------------------------------------------------------------------------
+
+TINY_MODEL = Path(__file__).resolve().parent / "fixtures" / "tiny_model"
+TINY_VERSION = "partqc-tiny-v1"
+
+
+@pytest.fixture(scope="session")
+def _template_split(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    from qc_ml import split as split_mod
+
+    root = tmp_path_factory.mktemp("template_split")
+    make_synthetic_dataset(root / "ds")
+    assert (
+        split_mod.main(["--dataset-dir", str(root / "ds"), "--splits-dir", str(root / "splits")])
+        == 0
+    )
+    return root
+
+
+@pytest.fixture
+def split_dataset(_template_split: Path, tmp_path: Path) -> tuple[Path, Path]:
+    """``(dataset_dir, split_v1.csv)``: 88 synthetic images split by item (copied per test)."""
+    root = Path(shutil.copytree(_template_split, tmp_path / "data"))
+    return root / "ds", root / "splits" / "split_v1.csv"
+
+
+@pytest.fixture
+def tiny_config(split_dataset: tuple[Path, Path], tmp_path: Path) -> Path:
+    """A config whose model directory is a copy of ``ml/tests/fixtures/tiny_model``."""
+    dataset_dir, split_file = split_dataset
+    models_root = tmp_path / "models"
+    shutil.copytree(TINY_MODEL, models_root / TINY_VERSION)
+    config = {
+        "model_version": TINY_VERSION,
+        "dataset_dir": str(dataset_dir),
+        "split_file": str(split_file),
+        "backbone": "tiny",
+        "pretrained": False,
+        "epochs_a": 1,
+        "epochs_b_max": 1,
+        "num_workers": 0,
+        "smoke": True,
+        "models_root": str(models_root),
+        "reports_root": str(tmp_path / "reports"),
+        "checkpoints_root": str(tmp_path / "checkpoints"),
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return path
