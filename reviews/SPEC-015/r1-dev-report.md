@@ -6,7 +6,7 @@
 | Rodada | r1 |
 | Autor | security-devops |
 | Branch | `spec/SPEC-015-deploy-vps` |
-| Commits | `0ab6e9e` (executor de migrações, §4.7), `be25095` (deploy na VPS, workflows, smoke, docs), `b067b85` (credencial fictícia na forma da allowlist), mais o commit deste relatório |
+| Commits | `0ab6e9e` (executor de migrações, §4.7), `be25095` (deploy na VPS, workflows, smoke, docs), `b067b85` (credencial fictícia na forma da allowlist, desfeita na retomada), `8053e3f` (este relatório) e os dois commits da retomada após o SPEC_ISSUE-01 (ver a seção no fim) |
 
 ## Resumo
 
@@ -20,7 +20,7 @@ Nenhum agente tem acesso à VPS, ao Supabase, ao DNS nem às contas. Por isso, *
 |---|---|---|
 | CA-01 | `infra/render.yaml` | `infra/tests/test_deploy_files.py::test_render_blueprint_is_the_free_cold_standby`, `::test_render_python_version_matches_the_image_base` |
 | CA-02 | `.github/workflows/keepalive.yml` | `test_deploy_files.py::test_keepalive_workflow` |
-| CA-05 | todos os arquivos novos (sem segredo); `infra/tests/test_cli.py` (literal da allowlist) | `test_deploy_files.py::test_no_secret_material_in_tracked_files` (escopo do autor: fora de `docs/`, `reviews/` e das suítes de teste; ver SPEC_ISSUE-01) |
+| CA-05 | todos os arquivos novos (sem segredo); credenciais fictícias montadas em tempo de execução nos testes | `test_deploy_files.py::test_no_secret_material_in_tracked_files` (escopo e regras 1 a 3 do CA-05 novo, ver a retomada), `::test_ca05_rules`, `::test_ca05_strict_patterns_have_no_exception` |
 | CA-06 | `.gitignore` (sem mudança: `.env` e `.env.*` já cobrem) | `test_deploy_files.py::test_gitignore_covers_the_vps_env_files` |
 | CA-07 | `.streamlit/config.toml` | `test_deploy_files.py::test_streamlit_config` |
 | CA-08 a CA-12 | `scripts/smoke_test.py` | `infra/tests/test_smoke_script.py` (23 testes: 8 `PASS` na ordem, `source=simulated`, falhas de cada checagem, código 2 sem requisição, nenhuma chave nem `host-secreto-15` na saída, inclusive com `ConnectError`, e sem `verify=False`) |
@@ -166,11 +166,11 @@ Os comandos exatos estão no `docs/deployment-plan.md`. A tabela da §9 de lá r
   - as duas consultas do `EXPLAIN ANALYZE` foram geradas a partir de `qc_api.repositories.inspections` com os parâmetros padrão das rotas;
   - o smoke usa um `.env.prod` local, coberto pelo padrão `.env.*`;
   - o comando do CA-42 aparece com `grep '^PUBLIC_HOST'`, sem `=`, para não ferir a regra do CA-41.
-- **`infra/tests/test_cli.py`** (teste do autor da SPEC-003): as duas f-strings com `u:{SECRET}@` viraram o literal `postgresql://u:s3cr3t-pw@127.0.0.1:1/x`, que está na allowlist do CA-05. O comportamento testado é o mesmo.
+- ~~**`infra/tests/test_cli.py`**: as duas f-strings com `u:{SECRET}@` viraram um literal da allowlist antiga do CA-05.~~ Desfeito na retomada, a pedido do humano (ver a seção no fim).
 
 ## SPEC_ISSUE (se houver)
 
-- **SPEC_ISSUE-01 (CA-05, allowlist incompleta; não bloqueia a implementação, mas bloqueia o aceite literal do tester).** Tomado ao pé da letra, o CA-05 busca os padrões em todos os arquivos de `git ls-files` fora de `docs/`, e a lista de permissão tem só `<user>:<password>`, `postgres:postgres@localhost`, `u:pw@127.0.0.1` e `u:s3cr3t-pw@127.0.0.1`. Hoje o padrão `postgres(ql)?://[^\s:/@]+:[^\s@]+@` casa, sem estar na lista, em arquivos que este papel não pode editar. Nenhum é segredo:
+- **SPEC_ISSUE-01 (CA-05, allowlist incompleta) — resolvido** pelo architect no commit `758a570` e reaprovado pelo humano em 2026-10-19 (ver a seção "Retomada após o SPEC_ISSUE-01"). Texto original do achado: Tomado ao pé da letra, o CA-05 busca os padrões em todos os arquivos de `git ls-files` fora de `docs/`, e a lista de permissão tem só `<user>:<password>`, `postgres:postgres@localhost`, `u:pw@127.0.0.1` e `u:s3cr3t-pw@127.0.0.1`. Hoje o padrão `postgres(ql)?://[^\s:/@]+:[^\s@]+@` casa, sem estar na lista, em arquivos que este papel não pode editar. Nenhum é segredo:
   - `infra/tests/acceptance/test_spec_003.py:640, 1008, 1010, 1023`: f-strings do tester com o esquema `postgresql://` seguido de `u:{SECRET}@127.0.0.1`;
   - `reviews/SPEC-009/r1-review-report.md:46` e `reviews/SPEC-022/r1-review-report.md:29`: o esquema `postgres://` seguido de `…:…@`;
   - `reviews/SPEC-022/r1-review-report.md:22`: o esquema `postgresql://` seguido de `postgres:<senha>@`, e uma ocorrência de `postgres:postgres@` sem `localhost` logo depois;
@@ -187,3 +187,23 @@ Os comandos exatos estão no `docs/deployment-plan.md`. A tabela da §9 de lá r
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] Nenhum segredo, subdomínio real ou IP em arquivo versionado; os `.env` de teste ficaram em diretórios temporários e foram apagados
 - [x] Nenhum `.dockerignore` na raiz, nenhuma mudança no `ci.yml`, nenhum `dashboard/requirements.txt`
+
+## Retomada após o SPEC_ISSUE-01
+
+O architect corrigiu o CA-05 (commit `758a570`), e o humano reaprovou a correção em 2026-10-19 (Histórico da SPEC-015; classificação ADR-019: exige humano, X-7). A SPEC voltou a `In Dev`, ainda na r1. O CA-05 novo varre todo arquivo de `git ls-files` fora de `docs/`, inclusive `reviews/` e todas as suítes de teste, decodificado com `errors="replace"` e sem pular arquivo. Os padrões de JWT, chave privada e `service_role` não têm exceção. No padrão de URL do Postgres, uma ocorrência só é aceita por uma de três regras: (1) marcador de documentação, (2) valor montado em tempo de execução (`{NOME}` ou `${NOME}`), (3) uma das cinco credenciais fictícias exatas.
+
+O que mudou nesta retomada:
+
+| Pedido | O que mudou |
+|---|---|
+| Desfazer a troca do `b067b85` em `infra/tests/test_cli.py` | As duas URLs voltaram a ser f-strings com `u:{SECRET}@127.0.0.1`, como manda o `reviews/checklist.md` e como a regra 2 aceita. O arquivo ficou idêntico ao de antes do `b067b85` (`git diff b067b85~1 -- infra/tests/test_cli.py` vazio). |
+| Mesma regra nos testes deste autor | A URL da porta 6543 em `infra/tests/test_migrate_production.py` (`_refused_conninfos`), que eu tinha trocado pelo literal no mesmo commit, também voltou a ser f-string com `{SECRET}`. |
+| Alinhar a varredura do autor ao CA-05 novo | Em `infra/tests/test_deploy_files.py`, a varredura agora segue o texto novo: escopo de todo `git ls-files` fora de `docs/` (inclusive `reviews/` e as suítes de teste, nenhum arquivo pulado, `errors="replace"`), padrões estritos sem exceção, e o padrão de URL com os grupos `user` e `password` e as regras 1 a 3 (`postgres_url_allowed`). Os padrões e os exemplos são montados por concatenação, para o próprio arquivo não casar. Testes novos: `test_ca05_rules` (8 formas aceitas e 4 recusadas, inclusive uma senha real com host de pooler e `{SECRET}x`) e `test_ca05_strict_patterns_have_no_exception`. A varredura sobre o repositório inteiro fora de `docs/`, com este relatório incluído, não acha nada fora das regras. |
+
+Verificação depois da retomada (2026-10-19):
+
+- `uv run ruff check .` e `uv run ruff format --check .`: limpos.
+- `CI=true TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q`: **4895 passed, 34 skipped** (os 12 testes `docker` como skip). Uma primeira rodada falhou só no CA-10 da SPEC-022 (`tests/acceptance/test_spec_022.py::test_ca10_no_postgres_password_outside_docs_and_reviews`), porque um exemplo do `test_ca05_rules` trazia a sequência proibida `postgres:` + `postgres@` inteira no código-fonte. O exemplo passou a ser montado por concatenação, e a rodada seguinte passou inteira.
+- Nenhum outro arquivo mudou: os Dockerfiles, o compose, o Caddyfile, os workflows, o smoke e o `deployment-plan.md` são os da r1. Os 12 testes `docker` não foram afetados (as mudanças são só em testes sem Docker).
+- Os passos humanos e os CAs manuais continuam pendentes, como na seção "Passos humanos e CAs manuais".
+
