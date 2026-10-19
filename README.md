@@ -18,7 +18,7 @@ A **nuvem** guarda o histórico e mostra indicadores e uma **carta de controle p
 Celular (câmera, navegador) ──HTTP/LAN──► Notebook (FastAPI + ONNX Runtime + outbox SQLite)
                                                         │ HTTPS (só resultados, nunca imagens)
                                                         ▼
-                                  API FastAPI (Render) ─► Postgres (Supabase) ◄─ Dashboard (Streamlit)
+                                  API FastAPI (VPS) ─► Postgres (Supabase) ◄─ Dashboard (Streamlit, VPS)
 ```
 
 - **Custo:** R$ 0 (free tiers e software livre)
@@ -135,7 +135,7 @@ uv run --package qc-api python scripts/simulate.py --dry-run --device-id sim-01 
 - **Lotes:** `--lots` (padrão 10, até 500), `--lot-size` (padrão 25) ou o par `--lot-size-min`/`--lot-size-max`, `--defect-rate` (padrão 0,10, taxa de `poor` + `unusable`), `--unknown-rate` (padrão 0,02) e `--out-of-control-lots` (números 1-based de 1 a 4 dígitos, separados por vírgula, com a taxa de defeito triplicada, limitada a 1; `0007` é o lote 7). Cada lote se chama `SIM-<AAAAMMDD>-<NNN>` (data UTC de `--start`) e ocupa 10 min a partir de `--start` (padrão: agora − lotes × 10 min; com fuso, sem passar de agora + 5 min).
 - **Idempotência (R-05):** os ids derivam de `--seed`. Rodar de novo com a mesma seed reenvia os mesmos ids, e a API responde `duplicate`. Sem `--seed`, uma seed aleatória é sorteada; ela aparece sempre no resumo `sent=<n> created=<n> duplicate=<n> lots=<n> seed=<s> source=simulated`.
 - **Mesmo dia, outra série:** o `lot_id` só usa a data de `--start`. Duas execuções no mesmo dia com seeds diferentes geram lotes com o mesmo nome e misturam os dados no SPC; para uma série nova, use outro `--start`.
-- **Envio:** antes do primeiro lote, `GET /api/v1/health` com até 90 s de espera (acorda o Render). Erro de rede, timeout ou 5xx: até 3 novas tentativas por bloco (2, 4 e 8 s).
+- **Envio:** antes do primeiro lote, `GET /api/v1/health` com até 90 s de espera (absorve um cold start da API, como o do Render, reserva da hospedagem). Erro de rede, timeout ou 5xx: até 3 novas tentativas por bloco (2, 4 e 8 s).
 
 Códigos de saída: `0` sucesso; `1` erro interno (item gerado inválido); `2` uso inválido; `3` chave recusada (401/403); `4` bloco recusado (422, com o `detail` no stderr); `5` API fora do ar ou falhando (health, rede, timeout, 5xx depois das tentativas, ou outra resposta inesperada).
 

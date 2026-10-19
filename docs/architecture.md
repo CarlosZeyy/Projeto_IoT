@@ -5,18 +5,25 @@ Fonte de verdade técnica do projeto. As SPECs detalham cada parte, mas **não p
 ## 1. Visão em 3 camadas (IoT: dispositivo → borda → nuvem)
 
 ```
-┌─ DISPOSITIVO ─────────┐      ┌─ BORDA (notebook, LAN) ──────────────────────────┐      ┌─ NUVEM ──────────────────────────┐
-│ Celular (navegador)   │      │ qc-edge (FastAPI, 0.0.0.0:8000)                  │      │ qc-api (FastAPI, Render)         │
-│                       │ HTTP │  ├─ console do operador (QR de pareamento)       │HTTPS │  ├─ POST /api/v1/inspections     │
-│ /capture              │─────►│  ├─ /api/capture: recebe a foto                  │─────►│  ├─ POST /api/v1/inspections/batch│
-│  • foto (câmera nativa│      │  ├─ qc-preprocess (o mesmo do treino)            │      │  ├─ GET leituras, métricas, SPC  │
-│  • lote, modo         │◄─────│  ├─ onnxruntime → probabilidades                 │      │  └─► Supabase Postgres (RLS)     │
-│  • resultado na tela  │ JSON │  ├─ decisão (unknown / needs_review)             │      │                                  │
-└───────────────────────┘      │  ├─ foto salva no disco local (nunca sobe)       │      │ qc-dashboard (Streamlit CC)      │
-                               │  └─ outbox SQLite → HttpPublisher (retry)        │      │  └─ lê tudo via qc-api           │
-                               └──────────────────────────────────────────────────┘      └──────────────────────────────────┘
+┌─ DISPOSITIVO ─────────┐      ┌─ BORDA (notebook, LAN) ──────────────────────────┐      ┌─ NUVEM ─────────────────────────────────┐
+│ Celular (navegador)   │      │ qc-edge (FastAPI, 0.0.0.0:8000)                  │      │ VPS pessoal (Docker Compose, ADR-018)   │
+│                       │ HTTP │  ├─ console do operador (QR de pareamento)       │HTTPS │ Caddy (TLS, 80/443, <subdominio>)       │
+│ /capture              │─────►│  ├─ /api/capture: recebe a foto                  │─────►│  ├─ /api/* ─► qc-api (FastAPI)          │
+│  • foto (câmera nativa│      │  ├─ qc-preprocess (o mesmo do treino)            │      │  │    ├─ POST /inspections, /batch      │
+│  • lote, modo         │◄─────│  ├─ onnxruntime → probabilidades                 │      │  │    ├─ GET leituras, métricas, SPC    │
+│  • resultado na tela  │ JSON │  ├─ decisão (unknown / needs_review)             │      │  │    └─► Supabase Postgres (RLS)       │
+└───────────────────────┘      │  ├─ foto salva no disco local (nunca sobe)       │      │  └─ /* ─► qc-dashboard (Streamlit)      │
+                               │  └─ outbox SQLite → HttpPublisher (retry)        │      │           └─ lê tudo via qc-api         │
+                               └──────────────────────────────────────────────────┘      └─────────────────────────────────────────┘
                                                                                           scripts/simulate.py ─► qc-api (source=simulated)
 ```
+
+**Hospedagem** (ADR-018, SPEC-015):
+- A `qc-api` e o `qc-dashboard` rodam na VPS pessoal do humano, com Docker Compose (`infra/compose.yaml`), atrás de um Caddy. O Caddy é o único serviço com portas publicadas (80 e 443) e obtém o certificado do Let's Encrypt para um único subdomínio pessoal.
+- Roteamento: `/api/*` vai para a API (as rotas já têm o prefixo `/api/v1`); o resto, inclusive o WebSocket `/_stcore/stream`, vai para o Streamlit. `/docs` e `/openapi.json` não são publicados.
+- O dashboard chama a API pela URL pública `https://<subdominio>`. O Caddy tem esse nome como alias na rede do compose, e o tráfego não sai da VPS.
+- O banco continua no Supabase (ADR-006, ADR-008). O Render é a reserva fria da API (`infra/render.yaml`).
+- O subdomínio real e o IP da VPS nunca entram no repositório (R-13): a documentação usa `<subdominio>`, e o valor real fica em `PUBLIC_HOST`, no `infra/.env` da VPS.
 
 **Por que assim** (ADR-002):
 - O celular é só o sensor.
@@ -34,7 +41,9 @@ Fonte de verdade técnica do projeto. As SPECs detalham cada parte, mas **não p
 | `dashboard/` | `qc-dashboard` | Painel Streamlit | qc-contracts, streamlit, plotly, pandas, httpx | torch, onnxruntime, acesso direto ao banco |
 | `ml/` | `qc-ml` (`qc_ml`) | Manifest, split, treino, avaliação, export ONNX, paridade | qc-contracts, qc-preprocess, numpy, pandas, scikit-learn, onnxruntime, pillow; **extra opcional `train`**: torch, torchvision, timm, onnx, coral-pytorch | — |
 | `scripts/` | (scripts soltos, executados com o ambiente do `qc-api`) | `simulate.py`, `register_device.py`, `smoke_test.py` | httpx, qc-contracts, psycopg | — |
-| `infra/` | — | `migrations/*.sql`, `render.yaml`, configs de deploy | — | segredos |
+| `infra/` | — | `migrations/*.sql`, `migrate.py`, `docker/` (Dockerfiles e um `.dockerignore` por Dockerfile), `compose.yaml`, `Caddyfile`, `render.yaml` (reserva) | — | segredos (os `infra/.env*` da VPS são ignorados pelo Git e pelo build) |
+
+**Imagens** (SPEC-015 §4.10): `python:3.12.<patch>-slim` e `uv` com versões fixadas, `uv sync --package <pkg> --frozen --no-dev` (editável, para o `REPO_ROOT` do dashboard ser `/app`), usuário não root e `HEALTHCHECK`. Nenhuma imagem contém torch, torchvision, timm, onnx ou onnxruntime (R-12), e a do dashboard não contém driver de banco.
 
 O acesso ao banco é feito com **psycopg 3 direto ao Postgres do Supabase** (connection string do pooler em modo transaction, guardada em `DATABASE_URL`, com `prepare_threshold=None`, porque esse modo não suporta prepared statements — ADR-006), e não pelo SDK `supabase-py`. Isso dá SQL explícito, transações e `ON CONFLICT` para a idempotência. A chave `service_role` não é necessária no MVP; se algum dia for, vale R-03.
 
@@ -152,7 +161,7 @@ Resposta (com os campos da 0.3.0; `points` abreviado a 1 dos 100 itens de uma hi
 - **Leitura:** chave única `READ_API_KEY` (variável de ambiente da API), usada pelo dashboard.
 - Sem chave ou com chave inválida: 401.
 
-**Outras proteções:** corpo limitado a 256 KB, CORS fechado (o dashboard chama do servidor, não do navegador) e documentação em `/docs`. Um valor que o contrato aceita mas o banco recusa vira 422 `{"detail": "Value cannot be stored"}`, com `rollback` de tudo, e nunca 500:
+**Outras proteções:** corpo limitado a 256 KB, CORS fechado (o dashboard chama do servidor, não do navegador) e documentação em `/docs`. Em produção, o `/docs` e o `/openapi.json` não são publicados, porque o Caddy só encaminha `/api/*` para a API (ADR-018); eles ficam acessíveis localmente. Um valor que o contrato aceita mas o banco recusa vira 422 `{"detail": "Value cannot be stored"}`, com `rollback` de tudo, e nunca 500:
 
 - `psycopg.DataError` (SQLSTATE classe `22`, como o underflow das colunas `real` do §5), desde a SPEC-004;
 - `psycopg.IntegrityError` (classe `23`, como uma `check` do banco mais estrita que o contrato depois de uma migração), a partir da SPEC-005. Hoje esse caminho é inalcançável, porque as `check` espelham o contrato (§5).
@@ -273,6 +282,11 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
 - **Plano C:** **ancoragem USB** (USB tethering): o celular ligado ao notebook pelo cabo cria uma rede local entre os dois, e o celular acessa o IP do notebook nessa interface.
 - **Túneis públicos (ex.: Cloudflare quick tunnel) são proibidos** para a captura, porque o tráfego, com as fotos, passaria pela infraestrutura do provedor e violaria a R-02.
 - **Nuvem fora do ar:** a borda continua inspecionando e o outbox acumula. O console mostra `offline` e o número de pendentes.
+- **Nuvem na VPS** (ADR-018, SPEC-015 §4.12 e §4.15):
+  - só o Caddy publica portas (80/tcp, 443/tcp e 443/udp); a API e o dashboard ficam só na rede `partqc` do compose, sem `ports`;
+  - as portas publicadas pelo Docker passam por fora do `ufw`, por isso não publicar é a proteção real;
+  - a VPS hospeda outros projetos do humano: os passos de firewall só conferem ou acrescentam regras, nunca apagam, reiniciam ou limpam (`ufw reset`, `prune`, `down -v`);
+  - cada serviço tem `mem_limit` e `cpus` (padrões no `infra/.env`; API 512 MB).
 
 ## 9. Segurança (resumo; detalhes por SPEC)
 
@@ -284,13 +298,17 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
 | Porta da borda alcançada fora da rede da dupla (Wi-Fi do campus, bridges do Docker) | Regra de firewall só para a sub-rede da LAN ou do hotspot, só durante a sessão (§8); o token cobre o resto |
 | Fotos lidas por outra conta local do notebook | `captures/` e `DATASET_DIR` com diretórios `0700` e arquivos `0600` (SPEC-025 e SPEC-010); retenção das fotos de inspeção em `docs/dataset-protocol.md` §9 (R-14) |
 | Foto do dataset levando a localização (EXIF GPS), o aparelho ou um vídeo (Motion Photo) para o backup no Drive e o Colab, ou uma foto com pessoa no backup (SEC-10-01 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md`) | Modo coleta grava sem APP1, APP13, COM e trailer, e `python -m qc_edge.privacy` antes de cada backup (SPEC-025, `Done` antes do primeiro backup); remoção de foto com pessoa por `exclusions.csv`, inclusive do backup (`docs/dataset-protocol.md` §8 e §8.1, SPEC-011) |
-| `API_BASE_URL` do dashboard com `http://` mandando a `READ_API_KEY` em claro (SEC-13-01 de `reviews/SPEC-013/r2-security-report.md`) | O dashboard recusa esquema que não seja `https://`, salvo `http://` em `localhost`/`127.0.0.1` (SPEC-028); Secrets do Streamlit CC com `https://` (SPEC-015) |
+| `API_BASE_URL` do dashboard com `http://` mandando a `READ_API_KEY` em claro (SEC-13-01 de `reviews/SPEC-013/r2-security-report.md`) | O dashboard recusa esquema que não seja `https://`, salvo `http://` em `localhost`/`127.0.0.1` (SPEC-028); em produção, o compose define `API_BASE_URL=https://${PUBLIC_HOST}` (SPEC-015 §4.12) |
 | Chave de dispositivo vazada | Hash no banco; rotação por `register_device.py --rotate` |
 | Leitura indevida pela chave anon do Supabase | RLS sem políticas; a API usa `DATABASE_URL` só no servidor |
 | Payload malicioso | Pydantic com `extra="forbid"`, limites de tamanho e tipo de imagem validado pelo conteúdo (Pillow), não pela extensão. O `load_image` checa pelo cabeçalho, antes de decodificar, o limite de pixels (40 M) e de proporção (≤ 10:1), o que evita o OOM do resize (SPEC-023), e recusa JPEG com mais de 64 marcadores de scan (`FF DA`), o que limita a CPU gasta com scans progressivos repetidos (SPEC-024). Nenhum componente liga `PIL.ImageFile.LOAD_TRUNCATED_IMAGES`: o `load_image` se recusa a rodar com ela ligada, e a borda se recusa a subir (SPEC-007) |
 | Muitos uploads simultâneos na borda (memória e CPU) | Toda chamada a `load_image` em `qc_edge` passa por um semáforo de decodificações (padrão 2, espera de 10 s, depois 503 `server busy`); vale para os modos `inspect` e `collect` (SPEC-007 §4.6, SPEC-010). Custo por slot no pior caso aceito: ~2,5 s de CPU e ~360 MB só com os limites do `load_image` (medido, SEC-24-02 de `reviews/SPEC-024/r1-security-report.md`); com os limites próprios da rota (3 MiB e 4 M pixels, SPEC-007 §4.7), **~4 s de CPU e ~90 MB acima da base (pico de 133 MB) medidos**, com os 2 slots serializados pelo GIL (~1 núcleo) (SEC-02 de `reviews/SPEC-007/r1-security-report.md`). A espera por um slot acontece no event loop e não ocupa thread do threadpool, que é compartilhado com o console e o `/api/status` (SPEC-025) |
 | Valor aceito pelo contrato e recusado pelo banco | 422 com `rollback` para os SQLSTATE das classes `22` e `23` (§4); o publisher da borda isola o item por bissecção e o marca como `dead`, e do 422 registra só o status, o `detail` em texto ou a contagem de erros, nunca o corpo, que ecoa o `input` (SPEC-009) |
-| Muitos lotes pequenos gravados com uma chave de dispositivo, e a carta p do dashboard passando dos 512 MB do Render (SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`) | Corte da carta no SQL: no máximo 500 pontos e 50 excluídos por resposta (§3.4, ADR-017, SPEC-026); cache com TTL no dashboard (SPEC-013); `statement_timeout` no papel do banco para a parte do Postgres (SPEC-015) |
+| Muitos lotes pequenos gravados com uma chave de dispositivo, e a carta p do dashboard passando dos 512 MB da API (`mem_limit` padrão na VPS e limite do Render, a reserva) (SEC-06-01 de `reviews/SPEC-006/r1-security-report.md`) | Corte da carta no SQL: no máximo 500 pontos e 50 excluídos por resposta (§3.4, ADR-017, SPEC-026); cache com TTL no dashboard (SPEC-013); `statement_timeout` no papel do banco para a parte do Postgres (SPEC-015) |
+| Porta da API ou do dashboard exposta na VPS (o Docker publica por fora do `ufw`) | Só o Caddy tem `ports`; API e dashboard só com `expose` na rede do compose (SPEC-015 §4.12, CA-29 e CA-40) |
+| Segredo da VPS (`infra/.env*`), `.git`, dados ou fotos embutidos numa imagem | Um `.dockerignore` por Dockerfile em `infra/docker/`, conferido com arquivos-sentinela no build (SPEC-015 §4.11, CA-36) |
+| Rajada anônima ou DDoS contra a VPS, sem proteção de provedor nem limitação de taxa no Caddy padrão | Risco aceito no MVP; impacto nos outros projetos limitado por `mem_limit` e `cpus`; outbox na borda (SPEC-015 §4.8) |
+| Subdomínio pessoal ou IP da VPS no repositório (R-13) | Marcador `<subdominio>` na documentação e `PUBLIC_HOST` só no `infra/.env` da VPS (SPEC-015 CA-30, CA-41 e CA-42) |
 | Linha fora do contrato gravada direto no banco (SQL Editor, migração manual) derrubando a leitura com 500 | `check` da migração `002` (§5, SPEC-027) |
 | Vazamento de segredo no Git | `.gitignore`, `.env.example` e a busca do reviewer (R-03) |
 
@@ -298,7 +316,7 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
 
 ## 10. Testes (regras do projeto)
 
-- **Marcadores:** `db` (exige `TEST_DATABASE_URL`; sem ela, o teste é pulado, e no CI a sessão falha; SPEC-001 e SPEC-003), `acceptance` e `slow`.
+- **Marcadores:** `db` (exige `TEST_DATABASE_URL`; sem ela, o teste é pulado, e no CI a sessão falha; SPEC-001 e SPEC-003), `acceptance`, `slow` e `docker`. O `docker` exige Docker com BuildKit e Compose v2, roda só com `PARTQC_DOCKER_TESTS=1` (senão, o teste é pulado) e é executado pelo workflow `docker`, e não pelo `ci` (SPEC-015 §4.14).
 - **Sem suíte dentro da suíte** (RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md`):
   - Nenhum teste roda a suíte inteira em subprocesso (`pytest` sem caminhos, ou com um diretório inteiro de `testpaths`). Com k testes assim, cada um se protegendo só da própria recursão, a suíte roda muitas vezes por execução, e uma execução interna pode recriar o schema do banco de teste no meio da sessão externa.
   - Um CA do tipo "`ruff check`, `ruff format --check` e `pytest -q` terminam com código 0" é verificado pelo CI (R-09) e pela execução da suíte inteira que o tester já faz e registra no test-report. Ele não ganha teste automatizado: o test-report o marca como "verificado pela execução da suíte" e cita a contagem de testes. As SPECs novas não precisam escrever esse CA, porque a Definição de pronto já exige CI verde.

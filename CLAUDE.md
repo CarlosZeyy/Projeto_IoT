@@ -1,6 +1,6 @@
 # PartQC — Inspeção visual de qualidade (IoT + Cloud + Indústria 4.0)
 
-Projeto acadêmico de uma dupla. O celular fotografa parafusos e porcas; o notebook (gateway de borda) classifica o **tipo** e o **grau de estado** (perfeito, bom, mediano, ruim, inutilizável) com um modelo ONNX; a nuvem (FastAPI + Supabase + Streamlit) guarda o histórico e mostra os indicadores e a carta p (SPC). Custo R$ 0. Entrega entre 30/11 e 04/12/2026.
+Projeto acadêmico de uma dupla. O celular fotografa parafusos e porcas; o notebook (gateway de borda) classifica o **tipo** e o **grau de estado** (perfeito, bom, mediano, ruim, inutilizável) com um modelo ONNX; a nuvem (FastAPI e Streamlit na VPS pessoal com Docker Compose, banco no Supabase) guarda o histórico e mostra os indicadores e a carta p (SPC). Custo adicional R$ 0 (ADR-018). Entrega entre 30/11 e 04/12/2026.
 
 ## Leia antes de qualquer tarefa
 
@@ -12,7 +12,7 @@ Projeto acadêmico de uma dupla. O celular fotografa parafusos e porcas; o noteb
 
 ## Regras inegociáveis (resumo — o texto oficial está em docs/rules.md)
 
-- R-01 Custo R$ 0, nada que exija cartão.
+- R-01 Custo adicional R$ 0: free tiers, software livre e a VPS pessoal já existente (ADR-018); nenhum serviço novo que exija cartão.
 - R-02 Imagens não saem da LAN; só os resultados sobem.
 - R-03 Segredos fora do Git (`.env.example` documenta).
 - R-04 Mudança de contrato só em `packages/contracts`, com ADR e aumento de versão.
@@ -42,7 +42,7 @@ edge/                      qc-edge: gateway de borda na LAN                     
 dashboard/                 qc-dashboard: Streamlit                                 (SPEC-013)
 ml/                        qc-ml: dados, treino, avaliação, ONNX                   (SPEC-011/012)
 scripts/                   simulate.py, register_device.py                         (SPEC-004/014)
-infra/                     migrations SQL, render.yaml                             (SPEC-003/015)
+infra/                     migrations SQL, docker/, compose.yaml, Caddyfile, render.yaml (reserva)  (SPEC-003/015)
 ```
 
 As pastas de código são criadas pelas SPECs indicadas. Até a SPEC-001 estar `Done`, o repositório contém só documentação.

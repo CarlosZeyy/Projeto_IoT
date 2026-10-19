@@ -5,7 +5,9 @@
 | **ADR** | Architecture Decision Record. Registro curto de uma decisão (contexto, decisão, consequências). Fica em `docs/adr/` |
 | **Borda / edge / gateway** | O notebook que recebe as fotos do celular, roda o modelo e envia os resultados à nuvem |
 | **Carta p** | Gráfico de controle da proporção de itens defeituosos por subgrupo (lote), com linha central p̄ e limites de ±3σ |
-| **Cold start** | Demora da primeira requisição depois que um serviço free tier "dormiu" |
+| **Caddy** | Servidor web usado como proxy reverso na VPS: obtém o certificado HTTPS (Let's Encrypt) e encaminha `/api/*` para a API e o resto para o dashboard (ADR-018) |
+| **Cold start** | Demora da primeira requisição depois que um serviço free tier "dormiu". Desde o ADR-018, só acontece na reserva da API no Render |
+| **Docker Compose** | Ferramenta que sobe vários contêineres descritos num arquivo (`infra/compose.yaml`): Caddy, API e dashboard na VPS |
 | **Contrato** | Schemas Pydantic do pacote `qc-contracts` que borda, API e dashboard compartilham |
 | **CORN / CORAL** | Técnicas de regressão ordinal para redes neurais (respeitam a ordem dos graus) |
 | **Defeituoso** | Inspeção com grau `poor` ou `unusable` (ADR-013) |
@@ -26,4 +28,5 @@
 | **SPC** | Statistical Process Control (controle estatístico de processo) |
 | **SPEC** | Especificação de uma entrega, com critérios de aceite testáveis. Fica em `docs/specs/` |
 | **Split agrupado** | Divisão treino/validação/teste em que todas as fotos de uma mesma peça ficam no mesmo conjunto |
+| **VPS** | Servidor virtual privado. No projeto, a máquina pessoal do humano, que já existia e hospeda outros projetos dele, onde rodam a API e o dashboard (ADR-018) |
 | **`unknown` / `other`** | `other` é a classe do modelo para "não é parafuso nem porca"; `unknown` é como isso (ou a confiança baixa) aparece no contrato |

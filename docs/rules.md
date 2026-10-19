@@ -11,7 +11,7 @@ Este documento vale para humanos e agentes. Em caso de conflito com qualquer out
 
 | ID | Regra | Como verificar |
 |---|---|---|
-| R-01 | **Custo R$ 0.** Só free tiers e software livre. Nenhum serviço que exija cartão de crédito. | O reviewer confere toda dependência ou serviço novo contra o `docs/deployment-plan.md`. |
+| R-01 | **Custo adicional R$ 0.** Só free tiers, software livre e a VPS pessoal já existente do humano (ADR-018), sem nenhum upgrade ou recurso pago por causa do projeto. Nenhum serviço novo que exija cartão de crédito. (Alterada por decisão do humano em 2026-10-18, ADR-018.) | O reviewer confere toda dependência ou serviço novo contra o `docs/deployment-plan.md`; a VPS aparece lá como recurso pessoal preexistente, sem custo para o projeto. |
 | R-02 | **Imagens não saem da rede local.** Só o resultado da inspeção (JSON do contrato) vai para a nuvem. As fotos ficam no notebook. | Nenhum endpoint da API aceita imagem; o security-devops revisa o tráfego da borda. |
 | R-03 | **Segredos nunca entram no Git.** Toda variável fica documentada em `.env.example`. A chave `service_role` do Supabase existe **só** no servidor da API. | `.gitignore` cobre `.env*` (exceto `.example`); o reviewer roda uma busca por padrões de chave no diff. |
 | R-04 | **Contrato primeiro.** Os schemas trocados entre borda, API e dashboard vivem em `packages/contracts`. Qualquer mudança exige ADR (ou atualização de SPEC aprovada) e aumento da versão do pacote. Ver a skill `contrato-api`. | O reviewer recusa um diff que altere o formato de payload fora do pacote. |
@@ -34,7 +34,7 @@ Este documento vale para humanos e agentes. Em caso de conflito com qualquer out
 | N-02 | Loss do modelo | Cross-entropy com label smoothing 0,1 nas **duas** cabeças (tipo e grau); CORN como ablação da cabeça de grau | ADR-005 |
 | N-03 | Limiares da rubrica de grau | Rubrica v0 em `docs/dataset-protocol.md`, calibrada no piloto | ADR-001 |
 | N-04 | Limiares de decisão na borda | Vêm do `decision.json` do modelo, com override por variável de ambiente | SPEC-008 |
-| N-05 | Hospedagem | Render (API), Supabase (banco), Streamlit Community Cloud (dashboard); Koyeb como reserva | ADR-008 |
+| N-05 | Hospedagem | API e dashboard na VPS pessoal do humano (Docker Compose + Caddy, um subdomínio pessoal); banco no Supabase Free; Render como reserva fria da API | ADR-018 (banco: ADR-008) |
 | N-06 | Subgrupo do SPC | Lote informado pelo operador; `min_lot_size` = 5 | ADR-013 |
 | N-07 | Conteúdo das Fases 2 e 3 | Ver `docs/PRD.md`, seção de escopo | ADR-001 |
 | N-08 | Transporte borda → nuvem | HTTP; MQTT opcional na Fase 3 | ADR-009 |

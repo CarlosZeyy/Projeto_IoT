@@ -9,7 +9,7 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 | S1 | 12–18/out | Documentação aprovada. Peças catalogadas (as que a dupla já tem) e **corrosão iniciada** só para completar os graus intermediários. Piloto da rubrica (30 fotos, QWK). Teste de rede em casa com os dois celulares (Wi-Fi e hotspot). SPEC-001 e SPEC-002 (pergunta 4 já resolvida: uso de IA autorizado) | **M1** |
 | S2 | 19–25/out | SPEC-003, 004, 007, 010. API rodando localmente (Postgres local/Supabase dev). Cerca de 500 imagens coletadas | |
 | S3 | 26/out–01/nov | SPEC-008, 009, 011, 012 (baseline v1). Cerca de 1.200 imagens. Dupla rotulagem e QWK. Teste final congelado | |
-| S4 | 02–08/nov | SPEC-005, 006, 013, 014, 015. API publicada no Render. **MVP de ponta a ponta** com demo interna | **M2** |
+| S4 | 02–08/nov | SPEC-005, 006, 013, 014, 015. API e dashboard publicados na VPS pessoal (ADR-018). **MVP de ponta a ponta** com demo interna | **M2** |
 | S5 | 09–15/nov | Melhorias do modelo (ablação CORN, `unusable_threshold`, classe `other`); relatório de métricas; endurecimento (RNF-04, cobertura) | |
 | S6 | 16–22/nov | SPEC-016 (ferramentas manuais: identificação); SPEC-017/018 se der tempo. **Congelamento do modelo** | **M3** |
 | S7 | 23–29/nov | Testes finais, documentação final, vídeo de backup da demo, ensaio completo em casa com a topologia da apresentação (hotspot do celular) | **M4** |
@@ -21,7 +21,8 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 |---|---|---|
 | S1 | Catalogar as peças que a dupla já tem (parafusos/porcas novos e enferrujados, pregos, ferramentas) com `item_id`; montar lotes de corrosão só se faltarem graus intermediários (`good`, `fair`) | Dupla |
 | S1 | Confirmar com o professor as perguntas ainda abertas (1, 2, 3, 5, 6, 7) quando houver oportunidade; nenhuma bloqueia o início do código | Dupla |
-| S1 | ~~Criar contas: Supabase, Render, Streamlit Community Cloud~~ **Feito em 2026-10-12** (projeto Supabase já criado). Configuração dos serviços só na SPEC-015 | Dupla |
+| S1 | ~~Criar contas: Supabase, Render, Streamlit Community Cloud~~ **Feito em 2026-10-12** (projeto Supabase já criado). Configuração dos serviços só na SPEC-015. Desde 2026-10-18 (ADR-018), o Render é só reserva e o Streamlit Community Cloud não é usado | Dupla |
+| Antes dos CAs manuais da SPEC-015 | Na VPS: conferir `free -h`, `nproc`, `df -h /`, `docker version` e as portas 80/443 livres; salvar o `ufw status verbose`; criar o registro DNS `A` de `<subdominio>`; ajustar os limites de recursos no `infra/.env` (SPEC-015 §4.6) | Humano (Carlos) |
 | S1 | Instalar o `uv` no notebook (`sudo pacman -S uv`) antes da SPEC-001 | Dupla |
 | S2 | Testar `<input capture>` nos dois celulares e a conexão celular → notebook, em casa, pelo Wi-Fi e pelo hotspot (CA manual da SPEC-007) | Dupla |
 | S1–S3 | Fotografar no modo coleta (assim que a SPEC-010 estiver pronta; antes disso, com a câmera normal, seguindo o protocolo e anotando o `item_id`) | Dupla |
@@ -50,7 +51,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | In Review (r2, conserto do CI) |
 | [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | Done (CA-26 manual confirmado pelo humano) |
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
-| [015](specs/SPEC-015-deploy.md) | Deploy e keep-alive | security-devops | deploy, security | 004, 013, 026, 027 (e 003, 005, 006, 014; 028 recomendada antes) | S4 | Ready |
+| [015](specs/SPEC-015-deploy.md) | Deploy na VPS pessoal (Docker Compose + Caddy), banco no Supabase e keep-alive | security-devops | deploy, security, infra | 004, 013, 026, 027, 028 (e 003, 005, 006, 014) | S4 | Ready |
 | [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais | ml-engineer + developer | contrato | 012 (e 002, 003, 008, 011, 013) | S6 | Draft |
 | [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006 (e 003, 004) | S6 | Draft |
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos | developer | contrato, security | 004 (e 002, 003, 009, 013) | S6 | Draft |
@@ -132,3 +133,4 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | 2026-10-17 | SPECs 010, 013 e 027 `Done` (as duas primeiras com CA manual pendente). Pendências dos portões delas e da 026 consolidadas: SPEC-028 criada (`Draft`); SPECs 025, 011, 012 e 015 alteradas, aguardando reaprovação; SPEC-017 (`Draft`) alterada. Primeiro backup do dataset no Drive só depois do merge da SPEC-025. Regra única de exibição das métricas em `architecture.md` §7. Ordem: `025 → 028 → 008 → 009 → 015 → 011 → 012 → 017` |
 | 2026-10-18 | Os CAs manuais CA-20/21 (SPEC-007), CA-17 (SPEC-010) e CA-26 (SPEC-013) foram confirmados como aprovados pelo humano, sem a tabela detalhada nos test-reports. Nenhum backup do dataset no Drive foi feito; até a SPEC-025 estar `Done`, só cópia local e coleta pela página `/capture`. |
 | 2026-10-18 | SPEC_ISSUE-01 da SPEC-025 (r1): um JPEG com rotação EXIF passa a receber 415 na coleta e o achado `orientation` (sem `--fix`) na varredura, para manter a entrada do `load_image` igual no treino e na borda (ADR-004). A SPEC-025 aguarda reaprovação e vai para a r2 |
+| 2026-10-18 | Decisão do humano: a API e o dashboard passam a rodar na **VPS pessoal** dele, com Docker Compose e um Caddy próprio num subdomínio pessoal; o Supabase continua o banco; o Render vira reserva fria da API; o Streamlit Community Cloud e o Koyeb saem. ADR-018 (`Aceito` pelo humano em 2026-10-18); ADR-008 passa a "Substituído em parte por ADR-018". SPEC-015 reescrita, aguardando reaprovação (Dockerfiles, `.dockerignore` por Dockerfile, compose, Caddyfile, workflow `docker`, firewall sem apagar regras, `/docs` não publicado). Texto novo da R-01 ("custo adicional R$ 0", com a VPS preexistente) e da N-05 definidos no ADR-018 e aplicados em `docs/rules.md` e no `CLAUDE.md`. Pergunta 8 nova ao professor (VPS na frente "Cloud"), sem bloquear: o Render continua como reserva. SPECs 017, 018 e 020 (`Draft`) anotadas. A ordem do loop não muda |
