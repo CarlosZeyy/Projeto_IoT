@@ -1,0 +1,65 @@
+# Contexto de build da imagem da API (SPEC-015 §4.11). Com o BuildKit, este arquivo, ao lado do
+# Dockerfile e com o nome dele como prefixo, tem precedência sobre um .dockerignore na raiz.
+# A última regra que casa decide: as exceções (!) vêm depois da exclusão que elas abrem.
+# Nunca exclua pyproject.toml, uv.lock, os pyproject.toml dos membros, packages/, o código do
+# pacote, .streamlit/config.toml, ml/models/**/*.json nem ml/reports/.
+
+# Git e ferramentas locais
+.git
+.github
+.claude/
+notas-locais/
+.vscode/
+.idea/
+
+# Arquivos de ambiente e segredos (R-03): inclui infra/.env, infra/.env.api,
+# infra/.env.dashboard, .env.migrate e .env.prod
+**/.env*
+!.env.example
+.streamlit/secrets.toml
+**/secrets.toml
+**/*.pem
+**/*.key
+
+# Dados e fotos (R-02, R-14)
+ml/data/
+edge/data/
+data/
+**/*.jpg
+**/*.jpeg
+**/*.png
+**/*.heic
+**/*.webp
+!ml/reports/**/*.png
+
+# Pesos do modelo e artefatos pesados de ML (R-12)
+ml/models/**/*.onnx
+ml/models/**/*.pt
+ml/models/**/*.pth
+ml/checkpoints/
+**/*.onnx
+**/*.pt
+**/*.pth
+**/*.npz
+ml/notebooks/
+
+# Bancos locais (o outbox da borda)
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+
+# Ambiente e caches de ferramentas
+**/.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov/
+**/*.egg-info
+
+# Documentação, relatórios e testes não vão para a imagem
+docs/
+reviews/
+**/tests

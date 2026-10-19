@@ -73,4 +73,5 @@ markers = [
     "acceptance: acceptance test written by the tester (tests/acceptance/)",
     "db: requires a PostgreSQL database in TEST_DATABASE_URL",
     "slow: slow test",
+    "docker: requires Docker with BuildKit and Compose v2 (PARTQC_DOCKER_TESTS=1)",
 ]
