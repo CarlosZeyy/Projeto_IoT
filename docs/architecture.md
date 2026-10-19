@@ -205,7 +205,7 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 | `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG; limites próprios da rota: ≤ 3 MiB e ≤ 4 M pixels, checados pelo cabeçalho antes de decodificar (SPEC-007 §4.7); depois, as regras do `qc_preprocess.load_image`: ≤ 40 M pixels, proporção ≤ 10:1, JPEG com ≤ 64 marcadores de scan; tudo dentro do limitador de decodificações, §9), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
 | `GET /api/status` | console e celular | Modelo (versão, sha), outbox (pendentes), conectividade com a nuvem |
 
-**Sem modelo carregado** (`MODEL_DIR` vazio, por exemplo na S2, antes do primeiro treino): a borda sobe normalmente, o modo `collect` funciona e o modo `inspect` responde 503 com `{"detail": "model not loaded"}` (a página mostra o rótulo PT-BR). O stub de desenvolvimento (`--stub-model`, SPEC-007) **nunca** publica na nuvem.
+**Sem modelo carregado** (`MODEL_DIR` vazio, por exemplo na S2, antes do primeiro treino): a borda sobe normalmente, o modo `collect` funciona e o modo `inspect` responde 503 com `{"detail": "model not loaded"}` (a página mostra o rótulo PT-BR). O stub de desenvolvimento (`--stub-model`, SPEC-007) **nunca** publica na nuvem: com ele, a borda usa o `InMemorySink` e não abre o outbox, então as inspeções do stub somem quando o processo termina e nenhuma subida posterior pode enviá-las (SPEC-009 §4.4, R-06).
 
 **Token de sessão:** 32 bytes aleatórios (`secrets.token_urlsafe`), gerados na inicialização (ou via `EDGE_SESSION_TOKEN`) e comparados em tempo constante. Requisição sem token válido recebe 401. Em operação, `EDGE_SESSION_TOKEN` fica vazio, para que cada subida gere um token novo (SPEC-025).
 
@@ -218,9 +218,10 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
    - se `type = argmax(type_probs)` for `other`, ou se `max(type_probs) < type_threshold`, o resultado é `object_type = unknown`, e os campos `grade`, `grade_score` e `grade_confidence` ficam `null`;
    - se `grade_probs[unusable] ≥ unusable_threshold` (ajustado na validação para favorecer o recall de `unusable`), `grade = unusable`; caso contrário, `grade = argmax(grade_probs)`;
    - `grade_confidence = grade_probs[grade]` e `grade_score = Σ i·grade_probs[i]`;
-   - `needs_review = type_confidence < type_threshold + 0.10 or (grade_confidence is not None and grade_confidence < grade_review_threshold)` (padrão 0,60).
+   - `needs_review = type_confidence < type_threshold + 0.10 or (grade_confidence is not None and grade_confidence < grade_review_threshold)` (padrão 0,60);
+   - depois de todas as comparações, que usam os valores brutos, `type_confidence` e `grade_confidence` são limitados a `[0, 1]` e `grade_score` a `[0, 4]`, as faixas do §3.2. O arredondamento do softmax em float32 pode dar `Σ i·p_i` um pouco acima de 4 (ex.: `p4 = 1.0` exato com `p3 ≈ 6e-8`), e o contrato recusaria a inspeção. O limite não muda nenhuma decisão (SPEC-008 §4.1, item 6).
 5. A foto é salva em `EDGE_DATA_DIR/captures/AAAA-MM-DD/<inspection_id>.jpg`.
-6. Monta o `InspectionCreate` e grava no **outbox** (SQLite) **antes** de responder.
+6. Monta o `InspectionCreate` e grava no **outbox** (SQLite) **antes** de responder. Com `--stub-model`, grava só em memória (§6.1).
 7. Responde ao celular com o resultado e os rótulos PT-BR.
 8. Um laço em segundo plano publica os pendentes com `HttpPublisher`:
    - em lotes de até 100 via `/inspections/batch`, timeout de 5 s;
@@ -249,7 +250,7 @@ O pipeline (SPEC-011) lê o manifest só com `csv`/`pandas`, acusa linha sem arq
 
 ## 7. Modelo (`qc-ml`) — artefatos
 
-Cada versão vive em `ml/models/<model_version>/`. **O nome do diretório é o `model_version`** enviado em cada inspeção (ex.: `partqc-mnv3-v1`). Os pesos não vão para o Git: `ml/models/**/*.onnx` está no `.gitignore`. Os JSONs e a fixture vão.
+Cada versão vive em `ml/models/<model_version>/`. **O nome do diretório é o `model_version`** enviado em cada inspeção (ex.: `partqc-mnv3-v1`). Se o `MODEL_DIR` da borda for um link simbólico, vale o nome do diretório alvo, não o do link (SPEC-008 §4.2). Os pesos não vão para o Git: `ml/models/**/*.onnx` está no `.gitignore`. Os JSONs e a fixture vão.
 
 | Arquivo | Conteúdo |
 |---|---|

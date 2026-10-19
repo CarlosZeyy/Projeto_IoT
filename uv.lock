@@ -1209,6 +1209,11 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "onnx" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.15" },
@@ -1222,6 +1227,9 @@ requires-dist = [
     { name = "qrcode" },
     { name = "uvicorn" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "onnx" }]
 
 [[package]]
 name = "qc-ml"

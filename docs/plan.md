@@ -44,11 +44,11 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [005](specs/SPEC-005-api-leitura-metricas.md) | API de leitura e métricas | developer | security | 004 | S4 | Done |
 | [006](specs/SPEC-006-spc.md) | SPC: carta p por lote | developer | security | 004 | S4 | Done |
 | [007](specs/SPEC-007-edge-gateway-captura.md) | Gateway de borda, página de captura e pareamento | developer | security | 002, 023, 024 | S2 | Done (CA-20/21 manual confirmado pelo humano) |
-| [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | Ready |
-| [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007, 025 | S3 | Ready |
+| [008](specs/SPEC-008-edge-inferencia-decisao.md) | Inferência ONNX e decisão na borda | developer | — | 002, 007 | S3 | Done (CA-16 manual pendente até o modelo real) |
+| [009](specs/SPEC-009-edge-outbox-publisher.md) | Outbox SQLite e publisher HTTP | developer | security | 004, 007, 025 | S3 | Done (CA-17 manual pendente até a API publicada) |
 | [010](specs/SPEC-010-modo-coleta.md) | Modo coleta de dataset | developer | security | 007 | S2 | Done (CA-17 manual confirmado pelo humano) |
-| [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Ready |
-| [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | Ready |
+| [011](specs/SPEC-011-ml-dados-split.md) | ML: manifest, split e augmentations | ml-engineer | — | 001, 002, 010 | S3 | Done |
+| [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | In Review (r2, conserto do CI) |
 | [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | Done (CA-26 manual confirmado pelo humano) |
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
 | [015](specs/SPEC-015-deploy.md) | Deploy na VPS pessoal (Docker Compose + Caddy), banco no Supabase e keep-alive | security-devops | deploy, security, infra | 004, 013, 026, 027, 028 (e 003, 005, 006, 014) | S4 | Ready |
@@ -64,7 +64,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [025](specs/SPEC-025-manutencao-borda-host-rede.md) | Manutenção da borda (Host do console, rede, limitador, permissões e modo coleta) | developer | security | 007, 010 | S3 | Done |
 | [026](specs/SPEC-026-spc-teto-de-lotes.md) | Carta p com teto de lotes (`qc-contracts` 0.3.0) | developer | contrato, security | 006 (e 004, 023) | S4 | Done |
 | [027](specs/SPEC-027-manutencao-api-banco-simulador.md) | Manutenção da API, do banco e do simulador (`check` da `002`, SQLSTATE, argparse, teste intermitente) | developer | security | 003, 005, 014 (e 004) | S4 | Done |
-| [028](specs/SPEC-028-manutencao-dashboard.md) | Manutenção do dashboard (https, acabamento da interface, selo da carta e exibição das métricas) | developer | security | 013 | S4 | In Security (r1) |
+| [028](specs/SPEC-028-manutencao-dashboard.md) | Manutenção do dashboard (https, acabamento da interface, selo da carta e exibição das métricas) | developer | security | 013 | S4 | Done (CA-12 manual pendente) |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
 
@@ -112,6 +112,13 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
   - **`docs/architecture.md` §10**: arquivo vigente da versão exata do `qc-contracts` (`test_spec_026.py`, RV-01 da 026), `ALLOWED_EXACT` no mesmo commit do arquivo (RV-03 da 026) e renomeação de teste extra (RV-01 da 010);
   - **SPECs 010, 013, 026 e 027** (só texto, sem reaprovação): linha de Histórico com os encaminhamentos; o CA-07 da 027 diz o contexto `SIM_DEVICE_ID` (RV-03);
   - **Próxima manutenção do simulador** (sem SPEC agora): incluir `https://xn--1-zhc.com` nos casos de aceitação do autor (RV-01 de `reviews/SPEC-027/r2-review-report.md`).
+- As pendências dos portões da **SPEC-028** (mergeada):
+  - **Próxima SPEC do dashboard** (sem SPEC agora): isolar o `st.secrets` no `_isolated` de `dashboard/tests/acceptance/test_spec_013.py`, porque com um `.streamlit/secrets.toml` na raiz `test_extra_settings_from_environment` falha e imprime a `READ_API_KEY` (RV-01 + SEC-28-01, média; **antes do primeiro uso de chave real nesse arquivo**; até lá, tirar o arquivo da raiz antes de rodar a suíte), comentário desatualizado em `test_spec_013.py:1306` (RV-03), selo de simulado também quando `spc.source` for simulado (RV-02/SEC-28-03) e `is_secure_api_url` recusando porta não numérica e caracteres de controle (SEC-28-02).
+- As pendências dos portões das **SPECs 008, 009, 011 e 012** (mergeadas):
+  - **Próxima manutenção da borda** (sem SPEC agora): URL de teste com credencial fictícia literal em `edge/tests/test_cli_cloud.py` e `edge/tests/acceptance/test_spec_009.py` (RV-01/SEC-09-01 da 009); prazo total por requisição e teto de bytes na resposta do publisher (RV-02/SEC-09-02/T-01 da 009); backoff e health check pelo relógio monotônico (RV-03 da 009); com o extra `train` instalado, 3 testes de `edge/tests/test_publisher_real_api.py` falham por causa do `httpx2` (via `huggingface-hub`), sem efeito no CI;
+  - **SPEC futura de reenvio de `dead`** do outbox, antes da primeira mudança de contrato com a borda em operação (SEC-09-04);
+  - **Próxima manutenção do ML** (sem SPEC agora): `ITEM_ID_PATTERN` duplicada entre `qc_ml.split` e `qc_ml.data` (RV-07 da 011); `onnxscript` no extra `train` ou teto de versão do torch, porque o export usa `dynamo=False` (RV-01 da 012); nota `no_screw_nut_in_val` no Histórico da SPEC-012 (RV-02); validar `NaN`/faixa em `Predictions` (RV-03); avisar no notebook e no README que o `split_v1` precisa estar na `main` antes do Colab (RV-04); `.jpeg`/`.png`/`.heic` sob `raw/` numa SPEC futura de privacidade (RV-02 da 011);
+  - **CAs manuais pendentes:** CA-16 da 008 (latência com o modelo real), CA-17 da 009 (demo offline, depois do deploy), CA-28 da 012 (treino real no Colab) e CA-12 da 028 (dashboard no celular e no desktop).
 - **CAs manuais pendentes de SPECs mergeadas:** CA-20/21 da 007, CA-17 da 010 e CA-26 da 013. O da 010 (página de coleta no celular) e o da 013 (painel no celular) devem ser executados **antes** do merge das SPECs 025 e 028, que mudam o modo coleta e o selo da página da carta.
 - O **ML depende de dados**: a coleta (humana) começa já na S1, mesmo antes da SPEC-010.
 - A SPEC-008 é desenvolvida com um **modelo dummy** (ONNX gerado nos testes, com as mesmas entradas e saídas) e não depende da SPEC-012. O modelo real é só um artefato trocado via `MODEL_DIR`.

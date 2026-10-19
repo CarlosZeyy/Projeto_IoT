@@ -1,11 +1,11 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-010, SPEC-025)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
 Estado atual:
 
-- o inferenciador real (ONNX) ainda não existe (SPEC-008). Sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
-- as inspeções aceitas vão para um `InMemorySink`, que só guarda em memória e não envia nada para lugar nenhum. O outbox e o envio para a nuvem são da SPEC-009;
+- o inferenciador real é o `onnxruntime` na CPU, carregado de `MODEL_DIR` (SPEC-008, seção "Trocar o modelo"). Sem `MODEL_DIR` e sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
+- cada inspeção aceita é gravada no outbox SQLite (`OUTBOX_PATH`) antes da resposta ao celular, e um laço em segundo plano a envia para a `qc-api` quando `DEVICE_API_KEY` e `CLOUD_API_URL` estão definidos (SPEC-009, seção "Envio para a nuvem"). Só o JSON do resultado sobe; a foto nunca (R-02);
 - o modo coleta (SPEC-010) monta o dataset: funciona sem modelo e não chama o inferenciador nem o sink (seção "Modo coleta").
 
 ## Como rodar
@@ -15,12 +15,13 @@ uv sync --package qc-edge                                         # ou: uv sync 
 cp .env.example .env                                              # uma vez; ajuste o bloco qc-edge
 uv run --env-file .env --package qc-edge qc-edge --stub-model     # resultado falso, para testar a captura
 uv run --package qc-edge qc-edge                                  # sem .env: tudo no padrão, sem modelo
+MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o modelo real
 ```
 
 - O `qc-edge` não lê o `.env` sozinho: use `--env-file .env` ou exporte as variáveis.
 - Abra o console **no próprio notebook**, em <http://127.0.0.1:8000/> ou <http://localhost:8000/> (troque `8000` pelo seu `EDGE_PORT`). Ele só responde ao loopback (`127.0.0.1`/`::1`), recusa com 403 requisições com `X-Forwarded-For`, `Forwarded` ou `CF-Connecting-IP` e só aceita o header `Host` `127.0.0.1:<porta>`, `localhost:<porta>` ou `[::1]:<porta>`: outro nome ou IP na barra de endereço (inclusive o IP da LAN do próprio notebook) recebe 403. Isso impede que uma página hostil aberta no navegador do notebook leia o token por DNS rebinding (SPEC-025). O console mostra o QR code, a URL de pareamento, os outros IPs da máquina (links `/?ip=...`), o estado do modelo e do sink e as 10 últimas inspeções da sessão. Ele recarrega a cada 5 s, e os IPs são detectados de novo a cada recarga (útil ao trocar para o hotspot).
-- `--stub-model` responde sempre parafuso/bom (`model_version = stub-v0`). É só para desenvolvimento e **nunca** publica na nuvem (R-06).
-- Códigos de saída: `2` para configuração inválida (a mensagem cita a variável, nunca o valor) ou argumento desconhecido na linha de comando (o log cita só o nome da opção, nunca o valor: `unknown command-line argument(s): --stub-modle`); `1` se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` estiver ligada no processo (SEC-04).
+- `--stub-model` responde sempre parafuso/bom (`model_version = stub-v0`). É só para desenvolvimento: as inspeções ficam só na memória, nunca vão para o outbox e **nunca** são publicadas na nuvem (R-06, seção "Envio para a nuvem"). Ele tem precedência sobre `MODEL_DIR`: com os dois, o log avisa (`--stub-model takes precedence: MODEL_DIR is not loaded`) e o diretório não é carregado.
+- Códigos de saída: `2` para configuração inválida (a mensagem cita a variável, nunca o valor), argumento desconhecido na linha de comando (o log cita só o nome da opção, nunca o valor: `unknown command-line argument(s): --stub-modle`) ou `MODEL_DIR` que não carrega (o log mostra `cannot load the model: ...` com o nome do arquivo); `1` se `PIL.ImageFile.LOAD_TRUNCATED_IMAGES` estiver ligada no processo (SEC-04).
 - O log do servidor nunca mostra o token nem o `DEVICE_API_KEY`. O access log do uvicorn fica desligado, porque imprimiria a query `?t=<token>`. No lugar dele, o `qc-edge` registra uma linha por requisição, com método, rota, status e duração, sem a query.
 
 ## Variáveis (`.env`, bloco `qc-edge`)
@@ -33,7 +34,11 @@ uv run --package qc-edge qc-edge                                  # sem .env: tu
 | `DEVICE_ID` | `edge-01` | `^[a-z0-9-]{3,32}$` (sem quebra de linha final) |
 | `EDGE_DATA_DIR` | `edge/data` (relativo ao diretório atual) | criado com `0700` se não existir (um diretório que já existe não é alterado); está no `.gitignore` |
 | `DATASET_DIR` | `ml/data` (relativo ao diretório atual) | modo coleta; se existir, tem de ser um diretório. Não é criado na subida: a primeira coleta o cria com `0700`. `ml/data/` está no `.gitignore`; outro caminho deve ficar fora do repositório |
-| `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio | lidas agora, validadas nas SPECs 008 e 009 |
+| `MODEL_DIR` | vazio (sem modelo) | diretório do modelo (seção "Trocar o modelo"); o nome do diretório resolvido (alvo do link, se for um link simbólico) é o `model_version`. Definido mas inválido, inclusive só com espaços → código 2 |
+| `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` | vazio (vale o `decision.json`) | opcionais; número de 0 a 1 que sobrescreve o limiar do `decision.json` (seção "Limiares de decisão"). Fora de `[0, 1]` ou não numérico → código 2 citando a variável. Sem `MODEL_DIR`, são ignorados (com aviso no log) |
+| `DEVICE_API_KEY` | vazio | segredo (R-03): chave do dispositivo, gerada por `scripts/register_device.py` e mostrada uma única vez. Vazio = nada é enviado à nuvem. Só ASCII visível (sem espaço nem acento); outro valor → código 2 citando a variável, nunca o valor |
+| `CLOUD_API_URL` | vazio | URL base da `qc-api`, sem `/api/v1` no fim (ex.: `https://<seu-servico>.onrender.com`). `https://` obrigatório; `http://` só com `localhost` ou `127.0.0.1` (testes locais). Sem usuário/senha, query ou fragmento. Outro valor → código 2 citando `CLOUD_API_URL`. Vazio = nada é enviado |
+| `OUTBOX_PATH` | `EDGE_DATA_DIR/outbox.sqlite3` | arquivo SQLite do outbox (ignorado com `--stub-model`: nem aberto nem criado); as pastas que faltarem são criadas com `0700` e o arquivo novo com `0600`. Se não abrir (ex.: é um diretório) → código 2 citando `OUTBOX_PATH` |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -45,7 +50,7 @@ Variável vazia vale como não definida (o padrão vale).
 | `GET /capture?t=<token>` | token na query | página do celular; token errado → 401 "Sessão inválida. Leia o QR code no console." |
 | `GET /static/capture.js`, `/static/capture.css` | livre | arquivos da página (sem segredo, sem recurso externo) |
 | `POST /api/capture` | header `X-Session-Token` | `multipart/form-data` com `image`, `lot_id` e `mode`; no modo `collect`, `item_id`, `object_type`, `grade`, `labeler`, `angle` e `notes` no lugar do `lot_id` |
-| `GET /api/status` | header `X-Session-Token` | `device_id`, `contract_version`, `model`, `sink` |
+| `GET /api/status` | header `X-Session-Token` | `device_id`, `contract_version`, `model` (`loaded`, `model_version`, `model_sha256`, `thresholds`), `sink` |
 
 Ordem das respostas de `POST /api/capture`: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`) → imagem (415) → modelo (503 `model not loaded`). Depois: falha do inferenciador → 500 `inference failed`; falha do sink → 503 `failed to persist inspection` (a foto é apagada). O modo `collect` segue a mesma ordem até a imagem (415) e depois grava no dataset (seção "Modo coleta").
 
@@ -59,6 +64,48 @@ Limites da rota (`qc_edge/limits.py`, SPEC-007 §4.7):
 No máximo 2 decodificações acontecem ao mesmo tempo, nos dois modos. Quem passa disso espera até 10 s e recebe 503 `server busy`. A espera não ocupa thread do servidor, então o console e o `/api/status` continuam respondendo durante uma rajada de capturas (SPEC-025). A página do celular sempre reduz a foto para no máximo 1280 px no lado maior e a reencoda em JPEG (q = 0,9) antes de enviar.
 
 A foto aceita é salva em `EDGE_DATA_DIR/captures/<AAAA-MM-DD em UTC>/<inspection_id>.jpg`, com nome sempre gerado pelo servidor. Um JPEG é salvo como chegou; um PNG é reencodado em JPEG q = 90. `captures/` e as pastas de dia ficam com `0700` e as fotos com `0600`, seja qual for o `umask` (só o dono lê; `captures/` recebe `0700` a cada subida). Se o `chmod` falhar, o log mostra um `WARNING` e a captura segue. Retenção e remoção dessas fotos: `docs/dataset-protocol.md` §9.
+
+## Trocar o modelo (SPEC-008)
+
+O modelo é um diretório com os artefatos de `docs/architecture.md` §7. O **nome do diretório é o `model_version`** gravado em cada inspeção (`^[a-z0-9.-]{3,40}$`, ex.: `partqc-mnv3-v1`): ao copiar o modelo para o notebook, preserve o nome `ml/models/<model_version>/`.
+
+O `MODEL_DIR` é resolvido antes de tudo (links simbólicos, `.` e `..`; a barra final não conta), e os arquivos são lidos do diretório resolvido. Por isso o `model_version` é o nome do **diretório alvo**, e não o do link: com `MODEL_DIR=ml/models/atual` e o link `atual → partqc-mnv3-v1`, as inspeções levam `partqc-mnv3-v1`. Trocar o modelo apontando um link de nome fixo para outro diretório funciona, e cada inspeção continua com a versão real. Um link para um diretório com nome fora da regex (ex.: `Dummy_V1`) impede a subida, mesmo que o nome do link seja válido.
+
+`MODEL_DIR` vazio (`MODEL_DIR=`) significa "sem modelo". O valor não é aparado: um `MODEL_DIR` só com espaços conta como definido e, como não é um diretório, a subida sai com código 2 (`cannot load the model: MODEL_DIR: not a directory`). Um caminho inexistente, um link quebrado ou um laço de links dão a mesma mensagem.
+
+| Arquivo | O que a borda confere na subida |
+|---|---|
+| `model.onnx` | carrega no `onnxruntime` (CPU), tem uma entrada `image` e as saídas `type_probs` e `grade_probs`; uma inferência de aquecimento com zeros `[1, 3, crop, crop]`, com o `crop` do `preprocessing.json` (a mesma forma que cada inferência envia; `[1,3,224,224]` com o `crop` padrão), tem de devolver as formas `[1, T]` (T = número de tipos do `labels.json`) e `[1, 5]`. Um `crop` que a entrada do modelo não aceita (ex.: `crop=256` com entrada fixa `[N,3,224,224]`) falha aqui, na subida, e não em cada captura; um modelo com dimensões espaciais dinâmicas aceita qualquer `crop` |
+| `model.sha256` | o primeiro token (64 hexadecimais, maiúsculas ou minúsculas; aceita a saída do `sha256sum`, `<hash>  model.onnx`) é igual ao SHA-256 do `model.onnx`. Senão: `model.onnx does not match model.sha256: expected <12 caracteres>, got <12 caracteres>` |
+| `labels.json` | exatamente as chaves `object_types` e `grades`; `grades` exatamente `["perfect","good","fair","poor","unusable"]`; `object_types` sem repetição, só com `other` e os tipos do contrato (`screw`, `nut`), nunca `unknown` |
+| `preprocessing.json` | lido por `qc_preprocess.PreprocessParams.from_json` |
+| `decision.json` | exatamente as chaves `type_threshold`, `unusable_threshold` e `grade_review_threshold`, cada uma um número de 0 a 1 |
+
+Qualquer falha impede a subida com código 2 e uma mensagem com o nome do arquivo. O hash é calculado sobre os mesmos bytes que o `onnxruntime` carrega, então trocar o `model.onnx` depois da conferência não tem efeito até a próxima subida.
+
+Para trocar de modelo:
+
+1. Baixe ou copie o diretório inteiro para `ml/models/<model_version>/` (o `model.onnx` não vai para o Git; ele vem do GitHub Release, conforme a SPEC-012):
+   ```bash
+   gh release download model-partqc-mnv3-v1 -p model.onnx -D ml/models/partqc-mnv3-v1
+   (cd ml/models/partqc-mnv3-v1 && sha256sum -c model.sha256)   # tem de mostrar "model.onnx: OK"
+   ```
+2. Aponte `MODEL_DIR` para ele (no `.env` ou na linha de comando) e reinicie o `qc-edge`. O modelo só é lido na subida.
+3. Confira no console (<http://127.0.0.1:8000/>) a linha **Modelo** (`carregado: <model_version> (sha256 <12 primeiros caracteres>)`) e os **Limiares de decisão**, ou no log da subida (`model loaded: model_version=... sha256=...` e uma linha `threshold ...` por limiar).
+
+### Limiares de decisão
+
+A regra de decisão (`qc_edge.decision.decide`, `docs/architecture.md` §6.2, passo 4) usa três limiares. Os valores vêm do `decision.json` do modelo (escolhidos na validação, SPEC-012) e podem ser sobrescritos por variável de ambiente, para ajuste na demo sem trocar o modelo:
+
+| Limiar | Variável | Efeito |
+|---|---|---|
+| `type_threshold` | `TYPE_THRESHOLD` | abaixo dele (comparação estrita: igual ao limiar não é `unknown`), o resultado é `unknown`; abaixo dele + 0,10, a inspeção é marcada para revisão (`needs_review`) |
+| `unusable_threshold` | `UNUSABLE_THRESHOLD` | `grade_probs[unusable]` maior ou igual a ele decide `unusable`, mesmo que outro grau tenha probabilidade maior |
+| `grade_review_threshold` | `GRADE_REVIEW_THRESHOLD` | `grade_confidence` abaixo dele marca a inspeção para revisão |
+
+O console e o `/api/status` (`model.thresholds`, `{nome: {"value", "source"}}`) mostram o valor efetivo de cada limiar e a origem: `decision.json` ou `env`.
+
+As comparações usam as probabilidades exatamente como o modelo as devolve. Só depois delas, os números gravados na inspeção são limitados às faixas do contrato: `type_confidence` e `grade_confidence` a `[0, 1]` e `grade_score` a `[0, 4]` (SPEC-008 §4.1, item 6). O `Softmax` em float32 dá, por exemplo, `p(unusable) = 1.0` com `p(poor) ≈ 6e-8`, o que faria `grade_score` passar um pouco de 4; a inspeção sai com `grade_score = 4.0`. O limite nunca muda o tipo, o grau nem o `needs_review`.
 
 ## Modo coleta (SPEC-010)
 
@@ -105,6 +152,53 @@ As gravações passam por um lock de processo e por um `flock` em `DATASET_DIR/m
 O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada.
 
 O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backup é o do `docs/dataset-protocol.md` §8 (Drive pessoal, compactado por data). Correções de rótulo e dupla rotulagem são da SPEC-011 (`labels_overrides.csv`), nunca editando a linha original.
+
+## Envio para a nuvem (SPEC-009)
+
+Fluxo (`docs/architecture.md` §6.2, passos 6 e 8): a captura grava o `InspectionCreate` no outbox SQLite (`OUTBOX_PATH`) e só depois responde ao celular. Uma thread em segundo plano lê os pendentes a cada 2 s e os publica em `POST {CLOUD_API_URL}/api/v1/inspections/batch`, em lotes de até 100, com o header `X-API-Key` e timeout de 5 s. O corpo é sempre JSON (`BatchCreate` de `qc_contracts`): nunca imagem, nunca multipart (R-02). `qc_edge.publisher` é o único módulo da borda que fala HTTP com a nuvem.
+
+Onde ficam as inspeções e quando o envio fica ligado (SPEC-009 §4.4):
+
+| Situação | Onde ficam as inspeções | Envio | Conectividade |
+|---|---|---|---|
+| sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL` | outbox (`OUTBOX_PATH`) | ligado | `online`, `offline` ou `auth_error` |
+| sem `--stub-model`, faltando qualquer um dos dois | outbox (`OUTBOX_PATH`), como pendentes | desligado (o log avisa qual falta) | `disabled` |
+| com `--stub-model` (com ou sem chave e URL) | **só na memória** (somem quando o processo termina) | **sempre desligado** | `disabled` |
+
+**Com `--stub-model`, nada vai para o outbox nem para a nuvem** (R-06: resultado falso não sobe como `live`). O `qc-edge` não abre, não cria e não valida o `OUTBOX_PATH`: as inspeções do stub (`model_version = stub-v0`) ficam só na memória do processo, e nenhuma subida posterior, com ou sem a flag, consegue publicá-las. Linhas que já existiam no outbox ficam intactas e só saem numa subida sem a flag. A subida registra um aviso `--stub-model: inspections are kept only in memory and are never written to the outbox nor sent to the cloud`. A validação de `CLOUD_API_URL` e `DEVICE_API_KEY` é a mesma com ou sem a flag.
+
+Se você rodou um build anterior desta branch (SPEC-009 r1, antes da correção do SPEC_ISSUE-01) com `--stub-model`, o `outbox.sqlite3` pode ter linhas `stub-v0` pendentes: apague o arquivo antes da primeira subida com chave e URL. Só afeta máquinas de desenvolvimento; nada disso chegou à `main`.
+
+O que o laço faz com a resposta da nuvem:
+
+- `created` ou `duplicate` → a linha vira `sent` (a idempotência por `inspection_id` da API garante que um reenvio não duplica, R-05). Conectividade `online` e "Último envio" atualizado;
+- rede fora, timeout, 5xx, 429, outro 4xx ou resposta malformada → a linha continua pendente e é tentada de novo em `min(60, 2^n × U(0,8; 1,2))` s (`n` = tentativas anteriores: ~1 s, ~2 s, ~4 s… até 60 s). Conectividade `offline`. O cold start do Render (~1 min) aparece assim e é absorvido pelo backoff;
+- 422 ou 413 → o lote é dividido ao meio até isolar a inspeção recusada, que vira `dead` (nunca mais é enviada) com o resumo da recusa em `last_error` (ex.: `HTTP 422: Value cannot be stored` ou `HTTP 422: 2 validation errors`). O corpo da resposta nunca vai para o log nem para o outbox, porque o 422 do FastAPI repete o que foi enviado;
+- 401 ou 403 → conectividade `auth_error`, um erro no log (`check DEVICE_API_KEY and restart qc-edge`) e **nenhuma** requisição até reiniciar o `qc-edge`. Corrija a chave (ou registre o dispositivo de novo com `scripts/register_device.py --rotate`) e reinicie; as pendentes saem na subida seguinte.
+
+Com o outbox vazio, o laço consulta `GET /api/v1/health` (sem chave) logo na subida e depois a cada 60 s sem contato com a nuvem, para atualizar `online`/`offline`.
+
+O console mostra **Pendentes**, **Com falha definitiva** (`dead`), **Conectividade com a nuvem** e **Último envio**; o `/api/status` traz os mesmos campos em `sink`. O log nunca mostra o `DEVICE_API_KEY` nem o corpo das respostas.
+
+O outbox nunca apaga linhas (o volume da demo é pequeno) e sobrevive a uma queda do processo: cada gravação é confirmada (`synchronous=FULL`, WAL) antes da resposta. Para ver as inspeções `dead`:
+
+```bash
+sqlite3 edge/data/outbox.sqlite3 "select inspection_id, attempts, last_error from outbox where status = 'dead'"
+```
+
+(troque o caminho pelo seu `OUTBOX_PATH`). Reenviar uma `dead` à mão fica para uma SPEC futura.
+
+### Demo offline (CA-17 da SPEC-009, manual)
+
+Registre o resultado no test-report da SPEC-009.
+
+1. Borda ligada com `DEVICE_API_KEY` válida e `CLOUD_API_URL` da API publicada, e `MODEL_DIR` do modelo real (sem `--stub-model`). Confira no console: conectividade `online`, pendentes `0`.
+2. Desligue o Wi-Fi do notebook (no plano B, os dados móveis do celular; o celular continua falando com a borda pela LAN do hotspot).
+3. Inspecione 3 peças. O console mostra `offline` e pendentes `3`.
+4. Religue a rede.
+5. Em até 90 s, o console mostra `online` e pendentes `0`, e as 3 inspeções aparecem no dashboard.
+
+O que registrar: horários dos passos 2 a 5, o que o console mostrou em cada um e os `inspection_id` das 3 inspeções no dashboard.
 
 ## Firewall no Arch
 

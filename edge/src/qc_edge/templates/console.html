@@ -18,6 +18,7 @@ th, td { border: 1px solid #ccc; padding: 0.3rem 0.6rem; text-align: left; }
 dl { display: grid; grid-template-columns: max-content auto; gap: 0.2rem 1rem; margin: 0; }
 dt { font-weight: bold; }
 dd { margin: 0; }
+ul.thresholds { margin: 0; padding-left: 1.2rem; }
 tr.complete td { background: #d7f2dd; font-weight: bold; }
 </style>
 </head>
@@ -34,11 +35,12 @@ $other_ips
 </div>
 <h2>Estado</h2>
 <dl>
-<dt>Modelo</dt><dd>$model_state</dd>
+<dt>Modelo</dt><dd id="model-state">$model_state</dd>
+<dt>Limiares de decisão</dt><dd id="model-thresholds">$thresholds</dd>
 <dt>Pendentes</dt><dd id="sink-pending">$sink_pending</dd>
-<dt>Com falha definitiva</dt><dd>$sink_dead</dd>
-<dt>Conectividade com a nuvem</dt><dd>$connectivity</dd>
-<dt>Último envio</dt><dd>$last_success_at</dd>
+<dt>Com falha definitiva</dt><dd id="sink-dead">$sink_dead</dd>
+<dt>Conectividade com a nuvem</dt><dd id="sink-connectivity" data-connectivity="$connectivity_code">$connectivity</dd>
+<dt>Último envio</dt><dd id="sink-last-success">$last_success_at</dd>
 <dt>Dataset (modo coleta)</dt><dd class="url">$dataset_dir</dd>
 </dl>
 <h2>Últimas inspeções desta sessão</h2>

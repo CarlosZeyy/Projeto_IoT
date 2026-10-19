@@ -17,6 +17,12 @@ dependencies = [
     "anyio>=4.15",
 ]
 
+[dependency-groups]
+# SPEC-008: builds the dummy ONNX models of the tests (onnx.helper); never a runtime dependency.
+dev = [
+    "onnx",
+]
+
 [project.scripts]
 qc-edge = "qc_edge.cli:main"
 

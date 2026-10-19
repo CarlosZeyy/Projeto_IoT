@@ -90,6 +90,13 @@ def test_empty_variables_count_as_unset(
         ("EDGE_SESSION_TOKEN", "x" * 31),
         ("EDGE_HOST", "localhost"),
         ("EDGE_HOST", "0.0.0.0 "),
+        # SPEC-008 section 4.2, item 6: thresholds are finite numbers in [0, 1].
+        ("TYPE_THRESHOLD", "1.5"),
+        ("TYPE_THRESHOLD", "abc"),
+        ("UNUSABLE_THRESHOLD", "-0.01"),
+        ("UNUSABLE_THRESHOLD", "nan"),
+        ("GRADE_REVIEW_THRESHOLD", "inf"),
+        ("GRADE_REVIEW_THRESHOLD", "1.0000001"),
     ],
 )
 def test_invalid_values_name_the_variable(
@@ -164,3 +171,15 @@ def test_existing_dataset_dir_is_accepted_unchanged(clean_edge_env: None, tmp_pa
     dataset.chmod(0o755)
     assert dataset == EdgeSettings(EDGE_DATA_DIR=tmp_path, DATASET_DIR=dataset).DATASET_DIR
     assert dataset.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.parametrize("value", ["0", "1", "0.55", "1.0"])
+def test_threshold_bounds_are_accepted(
+    clean_edge_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    for name in ("TYPE_THRESHOLD", "UNUSABLE_THRESHOLD", "GRADE_REVIEW_THRESHOLD"):
+        monkeypatch.setenv(name, value)
+    settings = EdgeSettings(EDGE_DATA_DIR=tmp_path)
+    expected = float(value)
+    values = (settings.TYPE_THRESHOLD, settings.UNUSABLE_THRESHOLD, settings.GRADE_REVIEW_THRESHOLD)
+    assert values == (expected, expected, expected)

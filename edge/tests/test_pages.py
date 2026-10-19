@@ -1,5 +1,5 @@
 """Console, phone page, static files and /api/status (SPEC-007 section 4.4, SPEC-025 section
-4.1)."""
+4.1, SPEC-009 section 3.1)."""
 
 from __future__ import annotations
 
@@ -68,7 +68,8 @@ def test_console_from_loopback(settings: EdgeSettings, lan_ips: list[str], jpeg_
     assert "<svg" in page
     assert f"http://192.168.0.42:8000/capture?t={token}" in page
     assert 'href="/?ip=10.0.0.7"' in page
-    assert "carregado: stub-v0" in page
+    assert "carregado: stub-v0 (sha256 000000000000)" in page
+    assert re.search(r'id="model-thresholds">—<', page)
     assert re.search(r'id="sink-pending">12<', page)
     assert '<meta http-equiv="refresh" content="5">' in page
     assert "<script" not in page
@@ -107,6 +108,33 @@ def test_console_shows_sink_stats(settings: EdgeSettings, lan_ips: list[str]) ->
     page = client.get("/").text
     assert re.search(r'id="sink-pending">7<', page)
     assert "offline" in page
+
+
+@pytest.mark.parametrize(
+    ("connectivity", "label"),
+    [
+        ("online", ">online<"),
+        ("offline", ">offline<"),
+        ("auth_error", "erro de autenticação (envio pausado: confira o DEVICE_API_KEY"),
+        ("disabled", "desativada (nada é enviado à nuvem)"),
+    ],
+)
+def test_console_connectivity_label_and_code(
+    settings: EdgeSettings, lan_ips: list[str], connectivity: Any, label: str
+) -> None:
+    """SPEC-009: PT-BR label, the code in ``data-connectivity`` and the outbox counts."""
+
+    class _Sink(InMemorySink):
+        def stats(self) -> SinkStats:
+            return SinkStats(pending=3, dead=1, last_success_at=None, connectivity=connectivity)
+
+    client = TestClient(_app(settings, sink=_Sink()), client=LOCAL, base_url=CONSOLE_URL)
+    page = client.get("/").text
+    assert f'data-connectivity="{connectivity}"' in page
+    assert label in page
+    assert re.search(r'id="sink-pending">3<', page)
+    assert re.search(r'id="sink-dead">1<', page)
+    assert re.search(r'id="sink-last-success">—<', page)
 
 
 @pytest.mark.parametrize(
@@ -198,7 +226,12 @@ def test_status(settings: EdgeSettings) -> None:
     body = client.get("/api/status", headers={"X-Session-Token": token}).json()
     assert set(body) == {"device_id", "contract_version", "model", "sink"}
     assert body["device_id"] == "edge-01"
-    assert body["model"] == {"loaded": True, "model_version": "stub-v0", "model_sha256": "0" * 64}
+    assert body["model"] == {
+        "loaded": True,
+        "model_version": "stub-v0",
+        "model_sha256": "0" * 64,
+        "thresholds": None,
+    }
     assert body["sink"] == {
         "pending": 0,
         "dead": 0,
@@ -219,7 +252,12 @@ def test_status_without_model_and_with_last_success(settings: EdgeSettings) -> N
     app = _app(settings, inferencer=None, sink=_Sink())
     body = TestClient(app).get("/api/status", headers={"X-Session-Token": app.state.session_token})
     payload = body.json()
-    assert payload["model"] == {"loaded": False, "model_version": None, "model_sha256": None}
+    assert payload["model"] == {
+        "loaded": False,
+        "model_version": None,
+        "model_sha256": None,
+        "thresholds": None,
+    }
     assert datetime.fromisoformat(payload["sink"]["last_success_at"]) == START
 
 
