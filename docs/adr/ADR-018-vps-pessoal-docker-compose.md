@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Aceito (aprovado pelo humano em 2026-10-18; a decisão 4, `/docs` não publicado, aguarda confirmação) |
+| Status | Aceito (aprovado pelo humano em 2026-10-18; a decisão 4, `/docs` não publicado, confirmada pelo humano em 2026-10-18) |
 | Data | 2026-10-18 |
 | Decisores | Humano (Carlos) (redigido pelo agente architect) |
 | Relacionados | ADR-008 (substituído em parte), ADR-006, ADR-007, ADR-010, ADR-015, ADR-016 (precedente de mudança de regra inegociável por decisão do humano), ADR-017, SPEC-015, SPEC-028, R-01, R-02, R-03, R-12, R-13, N-05 |
@@ -61,7 +61,7 @@ Regras que passam a valer (detalhadas na SPEC-015):
    - só o Caddy publica portas; a API e o dashboard ficam só na rede do compose;
    - cada serviço tem limite de memória e de CPU, lidos do `infra/.env` com padrões (API 512 MB, o mesmo envelope do Render e do ADR-017; dashboard 1 GB; Caddy 256 MB), para não disputar a máquina com os outros projetos;
    - os passos humanos de firewall na VPS só conferem ou acrescentam regras, nunca apagam nem reiniciam as de outros projetos.
-4. **Rotas públicas:** só `/api/*` chega à API. `/docs` e `/openapi.json` da FastAPI **não** são publicados: ficam acessíveis só localmente. Publicá-los exige uma decisão humana (o humano ainda vai confirmar este item).
+4. **Rotas públicas:** só `/api/*` chega à API. `/docs` e `/openapi.json` da FastAPI **não** são publicados: ficam acessíveis só localmente. Publicá-los exige uma decisão humana (item confirmado pelo humano em 2026-10-18).
 5. **Dashboard → API:** o dashboard usa a URL pública `https://<subdominio>`, e a recusa de `http://` da SPEC-028 fica intacta. Para o tráfego não sair da VPS, o Caddy recebe na rede do compose um alias com o nome do subdomínio. O TLS é verificado normalmente.
 6. **Identidade (R-13):** o subdomínio e o IP da VPS não entram no repositório. A documentação usa `<subdominio>`, e o valor real fica em `PUBLIC_HOST`, no `infra/.env` da VPS (ignorado pelo Git).
 7. **Keep-alive:** o healthcheck do contêiner da API chama `/api/v1/health` a cada 60 s, e esse endpoint faz `SELECT 1` no Supabase. O workflow `keepalive.yml` do ADR-008 continua, como verificação externa a cada 3 dias.
