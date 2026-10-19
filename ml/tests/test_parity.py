@@ -64,7 +64,10 @@ def test_ca13_perturbed_fixture_fails(tmp_path: Path) -> None:
     arrays["type_probs"][0, 0] += 1e-3
     np.savez_compressed(copy / "parity_fixture.npz", **arrays)
     result = check_parity(copy)
-    assert result.ok is False and result.max_abs_diff >= 1e-3
+    # 1e-3 -/+ 1e-4: float32 rounding and the |onnx - torch| noise of the runner's CPU
+    # can leave the measured diff slightly below 1e-3 (SPEC-012 CA-13, SPEC_ISSUE-01).
+    assert result.ok is False
+    assert 9e-4 < result.max_abs_diff < 1.1e-3
     assert parity_mod.main(["--model-dir", str(copy)]) == 2
 
 
