@@ -20,7 +20,7 @@ Projeto acadêmico de uma dupla. O celular fotografa parafusos e porcas; o noteb
 - R-06 Dado simulado sempre `source=simulated` e visível.
 - R-07 Quem faz não testa nem aprova.
 - R-08 Sem SPEC `Ready`, sem código.
-- R-09 Merge exige CI + PASS + APPROVED (+ security) + sem SPEC_ISSUE; feito pelo orquestrador sob delegação e veto do humano (ADR-016).
+- R-09 Merge exige CI + PASS + APPROVED (+ security) + sem SPEC_ISSUE; feito pelo orquestrador sob delegação e veto do humano (ADR-016); correção pequena de SPEC_ISSUE reaprovada pelo orquestrador nos limites do ADR-019.
 - R-10 Máximo de 3 rodadas, depois escalar.
 - R-11 Split por `item_id`; teste intocado.
 - R-12 `api/` e `dashboard/` sem torch/onnxruntime; Python 3.12; `uv.lock`.

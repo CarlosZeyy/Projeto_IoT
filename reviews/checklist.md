@@ -8,6 +8,7 @@ Marque cada item como ✅ ok, ❌ achado (com severidade) ou N/A no `review-repo
 - [ ] Nenhum critério de aceite foi alterado, removido ou "interpretado" pelo autor. **[R-08]**
 - [ ] Há uma linha de rastreabilidade (critério → arquivo/teste) no dev-report.
 - [ ] Decisões novas que não estão na SPEC ou nos ADRs foram registradas como `SPEC_ISSUE` ou como proposta de ADR, e não simplesmente embutidas no código.
+- [ ] Reaprovação delegada (ADR-019): toda correção de SPEC reaprovada pelo orquestrador nesta branch cumpre E-1 a E-5 e nenhuma exclusão X-1 a X-9 (a X-8 foi removida); conferir o `git show` do commit do architect e a classificação e a linha de aprovação no Histórico. Fora dos limites = `SPEC_ISSUE` "exige humano", que impede o merge até a reaprovação humana; se o conteúdo estiver certo, não pede rodada nova. **[R-08, R-09]**
 
 ## 2. Regras inegociáveis
 
@@ -58,3 +59,4 @@ Marque cada item como ✅ ok, ❌ achado (com severidade) ou N/A no `review-repo
 - [ ] Logs sem segredos e sem payloads de imagem.
 - [ ] Dependências novas: mantidas, com licença compatível, sem CVE crítica conhecida (`uv pip audit` ou consulta manual).
 - [ ] Deploy: variáveis definidas no provedor, health check configurado, plano free sem cartão.
+- [ ] Reaprovação delegada (ADR-019), nas SPECs com tag `security` ou `deploy`: toda correção de SPEC reaprovada pelo orquestrador nesta branch cumpre E-1 a E-5 e nenhuma exclusão; em especial, não muda limite de segurança (tamanho, taxa, timeout de produção, permissões, autenticação; X-6) nem trecho ou CA de regra inegociável (X-7). Fora dos limites = `SPEC_ISSUE` "exige humano", que impede o merge até a reaprovação humana. **[R-08, R-09]**

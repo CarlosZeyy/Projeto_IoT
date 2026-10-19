@@ -30,7 +30,7 @@ argument-hint: "título da SPEC ou SPEC-XXX a alterar"
 9. Atualize o quadro em `docs/plan.md` (linha nova ou alterada, com o status igual ao do arquivo).
 10. **Alteração de SPEC existente:**
     - adicione ou atualize a seção `## Histórico` no fim (data, mudança, motivo, quem pediu);
-    - se a SPEC estava `Ready` ou em andamento, marque "**Aguardando reaprovação humana**".
+    - se a SPEC estava `Ready` ou em andamento, classifique a correção pelo ADR-019 no Histórico e marque "**Aguardando reaprovação (ADR-019)**" (elegível) ou "**Aguardando reaprovação humana**" (demais casos).
 
 ## Regras de qualidade dos critérios de aceite
 
