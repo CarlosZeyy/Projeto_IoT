@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Done |
-| Rodada atual | r1 |
+| Status | Blocked |
+| Rodada atual | r2 |
 | Autor da implementação | ml-engineer |
 | Tags | — |
 | Depende de | SPEC-011 (e SPEC-002, pelo `qc_preprocess` e `qc_contracts`) |
