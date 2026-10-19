@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | security-devops |
 | Tags | deploy, security, infra |
 | Depende de | SPEC-004, SPEC-013, SPEC-026 (teto da carta p; sem ele, a rota SPC pode passar dos 512 MB da API), SPEC-027 (migração `002` e simulador corrigido), SPEC-028 (recusa de `API_BASE_URL` sem `https://`) (e, por elas, SPEC-003, SPEC-005, SPEC-006, SPEC-014) |
