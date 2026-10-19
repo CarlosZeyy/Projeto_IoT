@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
+| Status | In Dev |
 | Rodada atual | r2 |
 | Autor da implementação | ml-engineer |
 | Tags | — |
@@ -11,7 +11,7 @@
 | Requisitos cobertos | RF-03, RF-04, RF-05 (artefatos usados pela borda), RF-12 (`metrics.json`), RNF-02, RNF-07; metas do PRD §7; R-11 |
 | ADRs relevantes | ADR-004, ADR-005, ADR-014, ADR-001 |
 
-> **Aguardando reaprovação humana**: correção do SPEC_ISSUE-01 da r2 (texto do CA-13 frágil em float32 quebrou o CI da `main`). Ver o Histórico.
+> **Reaprovada em 2026-10-19 pelo orquestrador, sob delegação do humano**: correção do SPEC_ISSUE-01 da r2 (texto do CA-13 frágil em float32 quebrou o CI da `main`). Ver o Histórico.
 
 ## 1. Contexto
 
@@ -181,3 +181,4 @@ Sem internet nos testes (`pretrained=False`). Dados sempre do `make_synthetic_da
 | 2026-10-18 | Alteração reaprovada pelo humano. | Aprovação humana | Humano (Carlos) |
 | 2026-10-18 | Só texto: §7 ganha a nota de que, nos módulos do CA-27, `sklearn` e `scipy` são importados dentro da função, porque `sys.modules["torch"] = None` quebra o import do scipy. Nenhum requisito, assinatura ou CA muda, por isso a SPEC **não** volta para reaprovação. A SPEC-011 passou a ter `item_history` e o parâmetro `history` em `make_split` (SPEC_ISSUE-01 da r2), sem efeito nesta SPEC: `load_split`, `rows_for` e o formato do `split_v<N>.*` não mudaram. | Observação do reviewer em `reviews/SPEC-011/r1-review-report.md` ("Avaliação das decisões do dev-report r1": `sklearn` dentro de `compute_agreement`) | Orquestrador |
 | 2026-10-19 | Correção do SPEC_ISSUE-01 (r2). CA-13: `max_abs_diff ≥ 1e-3` → `9e-4 < max_abs_diff < 1.1e-3`, com a perturbação explicitamente no array float32 e a justificativa dos limites (`1e-3 ∓ 1e-4`, pela desigualdade triangular e pelo `< 1e-4` do CA-12). A intenção não muda: uma perturbação 10 vezes acima da tolerância é detectada (`ok = False`), e o `max_abs_diff` a reflete; o limite superior novo confirma que a medida é a diferença absoluta da entrada perturbada. §6: a r2 só ajusta os dois testes do CA-13. Nenhum requisito, assinatura ou outro CA muda. SPEC marcada como "Aguardando reaprovação humana". | CI da `main` (GitHub Actions, run 39191665982): `ml/tests/test_parity.py::test_ca13_perturbed_fixture_fails` e `ml/tests/acceptance/test_spec_012.py::test_ca13_perturbed_fixture_fails_parity` falharam com `max_abs_diff = 0.0009999759495258331`. A fixture é float32 e a saída do onnxruntime no runner difere da gravada em ~1e-8, então a diferença após a perturbação pode ficar um pouco abaixo de `1e-3` conforme a CPU (passou localmente e no CI do PR #31) | Orquestrador |
+| 2026-10-19 | Correção do SPEC_ISSUE-01 (CA-13) aprovada pelo orquestrador, sob a delegação explícita do humano em 2026-10-19 ("total autonomia para prosseguir com o projeto"); `Blocked` → `In Dev` na r2. | Fluxo do loop (§4 da skill `features`) | Orquestrador (delegação do humano) |
