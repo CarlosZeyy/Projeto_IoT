@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Aceito. Alterado em parte por ADR-019 (Proposto em 2026-10-19; a alteração só vale depois de o humano aceitar o ADR-019): a reaprovação de correções pequenas de `SPEC_ISSUE` sai de "O que continua com o humano", nos limites do ADR-019, e a condição 5 também cobre "Aguardando reaprovação (ADR-019)" |
+| Status | Aceito. Alterado em parte por ADR-019 (aceito pelo humano em 2026-10-19): a reaprovação de correções pequenas de `SPEC_ISSUE` sai de "O que continua com o humano", nos limites do ADR-019, e a condição 5 também cobre "Aguardando reaprovação (ADR-019)" |
 | Data | 2026-10-17 |
 | Decisores | Humano (Carlos) (redigido pelo agente architect) |
 | Relacionados | ADR-011, ADR-015, R-07, R-09, R-10, R-13 |
