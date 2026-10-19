@@ -82,7 +82,7 @@ def listener() -> Iterator[Listener]:
 def _refused_conninfos(port: int) -> list[tuple[str, dict[str, str]]]:
     """Conninfos whose effective port is 6543; ``port`` is where a real attempt would go."""
     return [
-        (f"postgresql://u:{SECRET}@127.0.0.1:6543/x_test", {}),
+        ("postgresql://u:s3cr3t-pw@127.0.0.1:6543/x_test", {}),
         (f"postgresql://u@127.0.0.1:{port},127.0.0.1:6543/x_test", {}),
         (f"host=127.0.0.1 port=6543 user=u password={SECRET} dbname=x_test", {}),
         ("postgresql://u@127.0.0.1/x_test", {"PGPORT": "6543"}),

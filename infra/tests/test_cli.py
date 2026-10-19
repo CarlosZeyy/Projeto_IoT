@@ -68,7 +68,7 @@ def test_missing_migrations_dir_exits_2(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("extra", [[], ["--status"]])
 def test_closed_port_exits_1_without_leaking_password(extra: list[str]) -> None:
-    url = f"postgresql://u:{SECRET}@127.0.0.1:1/x"
+    url = "postgresql://u:s3cr3t-pw@127.0.0.1:1/x"
     result = _run("--database-url", url, *extra)
     output = result.stdout + result.stderr
     assert result.returncode == 1
@@ -79,7 +79,7 @@ def test_closed_port_exits_1_without_leaking_password(extra: list[str]) -> None:
 
 
 def test_password_from_env_is_not_leaked() -> None:
-    result = _run(env_updates={"DATABASE_URL": f"postgresql://u:{SECRET}@127.0.0.1:1/x"})
+    result = _run(env_updates={"DATABASE_URL": "postgresql://u:s3cr3t-pw@127.0.0.1:1/x"})
     assert result.returncode == 1
     assert SECRET not in result.stdout + result.stderr
 
