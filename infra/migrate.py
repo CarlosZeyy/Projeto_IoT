@@ -2,8 +2,15 @@
 
 Applies ``infra/migrations/NNN_slug.sql`` in order, each one in its own transaction together with
 its row in ``schema_migrations`` (version, filename, SHA-256 checksum). Concurrent runs are
-serialized with ``pg_advisory_lock``. Connections use ``prepare_threshold=None`` so they work
-through the Supabase pooler in transaction mode.
+serialized with a session-level advisory lock, taken with ``pg_try_advisory_lock`` and a deadline
+(SPEC-015 section 4.7). Connections use ``prepare_threshold=None``.
+
+Production migrations go through the direct connection or the Supabase pooler in **session**
+mode (port 5432), never through the transaction pooler (port 6543), which loses session-level
+advisory locks between transactions: a conninfo whose effective port is 6543 is refused before
+any connection (``UnsupportedConnectionError``). Read the URL from a local, git-ignored file::
+
+    uv run --env-file .env.migrate --package qc-api python infra/migrate.py
 
 Usage::
 
@@ -23,12 +30,14 @@ import logging
 import os
 import re
 import sys
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import psycopg
+from psycopg import pq
 from psycopg.conninfo import conninfo_to_dict
 
 __all__ = [
@@ -36,7 +45,9 @@ __all__ = [
     "DatabaseConnectionError",
     "Migration",
     "MigrationError",
+    "UnsupportedConnectionError",
     "apply_migrations",
+    "ensure_supported_connection",
     "load_migrations",
     "main",
     "pending_migrations",
@@ -45,10 +56,20 @@ __all__ = [
 logger = logging.getLogger("partqc.migrate")
 
 DEFAULT_DIR = Path(__file__).resolve().parent / "migrations"
-FILENAME_PATTERN = re.compile(r"^\d{3}_[a-z0-9_]+\.sql$")
+# ASCII digits only: ``\d`` would also accept other Unicode digits (SPEC-015 section 4.7).
+FILENAME_PATTERN = re.compile(r"^[0-9]{3}_[a-z0-9_]+\.sql$")
 # Constant key of the advisory lock that serializes concurrent runs ("PQCMIG" in ASCII).
 ADVISORY_LOCK_KEY = 0x5051_434D_4947
 CONNECT_TIMEOUT_S = 10
+# Default deadline for the migration lock and the interval between attempts (SPEC-015 4.7).
+DEFAULT_LOCK_WAIT_S = 30.0
+LOCK_RETRY_INTERVAL_S = 1.0
+# Port of the Supabase transaction pooler, refused for migrations (SPEC-015 section 4.7).
+TRANSACTION_POOLER_PORT = "6543"
+UNSUPPORTED_CONNECTION_MESSAGE = (
+    "transaction pooler (port 6543) is not supported for migrations; "
+    "use the direct connection or the session pooler (port 5432)"
+)
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -76,6 +97,10 @@ class DatabaseConnectionError(MigrationError):
     """The database could not be reached. The message never contains the URL or the password."""
 
 
+class UnsupportedConnectionError(MigrationError):
+    """The conninfo targets the transaction pooler (port 6543). The URL is never in the message."""
+
+
 @dataclass(frozen=True)
 class Migration:
     """One migration file: ``version`` is the 3-digit prefix (e.g. ``"001"``)."""
@@ -83,6 +108,8 @@ class Migration:
     version: str
     path: Path
     checksum: str
+    # The bytes read once by ``load_migrations``: the checksum and the SQL come from them.
+    content: bytes = field(repr=False)
 
     @property
     def filename(self) -> str:
@@ -90,7 +117,7 @@ class Migration:
 
     def read_sql(self) -> str:
         try:
-            return self.path.read_bytes().decode("utf-8")
+            return self.content.decode("utf-8")
         except UnicodeDecodeError:
             raise MigrationError(f"migration {self.filename!r} is not valid UTF-8") from None
 
@@ -100,10 +127,6 @@ class _AppliedRow:
     version: str
     filename: str
     checksum: str
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def load_migrations(migrations_dir: Path = DEFAULT_DIR) -> list[Migration]:
@@ -132,7 +155,13 @@ def load_migrations(migrations_dir: Path = DEFAULT_DIR) -> list[Migration]:
                 f"duplicate migration number {version}: "
                 f"{by_number[number].filename!r} and {path.name!r}"
             )
-        by_number[number] = Migration(version=version, path=path, checksum=_sha256(path))
+        content = path.read_bytes()  # the only read of the file (SPEC-015 section 4.7)
+        by_number[number] = Migration(
+            version=version,
+            path=path,
+            checksum=hashlib.sha256(content).hexdigest(),
+            content=content,
+        )
     return [by_number[number] for number in sorted(by_number)]
 
 
@@ -145,6 +174,32 @@ def _host_port(conninfo: str) -> str:
     host = params.get("host") or params.get("hostaddr") or "default host"
     port = params.get("port") or "default port"
     return f"{host}:{port}"
+
+
+def _effective_ports(conninfo: str) -> list[str]:
+    """Ports libpq would use for ``conninfo``: one per host, ``PGPORT`` when not written.
+
+    Returns ``[]`` when the conninfo cannot be parsed (the connection would fail anyway).
+    """
+    try:
+        params = conninfo_to_dict(conninfo)
+    except Exception:
+        return []
+    fallback = os.environ.get("PGPORT", "").strip()
+    written = str(params.get("port") or "")
+    if not written:
+        return [port.strip() for port in fallback.split(",")] if fallback else []
+    # With several hosts the port is a comma-separated list; an empty item is the default port.
+    return [port.strip() or fallback for port in written.split(",")]
+
+
+def ensure_supported_connection(conninfo: str) -> None:
+    """Refuse, before any connection, a conninfo whose effective port is the transaction pooler.
+
+    Raises ``UnsupportedConnectionError``; the message never contains the URL (R-03).
+    """
+    if any(port == TRANSACTION_POOLER_PORT for port in _effective_ports(conninfo)):
+        raise UnsupportedConnectionError(UNSUPPORTED_CONNECTION_MESSAGE)
 
 
 @contextmanager
@@ -197,6 +252,7 @@ def pending_migrations(conninfo: str, migrations_dir: Path = DEFAULT_DIR) -> lis
 
     Raises ``MigrationError`` for invalid files or a checksum mismatch, like ``apply_migrations``.
     """
+    ensure_supported_connection(conninfo)
     migrations = load_migrations(migrations_dir)
     with _connect(conninfo) as conn:
         applied = _applied_rows(conn)
@@ -209,13 +265,34 @@ def _ensure_control_table(conn: psycopg.Connection) -> None:
         conn.execute(_ENABLE_CONTROL_TABLE_RLS)
 
 
+def _current_xact_id(conn: psycopg.Connection) -> object:
+    row = conn.execute("select pg_current_xact_id()").fetchone()
+    return row[0] if row else None
+
+
+def _ended_transaction_error(migration: Migration) -> MigrationError:
+    return MigrationError(
+        f"migration {migration.version} ({migration.filename}) ended the transaction "
+        "(COMMIT/ROLLBACK/BEGIN in the file); statements before it may have been committed; "
+        "fix the file and check the database by hand"
+    )
+
+
 def _apply_one(conn: psycopg.Connection, migration: Migration) -> None:
     sql = migration.read_sql()
     try:
         with conn.transaction():
+            xact_before = _current_xact_id(conn)
             # No parameters: the file runs as-is through the simple query protocol, which
             # allows several statements. Nothing is interpolated into it.
             conn.execute(sql)
+            # A COMMIT/ROLLBACK (and maybe a new BEGIN) inside the file ends our transaction:
+            # never record such a migration as applied (RV-02 of SPEC-003, SPEC-015 4.7).
+            if (
+                conn.info.transaction_status != pq.TransactionStatus.INTRANS
+                or _current_xact_id(conn) != xact_before
+            ):
+                raise _ended_transaction_error(migration)
             conn.execute(
                 _INSERT_APPLIED, (migration.version, migration.filename, migration.checksum)
             )
@@ -226,18 +303,44 @@ def _apply_one(conn: psycopg.Connection, migration: Migration) -> None:
         ) from exc
 
 
-def apply_migrations(conninfo: str, migrations_dir: Path = DEFAULT_DIR) -> list[str]:
+def _acquire_lock(conn: psycopg.Connection, lock_wait_s: float) -> None:
+    """Take the migration lock, trying every ``LOCK_RETRY_INTERVAL_S`` until the deadline."""
+    deadline = time.monotonic() + lock_wait_s
+    while True:
+        row = conn.execute("select pg_try_advisory_lock(%s)", (ADVISORY_LOCK_KEY,)).fetchone()
+        if row and row[0]:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise MigrationError(
+                f"could not acquire the migration lock within {lock_wait_s:g} s "
+                "(another migration run may be in progress); nothing was applied"
+            )
+        time.sleep(min(LOCK_RETRY_INTERVAL_S, remaining))
+
+
+def apply_migrations(
+    conninfo: str,
+    migrations_dir: Path = DEFAULT_DIR,
+    *,
+    lock_wait_s: float = DEFAULT_LOCK_WAIT_S,
+) -> list[str]:
     """Apply the pending migrations in order and return the versions applied in this run.
 
     Each migration runs in its own transaction together with its ``schema_migrations`` row; on
     error it is rolled back, nothing is recorded and the following ones are not applied. An
     applied migration whose file changed raises ``checksum mismatch for <version>`` and nothing
-    is applied.
+    is applied. Without the migration lock within ``lock_wait_s`` seconds (> 0), raises
+    ``MigrationError`` and applies nothing. A conninfo on port 6543 raises
+    ``UnsupportedConnectionError`` before any connection.
     """
+    if not lock_wait_s > 0:  # also refuses NaN
+        raise ValueError("lock_wait_s must be greater than 0")
+    ensure_supported_connection(conninfo)
     migrations = load_migrations(migrations_dir)
     applied_now: list[str] = []
     with _connect(conninfo) as conn:
-        conn.execute("select pg_advisory_lock(%s)", (ADVISORY_LOCK_KEY,))
+        _acquire_lock(conn, lock_wait_s)
         try:
             _ensure_control_table(conn)
             pending = _plan(migrations, _applied_rows(conn))
@@ -254,6 +357,7 @@ def apply_migrations(conninfo: str, migrations_dir: Path = DEFAULT_DIR) -> list[
 
 
 def _status(conninfo: str, migrations_dir: Path) -> None:
+    ensure_supported_connection(conninfo)
     migrations = load_migrations(migrations_dir)
     with _connect(conninfo) as conn:
         applied = _applied_rows(conn)
@@ -329,6 +433,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception:
         # The parser's message may echo the string (and a password): never show it.
         logger.error("invalid database URL (not shown)")
+        return EXIT_USAGE
+    try:
+        ensure_supported_connection(conninfo)
+    except UnsupportedConnectionError as exc:
+        logger.error("%s", exc)
         return EXIT_USAGE
     if not Path(args.migrations_dir).is_dir():
         logger.error("migrations directory not found: %s", args.migrations_dir)
