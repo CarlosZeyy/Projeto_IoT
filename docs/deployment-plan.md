@@ -48,7 +48,7 @@ Rotas públicas em `https://<subdominio>` (`infra/Caddyfile`): `/api/*` vai para
 | Disco livre | `df -h /` | a preencher | a preencher |
 | Limites escolhidos no `infra/.env` | — | a preencher (padrões: API `512m`/`1.0`, dashboard `1g`/`1.0`, Caddy `256m`/`0.5`) | a preencher |
 
-Regra dos limites (SPEC-015 §4.12): a soma dos três `mem_limit` fica abaixo da RAM disponível, cada `cpus` fica ≤ `nproc`, e a API não fica abaixo de `512m` sem uma decisão registrada aqui. A imagem do dashboard tem cerca de 1,1 GB e a da API cerca de 240 MB (medido no build local de 2026-10-19); o disco precisa de folga para duas gerações de cada imagem durante uma atualização.
+Regra dos limites (SPEC-015 §4.12): a soma dos três `mem_limit` fica abaixo da RAM disponível, cada `cpus` fica ≤ `nproc`, e a API não fica abaixo de `512m` sem uma decisão registrada aqui. A imagem do dashboard tem cerca de 670 MB e a da API cerca de 205 MB (medido no build local de 2026-10-19, depois da correção do RV-01 da r1, que tirou das camadas o cache do `uv`; antes eram 1,1 GB e 240 MB). O cache do `uv` fica no cache de build do BuildKit da VPS, fora das imagens, e acelera as atualizações; o disco precisa de folga para duas gerações de cada imagem durante uma atualização.
 
 ## 3. Segredos e variáveis
 
@@ -229,7 +229,7 @@ Depois de cada merge que afete a API, o dashboard, `infra/`, `ml/models/**/*.jso
 
 A imagem do dashboard leva o `metrics.json` e os PNGs de `ml/reports/` **do commit publicado**: depois do merge do primeiro `metrics.json` (SPEC-012), basta esta atualização, e "Sobre o modelo" passa a mostrar a tabela de métricas.
 
-**Logs:** `docker compose -f infra/compose.yaml logs --tail 200 <serviço>`. Nunca cole logs da API em lugar público: com o banco fora do ar, eles têm o host e o usuário do pooler (§7, item 2). O Caddy não registra acessos (sem a diretiva `log`), e o log de acesso do Uvicorn mostra o IP do Caddy na rede interna, e não o do cliente.
+**Logs:** `docker compose -f infra/compose.yaml logs --tail 200 <serviço>`. Nunca cole logs da API nem do Caddy em lugar público sem editá-los: com o banco fora do ar, os da API têm o host e o usuário do pooler (§7, item 2), e os do Caddy citam o subdomínio no certificado (`identifiers`) e, numa falha de ACME, o IP da VPS. Antes de colar, troque o subdomínio por `<subdominio>` e o IP por `<IP>` (lista completa na §9). O Caddy não registra acessos (sem a diretiva `log`), e o log de acesso do Uvicorn mostra o IP do Caddy na rede interna, e não o do cliente.
 
 ## 5. Checklist do dia da apresentação
 
@@ -362,13 +362,17 @@ O `statement_timeout` do papel da API é o **teto do custo de banco** da carta p
 2. **Escolher o valor:** `15s`. Só se 3 vezes a leitura mais lenta medida passar de 15 s, usar esse valor, até `30s`. (Com poucos lotes em produção, 3 vezes a medida seria um limite de milissegundos que cortaria a carta de uma história realista: no Postgres local, a carta levou 2,9 s com 200 000 lotes e de 4,2 a 5,3 s com 1 M, no test-report da SPEC-026.)
 3. **Aplicar** no papel da API (o usuário da `DATABASE_URL` sem o sufixo do projeto; no Supabase, `postgres`), no SQL Editor: `alter role postgres set statement_timeout = '15s';`. É `alter role`, e não o parâmetro `options` da conexão, porque uma configuração de sessão não funciona pelo pooler em modo transaction (porta 6543).
 4. **Conferir no papel:** `select rolname, rolconfig from pg_roles where rolname = 'postgres';` → `rolconfig` contém `statement_timeout=15s` (`show statement_timeout` no SQL Editor não reflete a configuração do papel).
-5. **Conferir pelo caminho da API** (pooler em modo transaction, porta 6543), com a URL lida de um arquivo local ignorado pelo Git, nunca na linha de comando. Por exemplo, com o `.env.prod` do passo 11 acrescido de uma linha `DATABASE_URL=<URL do modo transaction>` (entre aspas simples se tiver `$`):
+5. **Conferir pelo caminho da API** (pooler em modo transaction, porta 6543), com a URL lida de um arquivo local ignorado pelo Git, nunca na linha de comando. Use um arquivo **próprio e temporário**, só para esta conferência, e não o `.env.prod` do passo 11: o smoke e o simulador não precisam da senha do banco, e ela não deve ficar num arquivo de uso geral nem no ambiente desses processos.
+   1. Criar com um editor o arquivo `.env.dbcheck` (coberto pelo padrão `.env.*` do `.gitignore`) com uma única linha `DATABASE_URL=<URL do modo transaction>` (entre aspas simples se tiver `$`) e rodar `chmod 600 .env.dbcheck`.
+   2. Rodar:
 
-   ```bash
-   uv run --env-file .env.prod --package qc-api python -c "import os, psycopg; c = psycopg.connect(os.environ['DATABASE_URL'], prepare_threshold=None); print(c.execute('show statement_timeout').fetchone()[0])"
-   ```
+      ```bash
+      uv run --env-file .env.dbcheck --package qc-api python -c "import os, psycopg; c = psycopg.connect(os.environ['DATABASE_URL'], prepare_threshold=None); print(c.execute('show statement_timeout').fetchone()[0])"
+      ```
 
-   Saída esperada: `15s`. Se não for, parar e registrar `SPEC_ISSUE` para o architect (a alternativa é um `set local statement_timeout` na transação de leitura da API, numa SPEC do developer).
+   3. Apagar o arquivo logo depois: `rm .env.dbcheck`.
+
+   Saída esperada: `15s`. Se a conexão falhar, não cole a mensagem de erro sem editá-la: ela pode trazer o host do pooler. Se não for, parar e registrar `SPEC_ISSUE` para o architect (a alternativa é um `set local statement_timeout` na transação de leitura da API, numa SPEC do developer).
 6. Registrar na §9 e no dev-report as saídas dos itens 1, 4 e 5 e a data.
 
 ### 2. `READ_API_KEY` (INFO-02 da SPEC-005)
@@ -394,6 +398,32 @@ O `statement_timeout` do papel da API é o **teto do custo de banco** da carta p
 
 Preenchido pelo humano (e copiado no dev-report), sem o subdomínio real nem o IP. Os comandos estão na SPEC-015 §5.
 
+**Antes de colar qualquer saída** aqui, no dev-report ou no PR (todos públicos), troque o subdomínio real por `<subdominio>` e o IP por `<IP>` (R-13). Estas saídas os trazem:
+
+- o `%{redirect_url}` do CA-13, item 2 (`https://` seguido do subdomínio real);
+- o `openssl s_client` do CA-13, item 5, se a saída não for filtrada pelo `openssl x509 -noout -issuer -enddate` (o `subject` e o SAN têm o subdomínio);
+- o `printenv API_BASE_URL` do CA-17, item 6 (`https://` seguido do subdomínio real; basta registrar "começa com `https://`");
+- a URL `wss://` do CA-17, item 2, nas ferramentas do navegador;
+- o `dig +short <subdominio> A` do passo 3 da §4 (o IP);
+- o `curl http://<IP>:8000/` e o `curl http://<IP>:8501/` do CA-40, item 3 (a mensagem de erro do `curl` repete o IP);
+- o `docker compose -f infra/compose.yaml logs caddy` do passo 7 da §4 e do CA-43, item 5 (o nome do certificado e, numa falha de ACME, o IP);
+- os logs da API com o banco fora do ar (host e usuário do pooler, §7, item 2);
+- a mensagem de erro de uma conexão que falhe no item 5 da §8 (host do pooler).
+
+O smoke test (`scripts/smoke_test.py`), o `--status` do `infra/migrate.py` e as consultas SQL dos CAs 14, 19 e 26 não trazem o host nem o IP e podem ser colados como saem. Depois de colar, o CA-42 confere o repositório inteiro.
+
+**Comando do CA-42**, na VPS, a partir da raiz do checkout. Ele tira do valor as aspas e os espaços, que o `git grep -F` procuraria literalmente (um `infra/.env` com o valor entre aspas daria um falso "nenhuma linha"), e lê o IPv4 sem deixá-lo no histórico do shell:
+
+```bash
+h=$(sed -n 's/^PUBLIC_HOST[=]//p' infra/.env | tr -d "\"' \r")
+if [ -n "$h" ]; then git grep -nF -e "$h"; else echo "PUBLIC_HOST vazio ou ausente"; fi
+read -r -p "IPv4 público da VPS: " ip; ip=$(printf '%s' "$ip" | tr -d "\"' \r")
+if [ -n "$ip" ]; then git grep -nF -e "$ip"; else echo "IPv4 vazio"; fi
+unset h ip
+```
+
+Esperado: nenhuma linha nos dois `git grep` (código de saída 1) e nenhum aviso de valor vazio. Antes, rodar `git pull --ff-only` para que os relatórios da SPEC-015 em `reviews/SPEC-015/` estejam no checkout. O teste de valor vazio evita rodar o `git grep` com um padrão vazio, que casaria todas as linhas.
+
 | CA | O que | Resultado | Data |
 |---|---|---|---|
 | CA-13 | API na VPS: health, redirecionamento HTTP → HTTPS, 401 sem chave, HSTS sem `includeSubDomains`, emissor do certificado, `/docs` e `/openapi.json` não publicados | pendente | — |
@@ -405,5 +435,5 @@ Preenchido pelo humano (e copiado no dev-report), sem o subdomínio real nem o I
 | CA-19 | `search_path`, migração pelo modo session e restrições da `002` (passo 1, itens 2 e 3) | pendente | — |
 | CA-26 | `statement_timeout` (§8, item 1) | pendente | — |
 | CA-40 | Rede e coexistência na VPS (§4, "Firewall") | pendente | — |
-| CA-42 | Na VPS, `git grep -nF -e "$(grep '^PUBLIC_HOST' infra/.env \| cut -d= -f2-)"` → nenhuma linha; o mesmo com o IPv4 público → nenhuma linha | pendente | — |
+| CA-42 | Na VPS, o comando do CA-42 acima: nenhuma linha com o subdomínio nem com o IPv4 público | pendente | — |
 | CA-43 | `.env*` fora das imagens (passo 7, item 4); ciclo de atualização, rollback e volta à `main` com health 200; `partqc_caddy_data` presente e sem nova emissão de certificado | pendente | — |
