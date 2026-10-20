@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | ml-engineer |
 | Tags | — |
 | Depende de | SPEC-012 (e SPEC-011) |
