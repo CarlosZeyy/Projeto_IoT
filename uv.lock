@@ -1266,7 +1266,7 @@ requires-dist = [
     { name = "qc-preprocess", editable = "packages/preprocess" },
     { name = "scikit-learn" },
     { name = "timm", marker = "extra == 'train'" },
-    { name = "torch", marker = "extra == 'train'" },
+    { name = "torch", marker = "extra == 'train'", specifier = "<2.15" },
     { name = "torchvision", marker = "extra == 'train'" },
 ]
 provides-extras = ["train"]
