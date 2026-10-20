@@ -22,3 +22,35 @@ def test_notebook_is_clean() -> None:
     assert any("google.colab import userdata" in s for s in sources)
     every_cell = ["".join(c["source"]) for c in notebook["cells"]]
     assert not any(SECRET.search(s) for s in every_cell)
+
+
+def _source(cell: dict) -> str:
+    return "".join(cell["source"]) if isinstance(cell["source"], list) else cell["source"]
+
+
+def test_notebook_checks_the_export_and_the_split_before_training() -> None:
+    """SPEC-031 §4.3 item 3 and §4.5: export check and split_v1 condition before the pipeline."""
+    cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    pipeline = next(
+        i
+        for i, c in enumerate(cells)
+        if c["cell_type"] == "code" and _source(c).lstrip().startswith("!python -m qc_ml.pipeline")
+    )
+    check = next(
+        i
+        for i, c in enumerate(cells)
+        if c["cell_type"] == "code" and "make_tiny_fixture.py --out" in _source(c)
+    )
+    assert check < pipeline
+    assert "!python ml/scripts/make_tiny_fixture.py --out /tmp/export_check" in _source(
+        cells[check]
+    )
+    assert "_exit_code == 0" in _source(cells[check])
+    assert cells[check - 1]["cell_type"] == "markdown"
+    assert "antes do treino" in _source(cells[check - 1])
+    assert any(
+        c["cell_type"] == "markdown"
+        and "split_v1" in _source(c)
+        and "python -m qc_ml.split" in _source(c)
+        for c in cells[:pipeline]
+    )
