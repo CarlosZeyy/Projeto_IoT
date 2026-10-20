@@ -219,6 +219,33 @@ def test_output_never_has_keys_nor_host(smoke, keys, capsys, faults) -> None:
         assert lines[0] == "FAIL health: ConnectError"
 
 
+@pytest.mark.parametrize("form", ["equals", "separate", "positional"])
+def test_unknown_argument_is_never_echoed(smoke, keys, capsys, form) -> None:
+    """RV-02 (r1): a key typed in an option the smoke does not have never reaches stderr."""
+    typed = secrets.token_urlsafe(24)
+    extra = {
+        "equals": [f"--api-key={typed}"],
+        "separate": ["--api-key", typed],
+        "positional": [typed],
+    }[form]
+    cloud = FakeCloud(keys)
+    code, _, output = _run(
+        smoke, cloud, capsys, argv=["--api-url", API, "--dashboard-url", DASH, *extra]
+    )
+    assert code == 2
+    assert typed not in output
+    assert "(not shown)" in output
+    assert cloud.requests == []
+
+
+def test_redaction_keeps_the_count_and_hides_quoted_values(smoke) -> None:
+    redact = smoke.redact_usage_error
+    assert redact("unrecognized arguments: a b") == "unrecognized arguments: 2 value(s) (not shown)"
+    already = "unrecognized arguments: 1 value(s) (not shown)"
+    assert redact(already) == already
+    assert "s3cr3t" not in redact("argument --x: invalid choice: 's3cr3t'")
+
+
 def test_source_never_disables_tls_verification() -> None:
     assert "verify=False" not in SCRIPT.read_text(encoding="utf-8")
 

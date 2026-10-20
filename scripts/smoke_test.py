@@ -31,6 +31,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import NoReturn
 from urllib.parse import urlsplit
 
 import httpx
@@ -66,6 +67,44 @@ CHECK_NAMES: tuple[str, ...] = (
     "dashboard",
     "dashboard_health",
 )
+
+
+NOT_SHOWN = "(not shown)"
+_UNRECOGNIZED = "unrecognized arguments: "
+_UNRECOGNIZED_REDACTED = re.compile(r"unrecognized arguments: \d+ value\(s\) \(not shown\)")
+# A value argparse quotes with %r (single or double quoted, with backslash escapes), with the
+# ": " or the space that precedes it. Same rule as scripts/simulate.py (SPEC-027).
+_QUOTED_VALUE = re.compile(r"""(?::\s*|\s+)?(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")""")
+
+
+def redact_usage_error(message: str) -> str:
+    """``message`` of an argparse usage error without any value typed by the operator."""
+    if message.startswith(_UNRECOGNIZED):
+        if _UNRECOGNIZED_REDACTED.fullmatch(message):
+            return message  # already redacted by NoEchoArgumentParser.parse_args
+        count = len(message[len(_UNRECOGNIZED) :].split())
+        return f"{_UNRECOGNIZED}{count} value(s) {NOT_SHOWN}"
+    return _QUOTED_VALUE.sub(f" {NOT_SHOWN}", message)
+
+
+class NoEchoArgumentParser(argparse.ArgumentParser):
+    """``ArgumentParser`` whose usage errors never repeat a typed value (RV-02 of SPEC-015 r1).
+
+    A mistyped option can carry a key (``--api-key=<key>``), and argparse would print it on
+    stderr. The usage line and the exit code 2 stay as in ``ArgumentParser``; same pattern as
+    ``NoEchoArgumentParser`` of ``scripts/simulate.py``.
+    """
+
+    def parse_args(  # type: ignore[override]
+        self, args: Sequence[str] | None = None, namespace: argparse.Namespace | None = None
+    ) -> argparse.Namespace:
+        parsed, extras = self.parse_known_args(args, namespace)
+        if extras:
+            self.error(f"{_UNRECOGNIZED}{len(extras)} value(s) {NOT_SHOWN}")
+        return parsed
+
+    def error(self, message: str) -> NoReturn:
+        super().error(redact_usage_error(message))
 
 
 class UsageError(Exception):
@@ -120,7 +159,7 @@ def _secret_env(name: str) -> str:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = NoEchoArgumentParser(
         prog="smoke_test.py",
         description="Smoke test of the published PartQC API and dashboard (SPEC-015).",
     )
