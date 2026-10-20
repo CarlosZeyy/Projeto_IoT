@@ -6,6 +6,7 @@ Run in the CI with onnxruntime only (no torch).
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import shutil
 import subprocess
@@ -116,3 +117,107 @@ def test_ca14_fixture_files_size_and_git() -> None:
         [git, "check-ignore", *paths], cwd=ROOT, capture_output=True, text=True, check=False
     )
     assert ignored.returncode == 1, ignored.stdout  # 1 = none of the paths is ignored
+
+
+# SPEC-031 §4.1: non-finite values make the parity fail loud (a NaN used to vanish from max()).
+
+
+def _copy_with(tmp_path: Path, edit) -> Path:
+    copy = Path(shutil.copytree(TINY, tmp_path / "tiny"))
+    with np.load(copy / "parity_fixture.npz", allow_pickle=False) as data:
+        arrays = {k: data[k].copy() for k in data.files}
+    edit(arrays)
+    np.savez_compressed(copy / "parity_fixture.npz", **arrays)
+    return copy
+
+
+def _nan_at_argmax(arrays: dict[str, np.ndarray]) -> None:
+    j = int(np.argmax(arrays["type_probs"][0]))
+    arrays["type_probs"][0, j] = np.nan
+
+
+def _nan_input_and_refs(arrays: dict[str, np.ndarray]) -> None:
+    arrays["inputs"][0] = np.nan
+    arrays["type_probs"][0, :] = np.nan
+    arrays["grade_probs"][0, :] = np.nan
+
+
+def _inf_grade_reference(arrays: dict[str, np.ndarray]) -> None:
+    arrays["grade_probs"][3, 1] = np.inf
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [_nan_at_argmax, _nan_input_and_refs, _inf_grade_reference],
+    ids=["nan-reference-at-argmax", "nan-both-sides", "inf-reference"],
+)
+def test_parity_non_finite_values_fail(
+    tmp_path: Path, edit, capsys: pytest.CaptureFixture[str]
+) -> None:
+    copy = _copy_with(tmp_path, edit)
+    result = check_parity(copy)
+    assert result.ok is False
+    assert result.max_abs_diff == math.inf
+    assert result.argmax_equal is False
+    assert result.sha256_match is True
+    assert "non-finite values" in result.message
+    assert parity_mod.main(["--model-dir", str(copy)]) == 2
+    captured = capsys.readouterr()
+    assert "non-finite values" in captured.err and captured.out == ""
+
+
+class _NanOutputSession:
+    """Real onnxruntime session whose ``grade_probs`` output gets one NaN (output side only)."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self._session = _REAL_SESSION(*args, **kwargs)
+
+    def run(self, names, feeds):
+        outputs = [np.array(o, copy=True) for o in self._session.run(names, feeds)]
+        outputs[1][2, 0] = np.nan
+        return outputs
+
+
+_REAL_SESSION = parity_mod.ort.InferenceSession
+
+
+def test_parity_non_finite_onnx_output_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    copy = Path(shutil.copytree(TINY, tmp_path / "tiny"))
+    monkeypatch.setattr(parity_mod.ort, "InferenceSession", _NanOutputSession)
+    result = check_parity(copy)
+    assert result.ok is False and result.max_abs_diff == math.inf
+    assert result.argmax_equal is False and "non-finite values" in result.message
+    assert parity_mod.main(["--model-dir", str(copy)]) == 2
+    assert "non-finite values" in capsys.readouterr().err
+
+
+def test_parity_non_finite_with_fixture_of_another_model(tmp_path: Path) -> None:
+    def edit(arrays: dict[str, np.ndarray]) -> None:
+        _nan_at_argmax(arrays)
+        arrays["model_sha256"] = np.array("f" * 64)
+
+    result = check_parity(_copy_with(tmp_path, edit))
+    assert result.ok is False and result.sha256_match is False
+    assert "non-finite values" in result.message and "model_sha256 differs" in result.message
+
+
+def test_parity_finite_result_unchanged() -> None:
+    """With finite values, max_abs_diff is the plain maximum of |onnx - torch| (as before)."""
+    import onnxruntime as ort
+
+    from qc_ml.artifacts import read_verified_model
+
+    data, _ = read_verified_model(TINY)
+    with np.load(TINY / "parity_fixture.npz", allow_pickle=False) as fixture:
+        inputs, want_t, want_g = fixture["inputs"], fixture["type_probs"], fixture["grade_probs"]
+    got_t, got_g = ort.InferenceSession(data, providers=["CPUExecutionProvider"]).run(
+        ["type_probs", "grade_probs"], {"image": inputs}
+    )
+    expected = max(
+        float(np.max(np.abs(np.float64(got_t) - np.float64(want_t)))),
+        float(np.max(np.abs(np.float64(got_g) - np.float64(want_g)))),
+    )
+    result = check_parity(TINY)
+    assert result.ok and result.max_abs_diff == expected < 1e-4
