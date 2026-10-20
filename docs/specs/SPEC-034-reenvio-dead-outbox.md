@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -130,3 +130,4 @@ Contexto comum: como na SPEC-009 §5 (nuvem falsa com `httpx.MockTransport` e id
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-19 | SPEC criada (`Draft`). Decisões do architect: (a) reenvio só manual, por CLI local com `--yes`, sem botão no console nem reenvio automático; (b) sem mudança de contrato, de API nem ADR (mesma rota, mesmo `payload`, revalidação pelo contrato vigente); (c) depende da SPEC-030 por tocar o mesmo módulo. | SEC-09-04 de `reviews/SPEC-009/r1-security-report.md`; observação da recusa geral em `reviews/SPEC-009/r1-review-report.md`; SPEC-009 §3.2 | Orquestrador, a pedido do humano |
+| 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). | Aprovação humana | Humano (Carlos) |

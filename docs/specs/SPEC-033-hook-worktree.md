@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | infra |
@@ -139,3 +139,4 @@ Nos CAs do hook, o teste cria um repositório git temporário `R` (com pelo meno
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-19 | SPEC criada (`Draft`). Decisões do architect: (a) detecção estrutural da worktree (arquivo `.git` com `gitdir` dentro de `.git/worktrees/` e o ponteiro de volta), sem `git` nem `subprocess`; (b) só worktrees em `.claude/worktrees/<nome>/` são reconhecidas; (c) toda outra pasta sob `.claude/worktrees/` é negada, o que fecha também a brecha do tester em `**/tests/acceptance/**`; (d) `.claude/worktrees/` no `.gitignore`, como a documentação do Claude Code recomenda; (e) exceção de caminho só para o hook, como na SPEC-022 §4.5. | Problema de processo relatado pelo orquestrador: com o `$CLAUDE_PROJECT_DIR` fixo no checkout principal, os subagentes não conseguem escrever numa worktree, o que impede duas sessões em paralelo | Orquestrador, a pedido do humano |
+| 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). Autorizadas a exceção de caminhos da §4.3 (edição do hook) e a linha `.claude/worktrees/` no `.gitignore`. | Aprovação humana | Humano (Carlos) |

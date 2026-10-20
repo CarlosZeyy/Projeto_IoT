@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | ml-engineer |
 | Tags | — |
@@ -136,3 +136,4 @@ O hook da SPEC-001 limita o ml-engineer a `ml/**` nas ferramentas de edição, e
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-19 | SPEC criada (`Draft`). Decisões do architect: (a) teto `torch<2.15` no extra `train`, em vez de acrescentar o `onnxscript` e migrar para o exportador padrão (§7); (b) aviso de depreciação registrado no log em vez de silenciado, e checagem do export no notebook antes do treino (sugestões (b) e (c) do RV-01); (c) a nota `no_screw_nut_in_val` fica como comportamento da SPEC (opção "registrar" do RV-02), sem mudar o código; (d) exceção de caminho para o `uv.lock`, só por `uv lock` (§4.7). | RV-01 e RV-02 de `reviews/SPEC-012/r2-review-report.md`; RV-01 a RV-04 de `reviews/SPEC-012/r1-review-report.md`; RV-07 de `reviews/SPEC-011/r3-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). Aceitos o teto `torch<2.15` (no lugar do `onnxscript`) e a exceção de caminho do `uv.lock` regenerado só por `uv lock` (§4.7). | Aprovação humana | Humano (Carlos) |

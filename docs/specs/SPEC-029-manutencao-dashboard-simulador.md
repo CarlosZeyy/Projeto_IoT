@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -126,3 +126,4 @@ Contexto comum: como na SPEC-028 §5 (`api.get_client` substituído por um `ApiC
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-19 | SPEC criada (`Draft`). Decisões do architect: (a) o selo da §4.2 usa a resposta já lida, sem requisição nova; (b) a checagem de controles usa a categoria `Cc` inteira (C0, DEL e C1), e não só `\t`/`\n`; (c) o isolamento do `st.secrets` é feito pelo tester, no `_isolated` da SPEC-013, pela regra de `docs/architecture.md` §10. | RV-01, RV-02 e RV-03 de `reviews/SPEC-028/r1-review-report.md`; SEC-28-01, SEC-28-02 e SEC-28-03 de `reviews/SPEC-028/r1-security-report.md`; RV-01 de `reviews/SPEC-027/r2-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). | Aprovação humana | Humano (Carlos) |

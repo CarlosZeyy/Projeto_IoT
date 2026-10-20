@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | security-devops |
 | Tags | deploy, security, infra |
@@ -155,3 +155,4 @@ Os CAs marcados `docker` rodam só com `PARTQC_DOCKER_TESTS=1` (SPEC-015 §4.14)
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-19 | SPEC criada (`Draft`). Decisões do architect: (a) `allow_abbrev=False`, a correção sugerida pelo T-04; (b) variantes com classes de caracteres no `.gitignore` sem tirar os padrões literais, e `heic`/`webp` acrescentados para alinhar com a lista de fotos do `.dockerignore` (SPEC-015 §4.11); (c) SEC-15-04 e SEC-15-05 como seções candidatas, que o humano pode cortar na aprovação; (d) `pids_limit` configurável no `infra/.env`, como os limites de memória e CPU, com medição obrigatória. Os relatórios da SPEC-015 foram lidos de uma cópia da branch `spec/SPEC-015-deploy-vps` (o `r2-review-report.md` não estava disponível; o RV-05 foi tomado do T-04 do `r2-test-report.md` e da descrição do orquestrador). | RV-04 de `reviews/SPEC-015/r1-review-report.md`; RV-05 de `reviews/SPEC-015/r2-review-report.md` (= T-04 de `r2-test-report.md`); SEC-15-04 e SEC-15-05 de `reviews/SPEC-015/r1-security-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). Os candidatos SEC-15-04 e SEC-15-05 **ficam**: §4.3, §4.4 e os CA-04 a CA-08 fazem parte do escopo, e o rótulo "candidato" deixa de valer. Inclui `heic` e `webp` no `.gitignore`. | Aprovação humana | Humano (Carlos) |

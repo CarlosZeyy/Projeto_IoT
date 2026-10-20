@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -180,3 +180,4 @@ Contexto comum: como na SPEC-009 §5 (nuvem falsa com `httpx.MockTransport`, rel
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-19 | SPEC criada (`Draft`). Decisões do architect: (a) salto do relógio tratado no relógio de parede (`fetch_due` com `max_delay_s` e health check com diferença negativa), em vez de trocar o laço para o `time.monotonic()`, para não invalidar os CAs da SPEC-009; (b) prazo de 15 s e teto de 512 KiB, os valores sugeridos pelo RV-02; (c) arquivo que não é JPEG em `raw/` vira `invalid` sem ser lido, e os temporários `.*.tmp` da borda são ignorados; (d) `printable_path` com escape hexadecimal, e não `repr`; (e) os RV-05, RV-06 e RV-07 da SPEC-025, só de texto, foram corrigidos na própria SPEC-025. | RV-01, RV-02 e RV-03 de `reviews/SPEC-009/r1-review-report.md`; SEC-09-01 e SEC-09-02 de `reviews/SPEC-009/r1-security-report.md`; SEC-25-01 e SEC-25-02 de `reviews/SPEC-025/r2-security-report.md`; RV-02 a RV-04 de `reviews/SPEC-025/r1-review-report.md` e `r2-review-report.md`; RV-08 de `reviews/SPEC-025/r3-review-report.md`; RV-02 de `reviews/SPEC-011/r1-review-report.md`; observação do extra `train` em `reviews/SPEC-011/r1-dev-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). Salto do relógio tratado no relógio de parede (§4), como proposto. | Aprovação humana | Humano (Carlos) |
