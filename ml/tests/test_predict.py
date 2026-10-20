@@ -74,3 +74,68 @@ def test_predictions_validation() -> None:
         Predictions("val", ["a", "b"], [[1, 0, 0]], [[1, 0, 0, 0, 0]], [0], [0])
     with pytest.raises(ValueError):
         Predictions("val", ["a"], [[1, 0, 0]], [[1, 0, 0, 0]], [0], [0])
+
+
+# SPEC-031 §4.2: probabilities must be finite and in [0, 1].
+
+
+def _two_images(**overrides) -> dict:
+    fields = {
+        "split": "val",
+        "image_paths": ["raw/S-001/a.jpg", "raw/N-002/b.jpg"],
+        "type_probs": np.array([[0.7, 0.2, 0.1], [0.1, 0.8, 0.1]]),
+        "grade_probs": np.array([[0.6, 0.1, 0.1, 0.1, 0.1], [0.1, 0.1, 0.1, 0.1, 0.6]]),
+        "true_type_idx": [0, 1],
+        "true_grade_idx": [0, 4],
+    }
+    fields.update(overrides)
+    return fields
+
+
+@pytest.mark.parametrize(
+    ("field", "index", "value"),
+    [
+        ("type_probs", (0, 0), np.nan),
+        ("grade_probs", (1, 2), np.inf),
+        ("type_probs", (0, 1), -0.01),
+        ("grade_probs", (0, 4), 1.01),
+        ("type_probs", (1, 2), -np.inf),
+        ("grade_probs", (1, 0), 1.0 + 1e-12),
+        ("grade_probs", (0, 0), -1e-300),
+    ],
+)
+def test_predictions_refuse_invalid_probabilities(field: str, index: tuple, value: float) -> None:
+    fields = _two_images()
+    probs = fields[field].copy()
+    probs[index] = value
+    fields[field] = probs
+    with pytest.raises(ValueError, match=field) as info:
+        Predictions(**fields)
+    message = str(info.value)
+    other = "grade_probs" if field == "type_probs" else "type_probs"
+    assert other not in message
+    assert "raw/" not in message and str(value) not in message
+
+
+@pytest.mark.parametrize("value", [0.0, 1.0])
+def test_predictions_accept_exact_bounds(value: float) -> None:
+    fields = _two_images()
+    fields["type_probs"] = np.full((2, 3), value)
+    fields["grade_probs"] = np.full((2, 5), value)
+    preds = Predictions(**fields)
+    assert len(preds) == 2 and preds.type_probs.dtype == np.float64
+
+
+def test_predictions_accept_float32_softmax_rounding() -> None:
+    logits = np.array([[50.0, -50.0, 0.0], [0.0, 0.0, 0.0]], dtype=np.float32)
+    exp = np.exp(logits - logits.max(axis=1, keepdims=True))
+    probs = (exp / exp.sum(axis=1, keepdims=True)).astype(np.float32)
+    preds = Predictions(**_two_images(type_probs=probs))
+    assert preds.type_probs.max() <= 1.0
+
+
+def test_predictions_accept_empty() -> None:
+    preds = Predictions("test", [], np.zeros((0, 3)), np.zeros((0, 5)), [], [])
+    assert len(preds) == 0
+    preds = Predictions("test", [], [], [], [], [])
+    assert preds.type_probs.shape == (0, 0) and preds.grade_probs.shape == (0, 5)

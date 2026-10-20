@@ -77,6 +77,7 @@ def test_no_screw_nut_in_val() -> None:
     result = choose_thresholds(preds)
     assert result.decision["type_threshold"] == 0.50
     assert "no_screw_nut_in_val" in result.report["notes"]
+    assert "type_target_not_met" not in result.report["notes"]  # SPEC-031 §4.4
     assert "no_unusable_in_val" in result.report["notes"]
 
 
@@ -109,7 +110,7 @@ def test_unusable_best_recall_when_target_unreachable() -> None:
 def _review_preds(start: float) -> Predictions:
     grade = []
     for i in range(100):
-        c = start + 0.005 * i
+        c = min(start + 0.005 * i, 1.0)  # a valid probability (SPEC-031 §4.2)
         rest = (1 - c) / 4
         grade.append([c, rest, rest, rest, rest])
     return make_predictions([[0.99, 0.005, 0.005]] * 100, grade, [SCREW] * 100, [0] * 100)
