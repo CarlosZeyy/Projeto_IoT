@@ -1,6 +1,8 @@
 # Contexto de build da imagem do dashboard (SPEC-015 §4.11). Com o BuildKit, este arquivo, ao lado
 # do Dockerfile e com o nome dele como prefixo, tem precedência sobre um .dockerignore na raiz.
 # A última regra que casa decide: as exceções (!) vêm depois da exclusão que elas abrem.
+# Os padrões diferenciam maiúsculas: cada extensão sensível e o .env também aparecem com classes
+# de caracteres ([jJ][pP][gG]...), para FOTO.JPG ou .ENV.API também ficarem de fora.
 # Nunca exclua pyproject.toml, uv.lock, os pyproject.toml dos membros, packages/, o código do
 # pacote, .streamlit/config.toml, ml/models/**/*.json nem ml/reports/.
 
@@ -15,11 +17,14 @@ notas-locais/
 # Arquivos de ambiente e segredos (R-03): inclui infra/.env, infra/.env.api,
 # infra/.env.dashboard, .env.migrate e .env.prod
 **/.env*
+**/.[eE][nN][vV]*
 !.env.example
 .streamlit/secrets.toml
 **/secrets.toml
 **/*.pem
 **/*.key
+**/*.[pP][eE][mM]
+**/*.[kK][eE][yY]
 
 # Dados e fotos (R-02, R-14)
 ml/data/
@@ -30,7 +35,13 @@ data/
 **/*.png
 **/*.heic
 **/*.webp
+**/*.[jJ][pP][gG]
+**/*.[jJ][pP][eE][gG]
+**/*.[pP][nN][gG]
+**/*.[hH][eE][iI][cC]
+**/*.[wW][eE][bB][pP]
 !ml/reports/**/*.png
+!ml/reports/**/*.[pP][nN][gG]
 
 # Pesos do modelo e artefatos pesados de ML (R-12)
 ml/models/**/*.onnx
@@ -41,12 +52,19 @@ ml/checkpoints/
 **/*.pt
 **/*.pth
 **/*.npz
+**/*.[oO][nN][nN][xX]
+**/*.[pP][tT]
+**/*.[pP][tT][hH]
+**/*.[nN][pP][zZ]
 ml/notebooks/
 
 # Bancos locais (o outbox da borda)
 **/*.sqlite
 **/*.sqlite3
 **/*.db
+**/*.[sS][qQ][lL][iI][tT][eE]
+**/*.[sS][qQ][lL][iI][tT][eE]3
+**/*.[dD][bB]
 
 # Ambiente e caches de ferramentas
 **/.venv

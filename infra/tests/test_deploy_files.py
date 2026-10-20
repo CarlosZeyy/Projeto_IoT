@@ -260,7 +260,28 @@ def test_dockerignore_rules(component: str) -> None:
     for rule in REQUIRED_IGNORES:
         assert rule in rules, rule
     exceptions = [rule for rule in rules if rule.startswith("!")]
-    assert set(exceptions) <= {"!.env.example", "!ml/reports/**/*.png"}
+    assert set(exceptions) <= {
+        "!.env.example",
+        "!ml/reports/**/*.png",
+        "!ml/reports/**/*.[pP][nN][gG]",
+    }
+    # RV-04 (r1): the patterns are case-sensitive, so each sensitive extension and .env also
+    # appear with character classes, before their exceptions.
+    for rule in (
+        "**/.[eE][nN][vV]*",
+        "**/*.[jJ][pP][gG]",
+        "**/*.[jJ][pP][eE][gG]",
+        "**/*.[pP][nN][gG]",
+        "**/*.[hH][eE][iI][cC]",
+        "**/*.[wW][eE][bB][pP]",
+        "**/*.[oO][nN][nN][xX]",
+        "**/*.[sS][qQ][lL][iI][tT][eE]",
+        "**/*.[sS][qQ][lL][iI][tT][eE]3",
+        "**/*.[dD][bB]",
+    ):
+        assert rule in rules, rule
+    assert rules.index("!.env.example") > rules.index("**/.[eE][nN][vV]*")
+    assert rules.index("!ml/reports/**/*.[pP][nN][gG]") > rules.index("**/*.[pP][nN][gG]")
     # The exception must come after the exclusion it opens (the last matching rule wins).
     assert rules.index("!ml/reports/**/*.png") > rules.index("**/*.png")
     assert rules.index("!.env.example") > rules.index("**/.env*")

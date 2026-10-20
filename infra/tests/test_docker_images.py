@@ -38,10 +38,18 @@ SENTINELS_ABSENT = [
     "foto.jpg",
     "foto.png",
     "ml/models/partqc-sentinel-v0/model.onnx",
+    # RV-04 (r1): the same files with upper-case names or extensions
+    "infra/.ENV.API",
+    "FOTO.JPG",
+    "IMG_0001.HEIC",
+    "Foto.Png",
+    "edge/data/OUTBOX.SQLITE3",
+    "ml/models/partqc-sentinel-v0/MODEL.ONNX",
 ]
 SENTINELS_DASHBOARD = [
     "ml/models/partqc-sentinel-v0/metrics.json",
     "ml/reports/partqc-sentinel-v0/type_confusion.png",
+    "ml/reports/partqc-sentinel-v0/GRADE_CONFUSION.PNG",
 ]
 EXTRA_FILES = {path: b"sentinel\n" for path in SENTINELS_ABSENT + SENTINELS_DASHBOARD}
 FORBIDDEN_MODULES = ["torch", "torchvision", "timm", "onnx", "onnxruntime"]
@@ -119,6 +127,14 @@ def test_image_config(images: dict[str, str], component: str) -> None:
     assert not {"uv", "uvx"} & set((config.get("Entrypoint") or []) + (config.get("Cmd") or []))
     uid = _run(support.docker_run_args(images[component], "-u", entrypoint="id"))
     assert uid.stdout.strip() == "10001"
+
+
+@pytest.mark.parametrize("component", ["api", "dashboard"])
+def test_uv_cache_is_not_in_the_image(images: dict[str, str], component: str) -> None:
+    """RV-01 (r1): the uv cache stays in the BuildKit cache mount, not in a layer."""
+    script = "test ! -e /home/app/.cache && test ! -e /root/.cache/uv && echo clean"
+    result = _run(support.docker_run_args(images[component], "-c", script, entrypoint="sh"))
+    assert result.stdout.strip() == "clean", result.stdout + result.stderr
 
 
 def test_dashboard_repo_root_is_app(images: dict[str, str]) -> None:

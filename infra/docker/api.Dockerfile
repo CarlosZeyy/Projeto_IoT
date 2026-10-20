@@ -10,6 +10,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.2@sha256:b9fddcde095a7aeafd499024adb8927df
 ENV UV_PYTHON_DOWNLOADS=0 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_CACHE_DIR=/root/.cache/uv \
     PYTHONUNBUFFERED=1 \
     HOME=/home/app
 
@@ -21,8 +22,9 @@ WORKDIR /app
 COPY . /app
 
 # Instalação como root (código e .venv de dono root, só leitura para o usuário app). Os membros do
-# workspace ficam editáveis a partir de /app, o padrão do uv sync. O cache do uv fica num
-# cache mount do BuildKit, fora das camadas da imagem.
+# workspace ficam editáveis a partir de /app, o padrão do uv sync. O cache do uv fica no cache
+# mount do BuildKit, fora das camadas da imagem: UV_CACHE_DIR aponta para o alvo do mount (sem
+# ele, o uv usaria $HOME/.cache/uv, ou seja, /home/app/.cache dentro da camada).
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package qc-api --frozen --no-dev
 

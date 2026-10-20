@@ -11,6 +11,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.2@sha256:b9fddcde095a7aeafd499024adb8927df
 ENV UV_PYTHON_DOWNLOADS=0 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_CACHE_DIR=/root/.cache/uv \
     PYTHONUNBUFFERED=1 \
     HOME=/home/app
 
@@ -23,7 +24,9 @@ COPY . /app
 
 # Instalação editável (o padrão do uv sync): qc_dashboard.config.REPO_ROOT é /app, e a página
 # "Sobre o modelo" acha ml/models/<versão>/metrics.json e ml/reports/ dentro da imagem (RV-06
-# da SPEC-013). O cache do uv fica num cache mount do BuildKit, fora das camadas da imagem.
+# da SPEC-013). O cache do uv fica no cache mount do BuildKit, fora das camadas da imagem:
+# UV_CACHE_DIR aponta para o alvo do mount (sem ele, o uv usaria $HOME/.cache/uv, ou seja,
+# /home/app/.cache dentro da camada).
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package qc-dashboard --frozen --no-dev
 
