@@ -69,7 +69,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [030](specs/SPEC-030-manutencao-borda-publisher-privacidade.md) | Manutenção da borda (prazo e teto do publisher, salto do relógio, varredura de privacidade e testes) | developer | security | 009, 025 | S3 | Ready |
 | [031](specs/SPEC-031-manutencao-ml.md) | Manutenção do ML (`NaN` na paridade e nas predições, export TorchScript, `ITEM_ID_PATTERN` único, fluxo do Colab) | ml-engineer | — | 012 (e 011) | S3 | Ready |
 | [032](specs/SPEC-032-manutencao-deploy.md) | Manutenção do deploy (smoke sem abreviação, `.gitignore` sem diferenciar maiúsculas; candidatos: headers do Caddy, `pids_limit` e `read_only`) | security-devops | deploy, security, infra | 015 | S4–S5 | Ready |
-| [033](specs/SPEC-033-hook-worktree.md) | Manutenção do setup: hook de guarda de caminhos em git worktree | developer | infra | 022 (e 001) | S2 | In Dev (r1) |
+| [033](specs/SPEC-033-hook-worktree.md) | Manutenção do setup: hook de guarda de caminhos em git worktree | developer | infra | 022 (e 001) | S2 | In Test (r1) |
 | [034](specs/SPEC-034-reenvio-dead-outbox.md) | Reenvio de itens `dead` do outbox | developer | security | 009, 030 | S5 | Ready |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
