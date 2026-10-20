@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
+| Status | In Dev |
 | Rodada atual | r1 |
 | Autor da implementação | ml-engineer (+ developer, só na §4.8) |
 | Tags | — |
@@ -11,7 +11,7 @@
 | Requisitos cobertos | RNF-07, RNF-08; R-11, R-12 |
 | ADRs relevantes | ADR-004, ADR-005, ADR-010, ADR-014 |
 
-> **Aguardando reaprovação humana**: correção dos SPEC_ISSUE-01 e 02 de `reviews/SPEC-031/r1-dev-report.md` (§3.1, §4.2, §4.8 nova e §6). Classificação ADR-019: SPEC_ISSUE-01 elegível; SPEC_ISSUE-02 exige humano (X-5 e X-7). Ver o Histórico.
+> **Reaprovada pelo humano em 2026-10-20**: correção dos SPEC_ISSUE-01 e 02 de `reviews/SPEC-031/r1-dev-report.md` (§3.1, §4.2, §4.8 nova e §6). Classificação ADR-019: SPEC_ISSUE-01 elegível; SPEC_ISSUE-02 exige humano (X-5 e X-7). Ver o Histórico.
 
 ## 1. Contexto
 
@@ -160,3 +160,4 @@ O hook da SPEC-001 limita o ml-engineer a `ml/**` nas ferramentas de edição, e
 | 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). Aceitos o teto `torch<2.15` (no lugar do `onnxscript`) e a exceção de caminho do `uv.lock` regenerado só por `uv lock` (§4.7). | Aprovação humana | Humano (Carlos) |
 | 2026-10-20 | **Correção do SPEC_ISSUE-01 (r1): efeito da §4.2 nos CAs 17 e 18 da SPEC-012.** **Texto antigo:** a SPEC não tratava do efeito; o CA-18 da SPEC-012 prescreve, no segundo caso, "confiança de grau `0.5525 + 0.005·i`". **Texto novo:** (a) §4.2, item "Efeito nos CAs da SPEC-012": o segundo caso do CA-18 é lido como `min(0.5525 + 0.005·i, 1)`, com o mesmo resultado esperado (10 imagens abaixo de 0,60, `grade_review_threshold = 0.60`, sem `review_adjusted`); o texto do CA-17 não muda; (b) §3.1: o tester ajusta, em `ml/tests/acceptance/test_spec_012.py`, só a montagem das entradas desses dois testes, como aplicação explícita da regra "Testes de aceite de SPECs anteriores" de `docs/architecture.md` §10. **Decisão:** a correção fica na SPEC-031, e não no CA-18 da SPEC-012 (`Done`), porque é a §4.2 desta SPEC que invalida as entradas, a intenção do CA-18 não muda, e o §10 já prevê o ajuste pelo tester da SPEC nova (precedente de "texto vigente que complementa a SPEC-012": §4.4). **Evidência:** dev-report r1, SPEC_ISSUE-01 e nota do CA-17 (`ValueError: grade_probs has values outside [0, 1]` para i ≥ 90; `1.0 - 0.55 - 0.45 = -5.55e-17`). Classificação ADR-019 do SPEC_ISSUE-01: elegível (E-1: SPEC_ISSUE-01 do dev-report r1; E-2: só este arquivo e `docs/plan.md`; E-3: aprovada, `Blocked` por este SPEC_ISSUE; E-4 tipo 1, texto que esclarece o requisito sem mudar o comportamento pedido; E-5; nenhuma exclusão: nenhum CA da SPEC-031 muda, e nenhum valor prometido muda). | SPEC_ISSUE-01 de `reviews/SPEC-031/r1-dev-report.md` | Orquestrador |
 | 2026-10-20 | **Correção do SPEC_ISSUE-02 (r1): teste de autor da SPEC-001 quebrado pelo teto do `torch`.** **Texto antigo:** autor só o ml-engineer; o §3.1 e a §4.7 não cobriam `tests/test_dependency_isolation.py`. **Texto novo:** (a) cabeçalho: "ml-engineer (+ developer, só na §4.8)"; (b) §3.1: item do developer; (c) §4.8 nova: o developer troca a igualdade exata das strings do extra `train` (linha 73) por igualdade exata dos **nomes**, sem o especificador, com um commit só desse arquivo e um adendo no dev-report r1, antes do tester; (d) §6: ordem da rodada. **Decisão:** delegar ao developer, e não estender a §4.7 ao ml-engineer, porque o arquivo é teste de autor do developer (commit `702d915`, `Agent: developer`), fica fora de `ml/**` e do hook do ml-engineer, e editar teste de outro papel fere a separação da R-07. A igualdade continua exata nos nomes, então a intenção do CA-08 da SPEC-001 não muda e a SPEC-001 (`Done`) não é alterada. Classificação ADR-019 do SPEC_ISSUE-02: exige humano (X-5: acrescenta um papel autor e um arquivo fora do escopo da §3.1; X-7: o teste alterado faz parte da verificação da R-12, SPEC-001 §4.5). Como uma das duas correções exige humano, a SPEC fica marcada "Aguardando reaprovação humana" e o status continua `Blocked` (r1) até a reaprovação. | SPEC_ISSUE-02 de `reviews/SPEC-031/r1-dev-report.md` | Orquestrador |
+| 2026-10-20 | Correções dos SPEC_ISSUE-01 e 02 reaprovadas pelo humano (o 01 era elegível pelo ADR-019, mas foi aprovado junto com o 02, que exige humano); `Blocked` → `In Dev`, retomada na r1 com a passada do developer da §4.8. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
