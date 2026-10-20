@@ -65,7 +65,7 @@ CONNECT_TIMEOUT_S = 10
 DEFAULT_LOCK_WAIT_S = 30.0
 LOCK_RETRY_INTERVAL_S = 1.0
 # Port of the Supabase transaction pooler, refused for migrations (SPEC-015 section 4.7).
-TRANSACTION_POOLER_PORT = "6543"
+TRANSACTION_POOLER_PORT = 6543
 UNSUPPORTED_CONNECTION_MESSAGE = (
     "transaction pooler (port 6543) is not supported for migrations; "
     "use the direct connection or the session pooler (port 5432)"
@@ -183,7 +183,7 @@ def _effective_ports(conninfo: str) -> list[str]:
     """
     try:
         params = conninfo_to_dict(conninfo)
-    except Exception:
+    except psycopg.ProgrammingError:  # the only error of the conninfo parser
         return []
     fallback = os.environ.get("PGPORT", "").strip()
     written = str(params.get("port") or "")
@@ -193,12 +193,21 @@ def _effective_ports(conninfo: str) -> list[str]:
     return [port.strip() or fallback for port in written.split(",")]
 
 
+def _is_transaction_pooler_port(port: str) -> bool:
+    """``True`` for any spelling of 6543 (``"06543"``, ``"+6543"``...); a non-number is not."""
+    try:
+        return int(port) == TRANSACTION_POOLER_PORT
+    except ValueError:
+        return False
+
+
 def ensure_supported_connection(conninfo: str) -> None:
     """Refuse, before any connection, a conninfo whose effective port is the transaction pooler.
 
-    Raises ``UnsupportedConnectionError``; the message never contains the URL (R-03).
+    The port is compared as a number, so ``06543`` is refused too. Raises
+    ``UnsupportedConnectionError``; the message never contains the URL (R-03).
     """
-    if any(port == TRANSACTION_POOLER_PORT for port in _effective_ports(conninfo)):
+    if any(_is_transaction_pooler_port(port) for port in _effective_ports(conninfo)):
         raise UnsupportedConnectionError(UNSUPPORTED_CONNECTION_MESSAGE)
 
 

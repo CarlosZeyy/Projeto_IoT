@@ -137,6 +137,35 @@ def test_other_ports_are_not_refused_by_the_check(listener: Listener) -> None:
     assert listener.accepted >= 1
 
 
+@pytest.mark.parametrize(
+    ("conninfo", "env"),
+    [
+        ("postgresql://u@127.0.0.1:06543/x_test", {}),
+        ("host=127.0.0.1 port=+6543 user=u dbname=x_test", {}),
+        ("host=127.0.0.1 port=' 06543' user=u dbname=x_test", {}),
+        ("postgresql://u@127.0.0.1/x_test", {"PGPORT": "06543"}),
+    ],
+)
+def test_other_spellings_of_6543_are_refused(
+    listener: Listener, monkeypatch: pytest.MonkeyPatch, conninfo: str, env: dict[str, str]
+) -> None:
+    """RV-03 (r1): the port is compared as a number."""
+    monkeypatch.delenv("PGPORT", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    for func in (apply_migrations, pending_migrations):
+        with pytest.raises(UnsupportedConnectionError):
+            func(conninfo)
+    assert listener.accepted == 0
+
+
+def test_a_non_numeric_port_is_not_mistaken_for_6543() -> None:
+    from migrate import ensure_supported_connection
+
+    ensure_supported_connection("host=127.0.0.1 port=abc user=u dbname=x_test")
+    ensure_supported_connection("not a conninfo password=x")  # unparsable: left to psycopg
+
+
 @pytest.mark.parametrize("value", [0, -1, float("nan")])
 def test_lock_wait_must_be_positive(value: float) -> None:
     with pytest.raises(ValueError):
