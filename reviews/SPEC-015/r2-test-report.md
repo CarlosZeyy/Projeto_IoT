@@ -5,7 +5,7 @@
 | SPEC | [SPEC-015](../../docs/specs/SPEC-015-deploy.md) |
 | Rodada | r2 |
 | Tester | tester |
-| Commit testado | `cd81b83` (correções em `44c8d87`, `0bc09a6`, `25b36f7` e `ec29293`; relatório do autor em `f52e463`) |
+| Commit testado | `cd81b83` (correções em `44c8d87`, `0bc09a6`, `25b36f7` e `ec29293`; relatório do autor em `f52e463`) e, para a suíte completa final, `0d40518` (definição do agente `security-devops`, pelo orquestrador) |
 | **Veredicto** | **PASS** (CAs automatizados); CAs manuais continuam pendentes do humano |
 
 O texto da SPEC não mudou desde a r1, e os CAs são os mesmos. Nesta rodada, conferi as correções de RV-01 a RV-04 (que incluem T-01 a T-03 da r1) e de SEC-15-01 a SEC-15-03, repeti os testes que o autor indicou e rodei a suíte completa. No arquivo de aceite `infra/tests/acceptance/test_spec_015.py`, só acrescentei testes extras para as correções e ampliei casos de testes extras existentes. Nenhum `test_caNN_` mudou de intenção ou de asserção, salvo uma verificação a mais no fim do `test_ca36_*`, descrita abaixo. O arquivo agora tem 85 funções e 141 itens: 125 sem Docker e 16 marcados `docker`.
@@ -26,7 +26,15 @@ O texto da SPEC não mudou desde a r1, e os CAs são os mesmos. Nesta rodada, co
 
 - `test_ca36_build_context_filters_sentinels`: depois das asserções do CA-36, que não mudaram, acrescentei uma verificação exploratória marcada no código. Ela confere que `ml/reports/partqc-sentinel-v0/GRADE_CONFUSION.PNG` existe na imagem do dashboard, porque a exceção `!ml/reports/**/*.[pP][nN][gG]` é parte da correção do RV-04. As asserções do CA continuam as mesmas.
 
-Nenhum teste de aceite de outra SPEC foi alterado.
+## Ajustes em testes de aceite de SPECs anteriores
+
+A §7 da SPEC-015 deixa com o orquestrador a atualização de `.claude/agents/security-devops.md` para o deploy na VPS (ADR-018). Ela entrou no commit `0d40518` e mudou a `description` do agente, que o CA-18 da SPEC-001 confere literalmente. Pela regra "Testes de aceite de SPECs anteriores" (`docs/architecture.md` §10), só a string esperada desse agente foi ajustada:
+
+| Arquivo | Teste | Antes → depois | Motivo |
+|---|---|---|---|
+| `tests/acceptance/test_spec_001.py` | `test_ca18_agent_frontmatter_keeps_fields_and_has_hook[security-devops]` (dicionário `AGENTS["security-devops"]`, primeiro item: a `description` esperada) | "… (2) como autor da SPEC-015 (deploy em Render, Supabase, Streamlit Community Cloud e keep-alive) e da manutenção de docs/deployment-plan.md." → "… (2) como autor da SPEC-015 (deploy na VPS pessoal com Docker Compose e Caddy, banco no Supabase, Render como reserva e keep-alive) e da manutenção de docs/deployment-plan.md." | SPEC-015 §7 (o orquestrador atualiza o `security-devops.md` para o deploy na VPS) e ADR-018; a `description` nova é a do commit `0d40518` |
+
+A intenção do CA-18 da SPEC-001 continua verificada: o frontmatter de cada agente mantém os campos, a `description` exata, as ferramentas e o hook. O início da `description`, as ferramentas e os outros agentes não mudaram, e nenhuma outra linha do arquivo foi alterada (o diff tem 2 linhas).
 
 ## Cobertura dos critérios de aceite
 
@@ -52,7 +60,9 @@ $ uv run ruff format --check .
 220 files already formatted
 
 $ CI=true TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q
-5029 passed, 52 skipped, 1 warning in 310.71s (0:05:10)
+5029 passed, 52 skipped, 1 warning in 311.64s (0:05:11)
+  - rodada final, depois do commit 0d40518 (agente security-devops) e do ajuste do test_spec_001.py;
+    a rodada anterior, em 6a49618, deu a mesma contagem e falharia só no CA-18 da SPEC-001 com o 0d40518
   - 52 skips = 30 testes `docker` (14 do autor + 16 deste arquivo, motivo "set PARTQC_DOCKER_TESTS=1 to run")
     + 22 preexistentes (torch ausente e o CA-16 manual da SPEC-008); o aviso é o StarletteDeprecationWarning
     preexistente
