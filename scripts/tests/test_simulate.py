@@ -1141,6 +1141,9 @@ def test_socket_codec_really_refuses_those_hosts(url: str) -> None:
         "https://[::1]",
         "https://[::1]:8443",
         "https://xn--nxasmq6b.com",
+        # Accepted by the "idna" codec from raw_host, refused from .host (IDNA 2003 bidi rule):
+        # fails if simulate.py goes back to .host (SPEC-029 §4.4).
+        "https://xn--1-zhc.com",
     ],
 )
 def test_visible_ascii_api_url_still_sends(
@@ -1173,3 +1176,12 @@ def test_leading_zeros_are_still_accepted(run: Callable[..., Run]) -> None:
         7,
         10,
     }
+
+
+def test_idna_case_needs_raw_host() -> None:
+    # Guards the premise of the "xn--1-zhc.com" case above (SPEC-029 §4.4): the codec the
+    # socket uses accepts the ASCII raw_host and refuses the Unicode .host.
+    url = httpx.URL("https://xn--1-zhc.com")
+    assert url.raw_host.decode("ascii").encode("idna") == b"xn--1-zhc.com"
+    with pytest.raises(UnicodeError):
+        url.host.encode("idna")
