@@ -851,12 +851,70 @@ def test_ca12_source_has_no_verify_false() -> None:
 
 
 def test_extra_smoke_usage_errors_do_not_echo_values(smoke, smoke_env, capsys) -> None:
-    secret_url = "http://user:" + "hunter2@api.host-secreto-15.example"
+    password = secrets.token_hex(8)
+    secret_url = "http://user:" + password + "@api.host-secreto-15.example"
     fake = _fake(smoke_env)
     code, out, err = _run(smoke, fake, capsys, secret_url, DASH_URL)
     assert code == 2
-    assert "hunter2" not in out + err
+    assert password not in out + err
     assert "host-secreto-15" not in out + err
+
+
+def _unknown_argument_cases(value: str) -> list[list[str]]:
+    """Mistyped command lines carrying ``value`` (r2: RV-02 / T-01 of r1)."""
+    key_opt = "--api-" + "key"
+    urls = ["--api-url", API_URL, "--dashboard-url", DASH_URL]
+    return [
+        [key_opt + "=" + value],
+        [key_opt, value],
+        [value],
+        [*urls, key_opt + "=" + value],
+        [*urls, "--read-api-" + "key", value],
+        [*urls, value, value + "x"],
+        ["--api-url-typo", value],
+        ["--api-url", API_URL, "--dashboard-url"],
+        ["--dashboard-url=" + "https://" + value + ".host-secreto-15.example", "--zzz=" + value],
+    ]
+
+
+def test_extra_smoke_unknown_arguments_are_never_echoed(smoke, smoke_env, capsys) -> None:
+    value = secrets.token_urlsafe(24)
+    for argv in _unknown_argument_cases(value):
+        fake = _fake(smoke_env)
+        try:
+            code = smoke.main(argv, transport=fake.transport)
+        except SystemExit as exc:
+            code = exc.code
+        out, err = capsys.readouterr()
+        assert code == 2, (argv, out, err)
+        assert value not in out + err, argv
+        assert "host-secreto-15" not in out + err, argv
+        assert fake.requests == [], argv
+
+
+def test_extra_smoke_cli_subprocess_never_echoes(tmp_path: Path) -> None:
+    """The real entry point (``python scripts/smoke_test.py``), not only ``main``."""
+    value = secrets.token_urlsafe(24)
+    env = {k: v for k, v in os.environ.items() if k not in {"CLOUD_API_URL", "DASHBOARD_URL"}}
+    env.update(
+        {
+            "READ_API_KEY": secrets.token_urlsafe(16),
+            "SIM_DEVICE_ID": "sim-01",
+            "SIM_DEVICE_API_KEY": secrets.token_urlsafe(16),
+        }
+    )
+    for argv in _unknown_argument_cases(value):
+        result = subprocess.run(
+            [sys.executable, str(SMOKE_PATH), *argv],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert result.returncode == 2, (argv, result)
+        assert value not in result.stdout + result.stderr, argv
 
 
 # ============================================================================================
@@ -985,8 +1043,24 @@ def test_ca20_functions_raise_before_connecting(listeners, monkeypatch) -> None:
         ("postgresql://u:{pw}@[::1]:6543/x_test", {}),
         ("postgresql://u:{pw}@{lo},{lo}/x_test", {"PGPORT": "6543"}),
         ("postgresql://u:{pw}@{lo}:,{lo}:6543/x_test", {}),
+        ("postgresql://u:{pw}@{lo}:06543/x_test", {}),
+        ("host={lo} port=+6543 user=u password={pw} dbname=x_test", {}),
+        ("host={lo} port=' 06543' user=u password={pw} dbname=x_test", {}),
+        ("postgresql://u:{pw}@{lo}/x_test", {"PGPORT": "06543"}),
+        ("postgresql://u:{pw}@{lo}:5432,{lo}:006543/x_test", {}),
     ],
-    ids=["key-value", "query-param", "ipv6", "multi-host-pgport", "empty-port-item"],
+    ids=[
+        "key-value",
+        "query-param",
+        "ipv6",
+        "multi-host-pgport",
+        "empty-port-item",
+        "leading-zero",
+        "plus-sign",
+        "space-and-zero",
+        "pgport-leading-zero",
+        "multi-host-zeros",
+    ],
 )
 def test_extra_port_6543_variants_refused(listeners, monkeypatch, template, env) -> None:
     from migrate import UnsupportedConnectionError, apply_migrations
@@ -2121,7 +2195,22 @@ EXTRA_EXCLUDED = [  # exploratory: other names that must not reach an image
     "api/src/qc_api/__pycache__/x.cpython-312.pyc",
     ".pytest_cache/v/cache/lastfailed",
     ".ruff_cache/x",
+    # r2 (RV-04 / T-03 of r1): the same names with upper-case extensions
+    "FOTO.JPG",
+    "a/IMG_0001.HEIC",
+    "b/Foto.Png",
+    "c/x.Jpeg",
+    "d/y.WEBP",
+    "OUTBOX.SQLITE3",
+    "edge/local.DB",
+    "infra/.ENV.API",
+    "secrets/.Env",
+    "ml/models/partqc-sentinel-v0/MODEL.ONNX",
+    "ml/models/partqc-sentinel-v0/model.PT",
+    "certs/server.PEM",
+    "certs/server.Key",
 ]
+SENTINEL_KEPT_UPPER = "ml/reports/partqc-sentinel-v0/GRADE_CONFUSION.PNG"
 
 
 def _sentinel_files() -> dict[str, bytes]:
@@ -2130,6 +2219,7 @@ def _sentinel_files() -> dict[str, bytes]:
         files[rel] = b"partqc-sentinel " + rel.encode()
     files[SENTINELS_KEPT[0]] = b'{"sentinel": true}\n'
     files[SENTINELS_KEPT[1]] = b"\x89PNG\r\n\x1a\nsentinel"
+    files[SENTINEL_KEPT_UPPER] = b"\x89PNG\r\n\x1a\nsentinel-upper"
     return files
 
 
@@ -2147,7 +2237,7 @@ def test_ca36_build_context_filters_sentinels(build_image, dockerfile: str) -> N
     image = build_image(dockerfile, _sentinel_files())
     assert _git_status() == before
     excluded = SENTINELS_ENV + SENTINELS_GIT + SENTINELS_DATA + [SENTINEL_ONNX]
-    kept = [*SENTINELS_KEPT, ".streamlit/config.toml"]
+    kept = [*SENTINELS_KEPT, SENTINEL_KEPT_UPPER, ".streamlit/config.toml"]
     present = _existing(image, excluded + EXTRA_EXCLUDED + kept)
     leaked = sorted(set(excluded) & present)
     assert not leaked, leaked
@@ -2156,6 +2246,26 @@ def test_ca36_build_context_filters_sentinels(build_image, dockerfile: str) -> N
     if dockerfile == DASHBOARD_DOCKERFILE:
         for rel in [*SENTINELS_KEPT, ".streamlit/config.toml"]:
             assert rel in present, rel
+        # exploratory (r2, RV-04): an upper-case report PNG is kept like the lower-case one
+        assert SENTINEL_KEPT_UPPER in present
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("component", ["api", "dashboard"])
+def test_extra_uv_cache_is_not_in_the_image(request, component: str) -> None:
+    """r2 (RV-01): the uv cache stays in the BuildKit cache mount, outside the layers."""
+    image = request.getfixturevalue(f"{component}_image")
+    script = (
+        "for p in /home/app/.cache /root/.cache/uv /root/.cache; do "
+        'if test -e "$p"; then echo "PRESENT $p"; fi; done; '
+        "find / -xdev -type d -name 'archive-v0' -path '*uv*' 2>/dev/null; "
+        "du -sm /home/app | cut -f1"
+    )
+    result = _run_in(image, "sh", "-c", script)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.split()
+    assert not [line for line in result.stdout.splitlines() if line.startswith(("PRESENT", "/"))]
+    assert int(lines[-1]) <= 1, lines  # /home/app only has the useradd skeleton
 
 
 @pytest.mark.docker
@@ -2398,3 +2508,18 @@ def test_extra_dockerignore_mandatory_patterns(component: str) -> None:
     png = lines.index("**/*.png")
     keep = lines.index("!ml/reports/**/*.png")
     assert keep > png
+    # r2 (RV-04): case-insensitive variants, with every exception after every exclusion it opens
+    for variant in ("**/*.[jJ][pP][gG]", "**/*.[pP][nN][gG]", "**/*.[hH][eE][iI][cC]"):
+        assert variant in lines, variant
+    assert any(line.startswith("**/.[eE][nN][vV]") for line in lines), lines
+    last_png_exclusion = max(
+        n for n, line in enumerate(lines) if line in {"**/*.png", "**/*.[pP][nN][gG]"}
+    )
+    first_png_exception = min(n for n, line in enumerate(lines) if line.startswith("!ml/reports/"))
+    assert first_png_exception > last_png_exclusion
+    last_env_exclusion = max(
+        n
+        for n, line in enumerate(lines)
+        if line.startswith("**/.") and "nN" in line or line == "**/.env*"
+    )
+    assert lines.index("!.env.example") > last_env_exclusion
