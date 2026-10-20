@@ -4,12 +4,14 @@
 |---|---|
 | Status | Blocked |
 | Rodada atual | r1 |
-| Autor da implementação | ml-engineer |
+| Autor da implementação | ml-engineer (+ developer, só na §4.8) |
 | Tags | — |
 | Depende de | SPEC-012 (e SPEC-011) |
 | Semana alvo | S3 (**antes** do treino real no Colab, CA-28 da SPEC-012) |
 | Requisitos cobertos | RNF-07, RNF-08; R-11, R-12 |
 | ADRs relevantes | ADR-004, ADR-005, ADR-010, ADR-014 |
+
+> **Aguardando reaprovação humana**: correção dos SPEC_ISSUE-01 e 02 de `reviews/SPEC-031/r1-dev-report.md` (§3.1, §4.2, §4.8 nova e §6). Classificação ADR-019: SPEC_ISSUE-01 elegível; SPEC_ISSUE-02 exige humano (X-5 e X-7). Ver o Histórico.
 
 ## 1. Contexto
 
@@ -43,7 +45,13 @@ A paridade e os limiares falham alto com `NaN`, o export avisa (e o notebook tes
 - `ml/src/qc_ml/split.py`: importa `ITEM_ID_PATTERN` de `qc_ml.data` (§4.6).
 - `ml/README.md` ("Do Colab ao Release") e `ml/notebooks/train_colab.ipynb` (§4.3, item 3, e §4.5).
 - Testes do autor em `ml/tests/` (fora de `acceptance/`).
+- **Developer (só a §4.8):** `tests/test_dependency_isolation.py`, uma asserção de `test_ml_train_extra_declares_training_stack`, e um adendo no fim de `reviews/SPEC-031/r1-dev-report.md`.
 - **Tester:** `ml/tests/acceptance/test_spec_031.py`.
+- **Tester, ajuste de aceite antigo** (aplicação explícita da regra "Testes de aceite de SPECs anteriores" de `docs/architecture.md` §10, motivada pela §4.2). Em `ml/tests/acceptance/test_spec_012.py`, só a **montagem das entradas** destes dois testes, sem mudar nenhuma asserção:
+  - `test_ca18_review_threshold_targets_10pct`, segundo caso: a confiança de grau passa a ser `min(0.5525 + 0.005·i, 1)` (§4.2, "Efeito nos CAs da SPEC-012");
+  - `test_ca17_unusable_threshold_for_recall_90pct`: a probabilidade de `fair` passa a ser montada sem resto negativo de ponto flutuante (por exemplo, `1.0 - (0.55 + p)` ou `max(0.0, 1.0 - 0.55 - p)`), com o mesmo valor matemático `1 − 0,55 − p`.
+
+  Os dois ajustes vão na tabela do test-report, como manda o §10. Nenhuma outra linha desse arquivo muda.
 
 ### 3.2 Fora
 
@@ -66,6 +74,9 @@ A paridade e os limiares falham alto com `NaN`, o export avisa (e o notebook tes
 - `Predictions.__post_init__`, depois das conferências de forma de hoje, levanta `ValueError` se `type_probs` ou `grade_probs` tiver algum valor não finito ou fora de `[0, 1]`. A mensagem cita o nome do campo (`type_probs` ou `grade_probs`) e não cita valores nem caminhos de imagem.
 - Arrays vazios (`n = 0`) continuam aceitos.
 - O caminho real (`OnnxModel.predict`) não muda: softmax e CORN dão valores em `[0, 1]` também em float32 (a divisão e o produto arredondam de forma monótona).
+- **Efeito nos CAs da SPEC-012** (SPEC_ISSUE-01 de `reviews/SPEC-031/r1-dev-report.md`). A validação vale também para as entradas sintéticas dos testes de limiar. Por isso, valem estas leituras, que complementam a SPEC-012 sem alterar o arquivo dela (`Done`):
+  - **CA-18, segundo caso:** a confiança de grau é `min(0.5525 + 0.005·i, 1)`. Sem o `min`, as imagens com i ≥ 90 teriam confiança de 1,0025 a 1,0475 e probabilidades negativas, que esta seção recusa. O resultado esperado não muda: continuam 10 imagens abaixo de 0,60 (i = 0 a 9, de 0,5525 a 0,5975), `grade_review_threshold = 0.60` e sem `review_adjusted`.
+  - **CA-17:** o texto não muda (com `p_unusable = 0.45`, `fair` vale exatamente 0). Só a montagem do teste precisa evitar o resto `-5.55e-17` do ponto flutuante, como diz a §3.1.
 
 ### 4.3 Export TorchScript (RV-01 da r1)
 
@@ -94,6 +105,15 @@ O hook da SPEC-001 limita o ml-engineer a `ml/**` nas ferramentas de edição, e
 - o diff do `uv.lock` muda só a metadata do `qc-ml` (o `requires-dist` do `torch` no extra `train`), sem nenhuma versão resolvida nova; o dev-report traz o comando e o `git diff --stat uv.lock`;
 - o commit leva `Agent: ml-engineer` e `Refs: SPEC-031`. O reviewer confere o diff.
 
+### 4.8 Teste de autor da SPEC-001 com o teto do `torch` (developer)
+
+`tests/test_dependency_isolation.py::test_ml_train_extra_declares_training_stack` é teste de autor do developer (SPEC-001 §4.5, CA-08) e compara as strings do extra `train` com igualdade exata (linha 73). Com o `"torch<2.15"` da §4.3, item 1, ele falha (SPEC_ISSUE-02 de `reviews/SPEC-031/r1-dev-report.md`). O arquivo é de outro papel e fica fora de `ml/**`, então o ml-engineer não o altera (R-07). Quem ajusta é o **developer**, numa passada só para isto:
+
+- Na linha 73, a comparação passa a ser feita pelos **nomes** dos requisitos, sem o especificador de versão, o marcador e os extras. O nome é o prefixo de cada string que casa `[A-Za-z0-9._-]+`, em minúsculas (pode entrar o `import re`). A igualdade continua **exata**: o conjunto de nomes é `{"torch", "torchvision", "timm", "onnx", "coral-pytorch"}`, nem mais nem menos. Não se usa `packaging`, que é só dependência transitiva.
+- Nenhuma outra linha do arquivo muda, nem as asserções sobre o `uv.lock`, nem outro arquivo de código ou de teste.
+- O commit leva `Agent: developer` e `Refs: SPEC-031` e contém só esse arquivo. Num commit separado, também com `Agent: developer`, o developer acrescenta no fim de `reviews/SPEC-031/r1-dev-report.md` a seção `## Adendo do developer (§4.8)`, com o sha do commit e o resultado de `uv run pytest -q tests/test_dependency_isolation.py`. O resto do relatório do ml-engineer não muda.
+- A passada vem **antes** do tester, na mesma rodada (r1). O reviewer confere no diff que a intenção do CA-08 da SPEC-001 continua verificada: os mesmos cinco nomes, com igualdade.
+
 ## 5. Critérios de aceite
 
 - **CA-01 (RV-01 da r2)** — *Dado* uma cópia da fixture `ml/tests/fixtures/tiny_model/` com `type_probs[0, j] = nan`, em que `j` é o argmax da linha 0, *quando* `check_parity` roda, *então* `ok is False`, `max_abs_diff == math.inf` e `"non-finite values" in message`; e `python -m qc_ml.parity --model-dir <cópia>` sai com 2.
@@ -115,6 +135,7 @@ O hook da SPEC-001 limita o ml-engineer a `ml/**` nas ferramentas de edição, e
 
 - Sem internet e sem dados reais: cópias da fixture em `tmp_path` e `make_synthetic_dataset`.
 - A parte `slow` do CA-05 roda localmente com `uv sync --all-packages --extra train`, registrada no test-report, e o `.venv` volta ao estado do CI depois (como na SPEC-012). Com o extra instalado, os 3 testes de `edge/tests/test_publisher_real_api.py` podem falhar até o merge da SPEC-030 (§4.3 dela); rode só `ml/tests` nesse ambiente.
+- **Rodada r1, depois dos SPEC_ISSUE-01 e 02:** ordem developer (§4.8) → tester → reviewer. O tester escreve o `test_spec_031.py`, faz os dois ajustes de `test_spec_012.py` listados na §3.1 (tabela do §10 no test-report) e roda a suíte inteira sem torch. As 3 falhas citadas no dev-report r1 (`test_dependency_isolation.py`, CA-17 e CA-18 da SPEC-012) devem passar.
 
 ## 7. Riscos e notas para o implementador
 
@@ -137,3 +158,5 @@ O hook da SPEC-001 limita o ml-engineer a `ml/**` nas ferramentas de edição, e
 |---|---|---|---|
 | 2026-10-19 | SPEC criada (`Draft`). Decisões do architect: (a) teto `torch<2.15` no extra `train`, em vez de acrescentar o `onnxscript` e migrar para o exportador padrão (§7); (b) aviso de depreciação registrado no log em vez de silenciado, e checagem do export no notebook antes do treino (sugestões (b) e (c) do RV-01); (c) a nota `no_screw_nut_in_val` fica como comportamento da SPEC (opção "registrar" do RV-02), sem mudar o código; (d) exceção de caminho para o `uv.lock`, só por `uv lock` (§4.7). | RV-01 e RV-02 de `reviews/SPEC-012/r2-review-report.md`; RV-01 a RV-04 de `reviews/SPEC-012/r1-review-report.md`; RV-07 de `reviews/SPEC-011/r3-review-report.md` | Orquestrador, a pedido do humano |
 | 2026-10-19 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas recomendadas às perguntas do architect (comentário do PR #36). Aceitos o teto `torch<2.15` (no lugar do `onnxscript`) e a exceção de caminho do `uv.lock` regenerado só por `uv lock` (§4.7). | Aprovação humana | Humano (Carlos) |
+| 2026-10-20 | **Correção do SPEC_ISSUE-01 (r1): efeito da §4.2 nos CAs 17 e 18 da SPEC-012.** **Texto antigo:** a SPEC não tratava do efeito; o CA-18 da SPEC-012 prescreve, no segundo caso, "confiança de grau `0.5525 + 0.005·i`". **Texto novo:** (a) §4.2, item "Efeito nos CAs da SPEC-012": o segundo caso do CA-18 é lido como `min(0.5525 + 0.005·i, 1)`, com o mesmo resultado esperado (10 imagens abaixo de 0,60, `grade_review_threshold = 0.60`, sem `review_adjusted`); o texto do CA-17 não muda; (b) §3.1: o tester ajusta, em `ml/tests/acceptance/test_spec_012.py`, só a montagem das entradas desses dois testes, como aplicação explícita da regra "Testes de aceite de SPECs anteriores" de `docs/architecture.md` §10. **Decisão:** a correção fica na SPEC-031, e não no CA-18 da SPEC-012 (`Done`), porque é a §4.2 desta SPEC que invalida as entradas, a intenção do CA-18 não muda, e o §10 já prevê o ajuste pelo tester da SPEC nova (precedente de "texto vigente que complementa a SPEC-012": §4.4). **Evidência:** dev-report r1, SPEC_ISSUE-01 e nota do CA-17 (`ValueError: grade_probs has values outside [0, 1]` para i ≥ 90; `1.0 - 0.55 - 0.45 = -5.55e-17`). Classificação ADR-019 do SPEC_ISSUE-01: elegível (E-1: SPEC_ISSUE-01 do dev-report r1; E-2: só este arquivo e `docs/plan.md`; E-3: aprovada, `Blocked` por este SPEC_ISSUE; E-4 tipo 1, texto que esclarece o requisito sem mudar o comportamento pedido; E-5; nenhuma exclusão: nenhum CA da SPEC-031 muda, e nenhum valor prometido muda). | SPEC_ISSUE-01 de `reviews/SPEC-031/r1-dev-report.md` | Orquestrador |
+| 2026-10-20 | **Correção do SPEC_ISSUE-02 (r1): teste de autor da SPEC-001 quebrado pelo teto do `torch`.** **Texto antigo:** autor só o ml-engineer; o §3.1 e a §4.7 não cobriam `tests/test_dependency_isolation.py`. **Texto novo:** (a) cabeçalho: "ml-engineer (+ developer, só na §4.8)"; (b) §3.1: item do developer; (c) §4.8 nova: o developer troca a igualdade exata das strings do extra `train` (linha 73) por igualdade exata dos **nomes**, sem o especificador, com um commit só desse arquivo e um adendo no dev-report r1, antes do tester; (d) §6: ordem da rodada. **Decisão:** delegar ao developer, e não estender a §4.7 ao ml-engineer, porque o arquivo é teste de autor do developer (commit `702d915`, `Agent: developer`), fica fora de `ml/**` e do hook do ml-engineer, e editar teste de outro papel fere a separação da R-07. A igualdade continua exata nos nomes, então a intenção do CA-08 da SPEC-001 não muda e a SPEC-001 (`Done`) não é alterada. Classificação ADR-019 do SPEC_ISSUE-02: exige humano (X-5: acrescenta um papel autor e um arquivo fora do escopo da §3.1; X-7: o teste alterado faz parte da verificação da R-12, SPEC-001 §4.5). Como uma das duas correções exige humano, a SPEC fica marcada "Aguardando reaprovação humana" e o status continua `Blocked` (r1) até a reaprovação. | SPEC_ISSUE-02 de `reviews/SPEC-031/r1-dev-report.md` | Orquestrador |
