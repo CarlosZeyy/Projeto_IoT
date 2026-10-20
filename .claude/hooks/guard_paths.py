@@ -22,6 +22,17 @@ KNOWN LIMITATION: this hook only sees Write/Edit/MultiEdit/NotebookEdit. Writes 
 Bash tool (``echo > file``, ``uv lock``, ``git`` ...) are NOT intercepted. R-07 is still checked
 by the reviewer with ``git log`` and the ``Agent:`` trailers (reviews/checklist.md §2).
 
+GIT WORKTREES (SPEC-033 §4.1): Claude Code keeps ``$CLAUDE_PROJECT_DIR`` on the main checkout
+when a session runs in a worktree under ``.claude/worktrees/<name>/``. A target there is judged
+with its path relative to the root of that worktree, but only when ``<name>`` is a git worktree
+of this repository: the main ``.git`` is a directory, ``<name>/.git`` is a small regular UTF-8
+file (not a symlink) whose first line is ``gitdir: <dir>``, ``<dir>`` resolves to a direct child
+of ``.git/worktrees/`` and that child's ``gitdir`` file points back to ``<name>/.git``. Any other
+path under ``.claude/worktrees/`` (a plain folder, a nested clone, a worktree of another
+repository, a fake or symlinked ``.git``, the worktree root itself, a worktree inside a worktree)
+and any read error while checking it fail closed with "path is inside .claude/worktrees/ but not
+inside a git worktree of this repository". No ``git`` executable and no subprocess are used.
+
 Standard library only and compatible with Python >= 3.10: it runs with the system ``python3``,
 without uv, so that it works before ``.venv`` exists (a missing interpreter would fail open).
 """
@@ -31,6 +42,7 @@ import contextlib
 import json
 import os
 import re
+import stat
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -172,8 +184,68 @@ def target_path(event: object) -> str:
     return value
 
 
+# Git worktrees of Claude Code sessions live in `.claude/worktrees/<name>/` (SPEC-033 §4.1).
+WORKTREES_PREFIX = (".claude", "worktrees")
+WORKTREE_ERROR = (
+    "path is inside .claude/worktrees/ but not inside a git worktree of this repository"
+)
+GITFILE_MAX_BYTES = 4096
+
+
+def _worktree_relative(rel_parts: list, real_root: str) -> str:
+    """Map `.claude/worktrees/<name>/<rest>` to `<rest>` when `<name>` is a git worktree of root.
+
+    Structural check of what `git worktree add` writes (SPEC-033 §4.1, conditions 1 to 5); any
+    failed condition, nested worktree or read error raises GuardError (fail closed).
+    """
+
+    def read_first_line(file_path: str) -> str:
+        # Regular file, not a symlink, at most GITFILE_MAX_BYTES, strict UTF-8.
+        info = os.lstat(file_path)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > GITFILE_MAX_BYTES:
+            raise GuardError(WORKTREE_ERROR)
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        with open(file_path, "rb", opener=lambda p, f: os.open(p, f | nofollow)) as handle:
+            data = handle.read(GITFILE_MAX_BYTES + 1)
+        if len(data) > GITFILE_MAX_BYTES:
+            raise GuardError(WORKTREE_ERROR)
+        return data.decode("utf-8").split("\n", 1)[0].rstrip("\r")
+
+    if len(rel_parts) < 4:  # 1. something after `<name>`
+        raise GuardError(WORKTREE_ERROR)
+    worktree = os.path.join(real_root, *WORKTREES_PREFIX, rel_parts[2])
+    try:
+        # 2. the main checkout has a `.git` directory
+        if not os.path.isdir(os.path.join(real_root, ".git")):
+            raise GuardError(WORKTREE_ERROR)
+        # 3. `<name>/.git` is a gitfile: `gitdir: <dir>`
+        dot_git = os.path.join(worktree, ".git")
+        line = read_first_line(dot_git)
+        if not line.startswith("gitdir: ") or not line[len("gitdir: ") :]:
+            raise GuardError(WORKTREE_ERROR)
+        # 4. `<dir>` (relative to the worktree) is a direct child of `.git/worktrees/`
+        gitdir = os.path.realpath(os.path.join(worktree, line[len("gitdir: ") :]))
+        admin_dir = os.path.realpath(os.path.join(real_root, ".git", "worktrees"))
+        if os.path.dirname(gitdir) != admin_dir or not os.path.isdir(gitdir):
+            raise GuardError(WORKTREE_ERROR)
+        # 5. `<dir>/gitdir` points back to `<name>/.git` (relative to `<dir>` if not absolute)
+        back = read_first_line(os.path.join(gitdir, "gitdir"))
+        if not back or os.path.realpath(os.path.join(gitdir, back)) != os.path.realpath(dot_git):
+            raise GuardError(WORKTREE_ERROR)
+    except (OSError, ValueError) as exc:  # ValueError includes UnicodeDecodeError
+        raise GuardError(WORKTREE_ERROR) from exc
+    rest = rel_parts[3:]
+    if tuple(rest[:2]) == WORKTREES_PREFIX:  # 4.1 item 4: no worktree inside a worktree
+        raise GuardError(WORKTREE_ERROR)
+    return "/".join(rest)
+
+
 def relative_to_root(raw_path: str, cwd: object, root: Path = PROJECT_ROOT) -> str:
-    """Resolve the target (`..`, symlinks) and return it as a POSIX path relative to root."""
+    """Resolve the target (`..`, symlinks) and return it as a POSIX path relative to root.
+
+    A target inside a git worktree in `.claude/worktrees/<name>/` is returned relative to that
+    worktree's root (SPEC-033 §4.1); any other path under `.claude/worktrees/` is denied.
+    """
     if "\x00" in raw_path:
         raise GuardError("path contains a NUL byte")
     path = raw_path
@@ -190,6 +262,9 @@ def relative_to_root(raw_path: str, cwd: object, root: Path = PROJECT_ROOT) -> s
     rel_posix = PurePosixPath(*Path(rel).parts).as_posix()
     if rel_posix == "." or rel_posix == ".." or rel_posix.startswith("../"):
         raise GuardError("path is outside the project root")
+    rel_parts = rel_posix.split("/")
+    if tuple(rel_parts[:2]) == WORKTREES_PREFIX:
+        rel_posix = _worktree_relative(rel_parts, real_root)
     if ".git" in rel_posix.split("/"):
         raise GuardError("path is inside .git/")
     return rel_posix

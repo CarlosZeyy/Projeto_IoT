@@ -419,3 +419,405 @@ def test_glob_semantics_in_process() -> None:
     assert match("pyproject.toml", "pyproject.toml")
     assert not match("pyproject.toml", "api/pyproject.toml")
     assert match("**", "README.md")
+
+
+# ---------------------------------------------------------------- SPEC-033 §4.1 (worktrees)
+
+WORKTREE_ERROR = (
+    "path is inside .claude/worktrees/ but not inside a git worktree of this repository"
+)
+# Identity and config local to each git command: never touch the repository identity (R-13).
+GIT_ISOLATION = (
+    "-c",
+    "user.name=guard-test",
+    "-c",
+    "user.email=guard-test@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+    "-c",
+    "init.defaultBranch=main",
+    "-c",
+    "core.hooksPath=/dev/null",
+)
+
+
+def git(*args: str) -> None:
+    subprocess.run(["git", *GIT_ISOLATION, *args], check=True, capture_output=True, timeout=60)
+
+
+def make_repo(path: Path, *, with_hook: bool = True) -> Path:
+    """Temporary git repository with one commit (and a copy of the hook, so PROJECT_ROOT=path)."""
+    path.mkdir(parents=True)
+    git("init", "-q", str(path))
+    git("-C", str(path), "commit", "-q", "--allow-empty", "-m", "init")
+    if with_hook:
+        (path / ".claude/hooks").mkdir(parents=True)
+        shutil.copy(HOOK, path / ".claude/hooks/guard_paths.py")
+    return path
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> tuple[Path, Path]:
+    """(R, W): repository R and its worktree W = R/.claude/worktrees/wt."""
+    root = make_repo(tmp_path / "R")
+    worktree = root / ".claude/worktrees/wt"
+    git("-C", str(root), "worktree", "add", "-q", str(worktree), "-b", "wt")
+    return root, worktree
+
+
+def hook_of(root: Path) -> Path:
+    return root / ".claude/hooks/guard_paths.py"
+
+
+def assert_worktree_denied(result: subprocess.CompletedProcess[bytes]) -> None:
+    assert_blocked(result, WORKTREE_ERROR)
+
+
+WORKTREE_TABLE = [
+    # (role, tool, path relative to W, expected exit code) — the cases of CA-01 and a few more
+    ("developer", "Write", "api/src/qc_api/main.py", 0),
+    ("developer", "Edit", "reviews/SPEC-033/r1-dev-report.md", 0),
+    ("developer", "Write", "docs/specs/SPEC-001-setup-repositorio.md", 2),
+    ("developer", "Write", ".claude/hooks/guard_paths.py", 2),
+    ("developer", "Write", "edge/tests/acceptance/test_spec_030.py", 2),
+    ("developer", "MultiEdit", "README.md", 0),
+    ("developer", "Write", "ml/src/qc_ml/train.py", 2),
+    ("tester", "Write", "edge/tests/acceptance/test_spec_030.py", 0),
+    ("tester", "Write", "edge/src/qc_edge/app.py", 2),
+    ("architect", "Edit", "docs/plan.md", 0),
+    ("architect", "Edit", "docs/rules.md", 2),
+    ("reviewer", "Write", "reviews/SPEC-030/r1-review-report.md", 0),
+    ("ml-engineer", "NotebookEdit", "ml/notebooks/train_colab.ipynb", 0),
+    ("security-devops", "Write", "infra/compose.yaml", 0),
+]
+
+
+@pytest.mark.parametrize(("role", "tool", "rel", "expected"), WORKTREE_TABLE)
+def test_worktree_path_judged_relative_to_worktree_root(
+    repo: tuple[Path, Path], role: str, tool: str, rel: str, expected: int
+) -> None:
+    root, worktree = repo
+    key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    result = run_hook(event(str(worktree / rel), tool, key), role, hook_of(root))
+    assert result.returncode == expected, result.stderr
+    if expected == 0:
+        assert (result.stdout, result.stderr) == (b"", b"")
+    else:
+        message = f"guard_paths: role '{role}' may not write '{rel}' (SPEC-001, R-07)"
+        assert result.stderr.decode("utf-8").strip() == message
+
+
+def test_worktree_relative_path_with_cwd(repo: tuple[Path, Path]) -> None:
+    root, worktree = repo
+    ok = run_hook(event("api/x.py", "Write", cwd=str(worktree)), "developer", hook_of(root))
+    assert (ok.returncode, ok.stderr) == (0, b"")
+    denied = run_hook(
+        event("docs/specs/x.md", "Write", cwd=str(worktree)), "developer", hook_of(root)
+    )
+    assert denied.returncode == 2
+    assert "role 'developer' may not write 'docs/specs/x.md'" in denied.stderr.decode("utf-8")
+
+
+def test_main_checkout_unchanged_next_to_worktree(repo: tuple[Path, Path]) -> None:
+    root, _ = repo
+    assert run_hook(event(str(root / "api/x.py")), "developer", hook_of(root)).returncode == 0
+    denied = run_hook(event(str(root / "docs/rules.md")), "developer", hook_of(root))
+    assert "role 'developer' may not write 'docs/rules.md'" in denied.stderr.decode("utf-8")
+
+
+ACCEPTANCE_TAIL = "x/tests/acceptance/t.py"
+
+
+def test_plain_folder_under_worktrees_denied(repo: tuple[Path, Path]) -> None:
+    root, _ = repo
+    (root / ".claude/worktrees/comum/x").mkdir(parents=True)
+    target = root / ".claude/worktrees/comum" / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(target)), "tester", hook_of(root)))
+    # a folder that does not exist yet (Write creating it) is denied too
+    missing = root / ".claude/worktrees/nova" / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(missing)), "tester", hook_of(root)))
+
+
+def test_nested_clone_denied(repo: tuple[Path, Path]) -> None:
+    root, _ = repo
+    git("init", "-q", str(root / ".claude/worktrees/clone"))
+    target = root / ".claude/worktrees/clone" / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(target)), "tester", hook_of(root)))
+
+
+def test_worktree_of_another_repository_denied(repo: tuple[Path, Path], tmp_path: Path) -> None:
+    root, _ = repo
+    other = make_repo(tmp_path / "R2", with_hook=False)
+    git(
+        "-C", str(other), "worktree", "add", "-q", str(root / ".claude/worktrees/alheia"), "-b", "a"
+    )
+    target = root / ".claude/worktrees/alheia" / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(target)), "tester", hook_of(root)))
+
+
+def test_fake_gitfile_pointing_to_another_worktree_denied(repo: tuple[Path, Path]) -> None:
+    root, _ = repo
+    fake = root / ".claude/worktrees/falsa"
+    fake.mkdir()
+    (fake / ".git").write_text(f"gitdir: {root / '.git/worktrees/wt'}\n", encoding="utf-8")
+    target = fake / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(target)), "tester", hook_of(root)))
+
+
+def test_symlinked_gitfile_denied(repo: tuple[Path, Path]) -> None:
+    root, worktree = repo
+    link = root / ".claude/worktrees/link"
+    link.mkdir()
+    os.symlink(worktree / ".git", link / ".git")
+    target = link / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(target)), "tester", hook_of(root)))
+
+
+def test_worktree_inside_worktree_denied(repo: tuple[Path, Path]) -> None:
+    root, worktree = repo
+    # even a real worktree of R placed inside W is refused
+    git(
+        "-C",
+        str(root),
+        "worktree",
+        "add",
+        "-q",
+        str(worktree / ".claude/worktrees/outra"),
+        "-b",
+        "o",
+    )
+    target = worktree / ".claude/worktrees/outra" / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(target)), "tester", hook_of(root)))
+    plain = worktree / ".claude/worktrees/comum" / ACCEPTANCE_TAIL
+    assert_worktree_denied(run_hook(event(str(plain)), "tester", hook_of(root)))
+
+
+@pytest.mark.parametrize(
+    "rel", [".claude/worktrees/wt", ".claude/worktrees/x.py", ".claude/worktrees"]
+)
+@pytest.mark.parametrize("role", ["tester", "developer"])
+def test_worktree_root_and_loose_files_denied(repo: tuple[Path, Path], rel: str, role: str) -> None:
+    root, _ = repo
+    assert_worktree_denied(run_hook(event(str(root / rel)), role, hook_of(root)))
+
+
+@pytest.mark.parametrize("rel", [".claude/worktrees/wt/.git", ".git/worktrees/wt/HEAD"])
+def test_git_metadata_of_worktree_denied(repo: tuple[Path, Path], rel: str) -> None:
+    root, _ = repo
+    assert_blocked(
+        run_hook(event(str(root / rel)), "developer", hook_of(root)), "path is inside .git/"
+    )
+
+
+def test_symlinks_inside_worktree_do_not_loosen(repo: tuple[Path, Path], tmp_path: Path) -> None:
+    root, worktree = repo
+    (root / "docs").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(root / "docs", worktree / "docs-link")
+    os.symlink(outside, worktree / "fora")
+    denied = run_hook(event(str(worktree / "docs-link/specs/x.md")), "developer", hook_of(root))
+    assert denied.returncode == 2
+    assert "role 'developer' may not write 'docs/specs/x.md'" in denied.stderr.decode("utf-8")
+    assert_blocked(
+        run_hook(event(str(worktree / "fora/x.py")), "developer", hook_of(root)),
+        "path is outside the project root",
+    )
+
+
+def _write_gitfile(worktree: Path, content: bytes) -> None:
+    gitfile = worktree / ".git"
+    gitfile.unlink()
+    gitfile.write_bytes(content)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"",  # empty
+        b"\n",
+        b"gitdir:\n",  # no path
+        b"gitdir: \n",  # empty path
+        b"GITDIR: x\n",  # wrong prefix
+        b"\xff\xfegitdir: x\n",  # not UTF-8
+        b"gitdir: x" + b" " * 4096 + b"\n",  # over 4096 bytes
+        b"gitdir: ../../../.git\n",  # the main .git, not a child of .git/worktrees
+        b"gitdir: ../../../.git/worktrees\n",  # the admin dir itself
+        b"gitdir: ../../../.git/worktrees/nada\n",  # child that does not exist
+        b"gitdir: /\x00x\n",  # NUL byte inside the path
+    ],
+)
+def test_bad_gitfile_fails_closed(repo: tuple[Path, Path], content: bytes) -> None:
+    root, worktree = repo
+    _write_gitfile(worktree, content)
+    target = worktree / "api/x.py"
+    assert_worktree_denied(run_hook(event(str(target)), "developer", hook_of(root)))
+
+
+def test_gitfile_directory_or_unreadable_fails_closed(repo: tuple[Path, Path]) -> None:
+    root, worktree = repo
+    gitfile = worktree / ".git"
+    content = gitfile.read_bytes()
+    gitfile.unlink()
+    gitfile.mkdir()  # `.git` as a directory: a clone, not a worktree
+    assert_worktree_denied(run_hook(event(str(worktree / "api/x.py")), "developer", hook_of(root)))
+    gitfile.rmdir()
+    gitfile.write_bytes(content)
+    assert run_hook(event(str(worktree / "api/x.py")), "developer", hook_of(root)).returncode == 0
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root reads files without permission")
+    gitfile.chmod(0)
+    try:
+        assert_worktree_denied(
+            run_hook(event(str(worktree / "api/x.py")), "developer", hook_of(root))
+        )
+    finally:
+        gitfile.chmod(0o644)
+
+
+def _admin_dir(root: Path) -> Path:
+    return root / ".git/worktrees/wt"
+
+
+@pytest.mark.parametrize(
+    "back",
+    [
+        None,  # gitdir file missing
+        b"",
+        b"/somewhere/else/.git\n",
+        b"\xff\n",
+    ],
+)
+def test_bad_back_pointer_fails_closed(repo: tuple[Path, Path], back: bytes | None) -> None:
+    root, worktree = repo
+    back_file = _admin_dir(root) / "gitdir"
+    back_file.unlink()
+    if back is not None:
+        back_file.write_bytes(back)
+    assert_worktree_denied(run_hook(event(str(worktree / "api/x.py")), "developer", hook_of(root)))
+
+
+def test_symlinked_back_pointer_fails_closed(repo: tuple[Path, Path], tmp_path: Path) -> None:
+    root, worktree = repo
+    back_file = _admin_dir(root) / "gitdir"
+    real = tmp_path / "gitdir-copy"
+    real.write_bytes(back_file.read_bytes())
+    back_file.unlink()
+    os.symlink(real, back_file)
+    assert_worktree_denied(run_hook(event(str(worktree / "api/x.py")), "developer", hook_of(root)))
+
+
+def test_main_git_not_a_directory_fails_closed(repo: tuple[Path, Path], tmp_path: Path) -> None:
+    """Condition 2: a project root whose `.git` is a file (itself a worktree) recognizes none."""
+    root, _ = repo
+    outer = tmp_path / "outer-wt"
+    git("-C", str(root), "worktree", "add", "-q", str(outer), "-b", "outer")
+    (outer / ".claude/hooks").mkdir(parents=True)
+    shutil.copy(HOOK, hook_of(outer))
+    inner = outer / ".claude/worktrees/inner"
+    git("-C", str(root), "worktree", "add", "-q", str(inner), "-b", "inner")
+    assert (outer / ".git").is_file()
+    assert_worktree_denied(run_hook(event(str(inner / "api/x.py")), "developer", hook_of(outer)))
+
+
+def test_relative_gitdir_paths_accepted(repo: tuple[Path, Path]) -> None:
+    """`worktree.useRelativePaths`: gitfile relative to W, back-pointer relative to its dir."""
+    root, worktree = repo
+    _write_gitfile(worktree, b"gitdir: ../../../.git/worktrees/wt\n")
+    (_admin_dir(root) / "gitdir").write_bytes(b"../../../.claude/worktrees/wt/.git\n")
+    ok = run_hook(event(str(worktree / "api/x.py")), "developer", hook_of(root))
+    assert (ok.returncode, ok.stderr) == (0, b"")
+    denied = run_hook(event(str(worktree / "docs/rules.md")), "developer", hook_of(root))
+    assert "may not write 'docs/rules.md'" in denied.stderr.decode("utf-8")
+
+
+def test_gitfile_with_crlf_accepted(repo: tuple[Path, Path]) -> None:
+    root, worktree = repo
+    _write_gitfile(worktree, f"gitdir: {_admin_dir(root)}\r\n".encode())
+    assert run_hook(event(str(worktree / "api/x.py")), "developer", hook_of(root)).returncode == 0
+
+
+def test_worktree_with_space_and_accent(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "Área de trabalho" / "R")
+    worktree = root / ".claude/worktrees/sessão um"
+    git("-C", str(root), "worktree", "add", "-q", str(worktree), "-b", "s1")
+    ok = run_hook(event(str(worktree / "api/ação.py")), "developer", hook_of(root))
+    assert (ok.returncode, ok.stderr) == (0, b"")
+    denied = run_hook(event(str(worktree / "api/ação.py")), "tester", hook_of(root))
+    assert "may not write 'api/ação.py'" in denied.stderr.decode("utf-8")
+
+
+def test_worktree_relative_in_process(repo: tuple[Path, Path]) -> None:
+    import importlib.util
+
+    root, worktree = repo
+    spec = importlib.util.spec_from_file_location("guard_paths_worktree", hook_of(root))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.WORKTREE_ERROR == WORKTREE_ERROR
+    assert module.relative_to_root(str(worktree / "api/a.py"), None) == "api/a.py"
+    assert module.relative_to_root("b/c.py", str(worktree / "api")) == "api/b/c.py"
+    with pytest.raises(module.GuardError, match="not inside a git worktree"):
+        module.relative_to_root(str(root / ".claude/worktrees/nada/a.py"), None)
+    # paths that merely start like the prefix are not worktree paths
+    assert module.relative_to_root(str(root / ".claude/worktreesx/a.py"), None) == (
+        ".claude/worktreesx/a.py"
+    )
+    assert module.relative_to_root(str(root / "x/.claude/worktrees/a.py"), None) == (
+        "x/.claude/worktrees/a.py"
+    )
+
+
+def test_hook_does_not_import_subprocess() -> None:
+    tree = ast.parse(HOOK.read_text(encoding="utf-8"))
+    names = {
+        alias.name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        (node.module or "").split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    assert "subprocess" not in names
+
+
+def test_hook_documents_worktree_rule() -> None:
+    doc = ast.get_docstring(ast.parse(HOOK.read_text(encoding="utf-8"))) or ""
+    assert ".claude/worktrees/" in doc
+    assert "but not\ninside a git worktree of this repository" in doc
+
+
+def test_gitignore_and_readme_cover_worktrees() -> None:
+    ignored = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(ROOT),
+            "check-ignore",
+            "--no-index",
+            "-q",
+            ".claude/worktrees/wt/api/x.py",
+        ],
+        timeout=30,
+    )
+    assert ignored.returncode == 0
+    hook_ignored = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(ROOT),
+            "check-ignore",
+            "--no-index",
+            "-q",
+            ".claude/hooks/guard_paths.py",
+        ],
+        timeout=30,
+    )
+    assert hook_ignored.returncode == 1
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = readme.split("### Hook de guarda de caminhos (R-07)", 1)[1]
+    section = section.split("\n#", 1)[0]
+    assert ".claude/worktrees/" in section
