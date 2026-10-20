@@ -70,7 +70,8 @@ A SPEC-016 finaliza esta parte.
 - **Celulares:** os dois da dupla, em proporções parecidas.
 - **Configuração da câmera:** desligue a "foto com movimento" (Motion Photo do Android) e qualquer recurso parecido que anexe vídeo ou áudio à foto, nos dois celulares, antes de começar. Ela anexa um vídeo de alguns MB depois do fim do JPEG. Esses bytes contêm pares `FF DA` por acaso (~16 por MiB), e o `qc_preprocess.load_image` recusa todo JPEG com mais de 64 deles no arquivo (SPEC-024). A partir de ~3 a 4 MiB de vídeo, a foto é recusada. O pipeline acusa o caso com o problema `too_many_jpeg_scans` (SPEC-011). Para resolver, **refotografe** com o recurso desligado. Não corte o arquivo à mão. Isso vale para as fotos tiradas direto no app da câmera (por exemplo, antes da SPEC-010). As fotos do modo coleta passam pela página `/capture`, que reencoda a imagem e descarta tudo o que vem depois dela.
 - **Privacidade:** sem rostos nem pessoas no quadro (R-14).
-- **Classe `other` (negativos):** objetos variados (moeda, tampinha, caneta, chave de casa, pregos, arruela, a mesa vazia) e, opcionalmente, as categorias do MVTec AD, respeitando a licença CC BY-NC-SA 4.0, com atribuição, para uso acadêmico. Mínimo de 150 imagens de pelo menos 30 objetos diferentes.
+- **Classe `other` (negativos):** objetos variados (moeda, tampinha, caneta, chave de casa, pregos, arruela, a mesa vazia) e, opcionalmente, imagens de datasets públicos com licença aceita (por exemplo, as categorias do MVTec AD, CC BY-NC-SA 4.0), importadas pela §10.4: só no treino e com a fonte registrada. Mínimo de 150 imagens de pelo menos 30 objetos diferentes, **sem contar as externas**.
+- **Fotos que não passam pela página** (de conhecidos ou de datasets públicos): só pela importação da §10, nunca copiadas para `raw/`.
 
 ## 4. Metas de volume
 
@@ -86,6 +87,8 @@ Marcos de coleta:
 
 Se algum grau ficar abaixo da meta, registre em `ml/reports/` e use pesos de classe.
 
+**O que conta para as metas** (ADR-020): as fotos da página e as de conhecidos (peças físicas reais, §10.2). As imagens externas (§10.4) **não** contam: cada uma é uma "peça" sem relação com as peças da dupla, e elas nunca vão para a validação nem para o teste. O relatório de dados (SPEC-035) e a tabela de cobertura do console (SPEC-036) já as separam.
+
 **Por que 12 peças por grau:** com o split 70/15/15 por peça, 8 peças deixam cerca de 1 peça por grau no teste, e as métricas ficam muito instáveis. Com 12 ou mais, sobram cerca de 2. Mesmo assim, o teste é pequeno: por isso o `metrics.json` traz intervalos de confiança por bootstrap (skill `ml-pipeline`). Como a mesma peça passa por vários estágios de corrosão, a estratificação usa o grau **dominante** da peça e é aproximada; o relatório de dados mostra a distribuição real por split.
 
 ## 5. Manifest (`DATASET_DIR/manifest.csv`)
@@ -93,7 +96,7 @@ Se algum grau ficar abaixo da meta, registre em `ml/reports/` e use pesos de cla
 | Coluna | Tipo | Exemplo | Observação |
 |---|---|---|---|
 | `image_path` | str | `raw/screw/fair/S-012__2__20261022T141503Z.jpg` | relativo a `DATASET_DIR` |
-| `item_id` | str | `S-012` | `^[SNOT]-\d{3}$` (S = parafuso, N = porca, O = other, T = ferramenta na Fase 2) |
+| `item_id` | str | `S-012` | `^[SNOT]-\d{3}$` (S = parafuso, N = porca, O = other, T = ferramenta na Fase 2). A partir da SPEC-035, também `^X[SNOT]-\d{4}$` para as imagens externas (§10.3) |
 | `object_type` | str | `screw` | `screw`, `nut`, `other` (+ Fase 2) |
 | `grade` | str | `fair` | vazio para `other` |
 | `labeler` | str | `a` ou `b` | quem rotulou |
@@ -102,7 +105,11 @@ Se algum grau ficar abaixo da meta, registre em `ml/reports/` e use pesos de cla
 | `capture_device` | str | user-agent resumido | só para análise |
 | `notes` | str | `dúvida fair/poor` | opcional |
 
-Uma linha por imagem. As correções de rótulo **não** reescrevem a linha original: entram em `labels_overrides.csv` (`image_path,grade,labeler,reason`), aplicado pelo pipeline (SPEC-011).
+Uma linha por imagem. Numa imagem importada (§10), `captured_at` é o instante da importação, e não o da foto (o EXIF é descartado), e `capture_device` é `qc-edge-import`.
+
+**Origem da imagem (`sources.csv`, a partir das SPECs 035 e 036).** O manifest não muda. A importação grava, no mesmo diretório, uma linha de `sources.csv` por imagem importada: `image_path,origin,contributor,source_id,source_ref,input_sha256`, com `origin` igual a `contributor` (foto de conhecido, `contributor` = código `c01`, `c02`…) ou `external` (imagem externa, `source_id` = a fonte em `ml/external_sources.csv` e `source_ref` = o arquivo dentro da fonte). A imagem sem linha em `sources.csv` veio da página (`capture`). O `input_sha256` é o hash do arquivo recebido e impede importar o mesmo arquivo duas vezes. O formato completo está na SPEC-035 §4.2. Nunca edite o `sources.csv` à mão.
+
+As correções de rótulo **não** reescrevem a linha original: entram em `labels_overrides.csv` (`image_path,grade,labeler,reason`), aplicado pelo pipeline (SPEC-011).
 
 Uma imagem que precisa **sair** do dataset (por exemplo, com uma pessoa no quadro) também não reescreve o manifest: o arquivo é apagado e o `image_path` entra em `exclusions.csv` (`image_path,reason`, com `reason` igual a `person` ou `other`), no mesmo diretório do manifest. O pipeline tira essas linhas antes de validar e de gerar o split (SPEC-011). O passo a passo está na §8.1.
 
@@ -121,6 +128,9 @@ Uma imagem que precisa **sair** do dataset (por exemplo, com uma pessoa no quadr
 - **Imagem excluída (§8.1):** sai do split seguinte, inclusive do teste, com o aviso `excluded_previous_image` no `split_v<N>.json` (SPEC-011). Isso não é recriar o teste: nenhuma imagem muda de conjunto, e a exclusão é decidida pela foto (R-14), nunca pelo resultado do modelo. O relatório de métricas cita o aviso.
 - **Uma peça nunca muda de conjunto:** a peça que já esteve em treino, validação ou teste, em **qualquer** versão do split, continua nesse conjunto em todas as versões seguintes. Isso vale mesmo que todas as fotos dela tenham sido excluídas, um split tenha sido gerado sem ela e ela volte refotografada com o mesmo `item_id` (§2, passo 6). Para isso, o `python -m qc_ml.split` lê **todos** os `split_v*` anteriores e confere o hash de cada um (SPEC-011 §4.4). Ele sai com erro, sem gravar nada, se faltar uma versão na numeração, se um hash não conferir ou se uma peça aparecer em dois conjuntos ao longo das versões.
 - **Os `split_v*` antigos não se apagam nem se editam.** Se um faltar ou não conferir, restaure-o do Git. Um conflito de peça entre versões indica split editado à mão ou `item_id` reaproveitado para outra peça física: pare e investigue. Corrigir um split antigo que mexa no teste é recriar o teste e exige ADR.
+- **Origem da imagem** (ADR-020, SPEC-035):
+  - as **fotos de conhecidos** seguem as mesmas regras das peças da dupla. Só as importadas **antes** do `split_v1` podem cair no teste; as importadas depois são peças novas e vão para treino e validação;
+  - as **imagens externas** (`item_id` `X…`) vão **sempre** para o treino, em todas as versões do split, e ficam fora da estratificação. O split sai com erro se uma delas aparecer em validação ou teste em qualquer versão, e se a fração delas no treino passar do teto (padrão 30%, registrado no `split_v<N>.json`).
 - Opcional, mas recomendado: um teste de "condição de demo", com 50 fotos capturadas no local e no dia do ensaio (S7), relatado separadamente.
 
 ## 8. Armazenamento
@@ -132,13 +142,13 @@ Uma imagem que precisa **sair** do dataset (por exemplo, com uma pessoa no quadr
 
 **Antes do primeiro backup no Drive (prazo, SEC-10-01 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md`).** O primeiro backup no Drive só acontece **depois** do merge da SPEC-025, que grava as fotos da coleta sem EXIF (GPS, aparelho, data), XMP e trailer (vídeo do Motion Photo) e traz a varredura abaixo. Até lá:
 - a cópia de segurança fica só em mídia local da dupla (disco externo ou pendrive), nunca no Drive nem em outro serviço;
-- coletar só pela página `/capture`, que reencoda a foto pelo canvas e já descarta os metadados; não enviar fotos à rota por script nem copiar fotos do app da câmera para `raw/`.
+- coletar só pela página `/capture`, que reencoda a foto pelo canvas e já descarta os metadados; não enviar fotos à rota por script nem copiar fotos do app da câmera para `raw/`. A partir do merge das SPECs 035 e 036, a importação (§10) é o único outro caminho de entrada.
 
 **Antes de cada backup no Drive** (inclusive o primeiro):
 1. `uv run --package qc-edge python -m qc_edge.privacy --dataset-dir ml/data` → `0 with private data`. Se houver achados, repetir com `--fix` e rodar de novo sem `--fix`. Um arquivo `invalid` é apagado e registrado em `exclusions.csv` (§8.1, `reason=other`). O mesmo vale para um arquivo `orientation`, que o `--fix` não corrige: é uma foto com rotação EXIF (o normal numa foto em retrato do app da câmera), e tirar o EXIF dela faria o treino lê-la girada (SPEC-025 §4.8). Refotografe a peça pela página `/capture`. **Até o merge da SPEC-030** (SEC-25-01 e SEC-25-02 de `reviews/SPEC-025/r2-security-report.md`): confira também o código de saída da varredura (`echo $?` logo depois dela → `0`), e não só a última linha, porque um nome de arquivo com controles pode imitar o resumo; e confira que `find ml/data/raw -type f ! -name '*.jpg'` não lista nada, porque hoje a varredura não confere `.JPG`, `.jpeg` nem outras extensões. Só copie para `raw/` arquivos renomeados para `.jpg` em minúsculas;
 2. depois da SPEC-011: `uv run --package qc-ml python -m qc_ml.data validate --dataset-dir ml/data` sem problemas (nenhum `orphan_image`, `missing_file` nem `excluded_file_present`);
 3. conferir que nenhuma foto nova tem pessoa no quadro (R-14); se tiver, seguir a §8.1 antes de compactar;
-4. compactar `ml/data/` inteiro (com `manifest.csv`, `labels_overrides.csv` e `exclusions.csv`) e subir o arquivo com a data no nome.
+4. compactar `ml/data/` inteiro (com `manifest.csv`, `labels_overrides.csv`, `exclusions.csv` e `sources.csv`) e subir o arquivo com a data no nome. A pasta de entrada da importação (§10.6) **nunca** entra no backup: os arquivos dela têm EXIF.
 
 ### 8.1 Remover uma foto do dataset (pessoa no quadro, R-14)
 
@@ -153,10 +163,78 @@ Quem notar uma foto com pessoa identificável no dataset (ou outra foto que prec
 
 As fotos do modo inspeção são outra coisa: servem para conferir uma inspeção depois, e não para treinar.
 
-- **Não fazem parte do dataset.** Não têm rótulo humano nem `item_id`. Nunca são copiadas para `DATASET_DIR` nem para o backup do Drive (§8). O dataset só cresce pelo modo coleta (§3).
+- **Não fazem parte do dataset.** Não têm rótulo humano nem `item_id`. Nunca são copiadas para `DATASET_DIR` nem para o backup do Drive (§8), nem importadas pela §10. O dataset só cresce pelo modo coleta (§3) e pela importação de fotos de conhecidos e de imagens externas (§10).
 - **Ficam só no notebook da borda** (R-02), com diretórios `0700` e arquivos `0600` (SPEC-025). O nome do arquivo é o `inspection_id`, o que permite achar a foto de uma inspeção mostrada no dashboard.
 - **Pessoa no quadro (R-14):** uma foto com pessoa identificável é apagada assim que for notada (`rm <EDGE_DATA_DIR>/captures/<AAAA-MM-DD>/<inspection_id>.jpg`). O registro na nuvem não muda, porque não contém imagem.
 - **Retenção:** as fotos ficam guardadas até a entrega do projeto (04/12/2026). Depois da apresentação, a dupla apaga a pasta inteira (`rm -rf <EDGE_DATA_DIR>/captures`). Entre as sessões, a pasta pode ser limpa a qualquer momento: nada na borda nem na nuvem depende dela.
+
+## 10. Fotos que não vêm da página `/capture` (ADR-020)
+
+Vale a partir do merge das SPECs 035 e 036. Até lá, nenhum arquivo recebido entra em `ml/data/`: guarde-o só na pasta de entrada (§10.6).
+
+### 10.1 Origens
+
+| Origem | O que é | Splits | Conta para as metas (§4) |
+|---|---|---|---|
+| `capture` | foto da página `/capture`, pela dupla | treino, validação e teste (§7) | sim |
+| `contributor` | foto de um conhecido, tirada em outro celular e recebida como arquivo | treino, validação e teste (§7); teste só se importada antes do `split_v1` | sim |
+| `external` | imagem de dataset público ou da internet, com licença aceita | **só treino**, sempre | não |
+
+Em todas as origens, o `item_id` e o grau são decididos pela dupla, com a rubrica (§1). Nunca use o rótulo de quem fotografou nem o da fonte externa.
+
+### 10.2 Fotos de conhecidos
+
+- **Peça física:** cada peça do conhecido é uma peça nova, com `item_id` novo (§10.3). A mesma peça em vários ângulos ou estágios mantém o `item_id`, como no §2, passo 6. Se a peça for depois entregue à dupla, ela continua com o mesmo `item_id` nas fotos da página.
+- **Guia para quem fotografa** (mandar junto com o pedido): fundo liso e claro (uma folha A4), cerca de 20 cm, peça ocupando boa parte da foto, sem flash, de 3 a 5 ângulos, **sem pessoas, mãos com anel ou tatuagem, rostos, documentos, telas ou endereços no quadro**. Enviar pelo WhatsApp como **documento** (a opção "foto" comprime). No iPhone, usar o formato "Mais compatível" (JPEG), porque o HEIC é recusado.
+- **Consentimento:** antes de usar, explicar ao conhecido que a foto é para um projeto acadêmico, fica só no notebook e nos backups pessoais da dupla, perde os metadados (localização, aparelho, data) e pode ser retirada até a entrega (04/12/2026). O "sim" fica na própria conversa; nada disso entra no repositório.
+- **Código do conhecido:** cada conhecido recebe um código `c01`, `c02`… (coluna `contributor`). A relação entre código e pessoa fica só com a dupla, fora do repositório e fora de `ml/data/`. Nenhum nome, telefone ou apelido entra no dataset, no plano de importação ou num relatório.
+
+### 10.3 Numeração (`item_id`)
+
+| Faixa | Uso | Regra |
+|---|---|---|
+| `S-001`…`S-499`, `N-001`…`N-499`, `O-001`…`O-499` | peças da dupla | recomendação |
+| `S-500`…`S-999`, `N-500`…`N-999`, `O-500`…`O-999` | peças de conhecidos | recomendação: deixa claro no catálogo de quem é a peça |
+| `XS-0001`…`XS-9999`, `XN-…`, `XO-…` | imagens externas | **obrigatória** (SPEC-035): o prefixo `X` decide sozinho que a imagem fica no treino |
+| `T-…`, `XT-…` | ferramentas (Fase 2) | recusadas até a SPEC-016; as fotos ficam na pasta de entrada |
+
+Cada imagem externa é, em geral, uma "peça" própria (`XS-0001`, `XS-0002`…). Se a fonte tiver várias fotos do mesmo objeto, elas podem dividir o `item_id`.
+
+### 10.4 Imagens externas
+
+- **Licença:** só as da lista da SPEC-035 §4.3 (`CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC-BY-NC-4.0`, `CC-BY-NC-SA-4.0`, `MIT`, `Apache-2.0`, `BSD-3-Clause`). Nada "NoDerivatives", "desconhecida", "todos os direitos reservados" ou "coletado da internet" sem licença por imagem. Confira a licença na **página oficial** da fonte, e não num espelho. Prefira CC0 e CC BY às ShareAlike, porque o modelo é publicado num Release público.
+- **Registro antes de importar:** acrescente a fonte a `ml/external_sources.csv` (título, URL, licença, URL da licença, texto de crédito e data da consulta) por um PR. É o arquivo de atribuições do projeto. Uma fonte nunca sai do registro, mesmo que as imagens dela saiam.
+- **Escolha:** a SPEC-035, Anexo A, lista as fontes avaliadas em 2026-10-20. Nenhuma tem os 5 graus. As mais úteis: dano funcional (MVTec AD → `unusable`), corrosão real (SDNET 2025 → `fair`/`poor` pela rubrica) e pregos e arruelas para `other`. Não importe duas cópias da mesma fonte (ex.: o MVTec AD e um espelho no Kaggle).
+- **Datasets de detecção** (várias peças por foto): recorte cada peça **fora** de `ml/data/`, na pasta de entrada, e use como `source_ref` o arquivo original e o número da caixa (ex.: `images/0042.jpg#3`).
+- **Complemento, não base:** o split recusa mais de 30% de imagens externas no treino (padrão). Elas não contam para as metas (§4).
+
+### 10.5 Privacidade (R-14): o que é automático e o que é humano
+
+| Verificação | Quem faz |
+|---|---|
+| Tirar EXIF (GPS, aparelho, data), XMP, IPTC, comentários e o vídeo da "foto com movimento" | automático: a importação reencoda a foto sem metadados e confere o resultado (SPEC-036 §4.3) |
+| Rotação, tamanho (lado maior em até 1280 px), formato (só JPEG e PNG) e limites de pixels e de scans | automático (SPEC-036 §4.3) |
+| Conferir o dataset gravado antes de cada backup | automático: `python -m qc_edge.privacy` (§8) |
+| Pessoa, rosto, mão identificável, documento, tela, placa, endereço ou reflexo no quadro | **humano**, antes da importação, olhando cada foto no tamanho real. A importação exige `--privacy-checked` como confirmação de que isso foi feito |
+| Consentimento do conhecido e retirada | **humano** (§10.2 e §10.7) |
+| Licença e crédito da fonte externa | **humano**, ao registrar a fonte (§10.4); a importação recusa fonte sem registro ou com licença fora da lista |
+
+### 10.6 Passo a passo da importação
+
+1. Salve os arquivos recebidos numa **pasta de entrada fora de `ml/data/`** (ex.: `~/partqc-entrada/`). A importação recusa uma pasta de entrada dentro do dataset.
+2. Olhe cada foto (§10.5). Uma foto com pessoa, documento ou endereço não é importada: apague-a.
+3. Preencha o plano CSV (`file,item_id,object_type,grade,labeler,angle,origin,contributor,source_id,source_ref,notes`, exemplo no `edge/README.md`). Se usar planilha, exporte como CSV UTF-8 e confira as células de `notes` e `source_ref` que começam com `=`, `+`, `-` ou `@` (§5).
+4. `uv run --package qc-edge python -m qc_edge.importer --dataset-dir ml/data --inbox <pasta> --plan <plano> --privacy-checked --dry-run` e confira as linhas `failed`.
+5. Rode sem `--dry-run`. Se parar no meio, rode de novo: o que já entrou é pulado.
+6. `python -m qc_edge.privacy --dataset-dir ml/data` (`0 with private data`) e `python -m qc_ml.data validate --dataset-dir ml/data` (sem problemas).
+7. Apague os arquivos da pasta de entrada (e as cópias baixadas no celular). Eles têm EXIF e nunca entram no backup (§8).
+
+### 10.7 Remoção e retirada
+
+- **Uma foto importada que precisa sair:** como qualquer outra (§8.1). A linha de `sources.csv` fica e é ignorada.
+- **Um conhecido pede para retirar as fotos:** todas as imagens com o código dele em `sources.csv` (e todas as fotos das peças dele) seguem a §8.1, com `reason=other`, inclusive nos backups. Se alguma estava no teste, o split seguinte a tira com o aviso `excluded_previous_image` (§7), sem recriar o teste.
+- **A licença de uma fonte externa muda ou é contestada:** todas as imagens dessa `source_id` seguem a §8.1 (`reason=other`); a fonte continua no registro, e o modelo seguinte é treinado sem ela.
+- **`missing_source` no `validate`** (uma queda de energia entre a gravação do manifest e a do `sources.csv`): siga a §8.1 para essa imagem e importe o arquivo de novo.
 
 ## Histórico de alterações
 
@@ -170,3 +248,4 @@ As fotos do modo inspeção são outra coisa: servem para conferir uma inspeçã
 | 2026-10-18 | §8, passo 1: o achado `orientation` (foto com rotação EXIF) não é corrigido pelo `--fix`; a foto é apagada, registrada em `exclusions.csv` e refeita pela página `/capture` | SPEC_ISSUE-01 de `reviews/SPEC-025/r1-review-report.md` (paridade treino/borda, ADR-004) |
 | 2026-10-18 | §7: uma peça nunca muda de conjunto em relação a qualquer versão anterior do split (o split lê e confere todos os `split_v*`); os `split_v*` antigos não se apagam nem se editam. §8.1, passo 5: a peça refotografada volta ao conjunto em que estava, mesmo com um split gerado entre a exclusão e a refotografia | SPEC_ISSUE-01 de `reviews/SPEC-011/r2-review-report.md` (T-02: a peça de teste voltava como peça nova e ia para o treino, contra a R-11 e o ADR-014) |
 | 2026-10-19 | §8, passo 1: até o merge da SPEC-030, conferir o código de saída da varredura e o `find ml/data/raw -type f ! -name '*.jpg'` antes de cada backup | SEC-25-01 e SEC-25-02 de `reviews/SPEC-025/r2-security-report.md` (R-14): a varredura imprime o nome cru e não confere `.JPG`/`.jpeg` |
+| 2026-10-20 | §10 nova: fotos de conhecidos e imagens externas (origens, guia e consentimento, numeração com o prefixo `X` para as externas, licenças, registro de fontes, privacidade automática e humana, passo a passo da importação, retirada). §3: `other` com imagens públicas só pela importação; §4: externas não contam para as metas; §5: `item_id` externo, `captured_at` e `capture_device` das importadas e `sources.csv`; §7: externas sempre no treino e fotos de conhecidos no teste só antes do `split_v1`; §8: `sources.csv` no backup, pasta de entrada nunca; §9: o dataset cresce também pela importação | Decisão do humano de 2026-10-19; ADR-020 (`Proposto`), SPECs 035 e 036 (`Draft`). Vale a partir do merge das duas SPECs |
