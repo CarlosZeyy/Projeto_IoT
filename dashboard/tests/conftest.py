@@ -185,6 +185,8 @@ class MockApi:
             )
         ]
         self.spc = spc_response()
+        # Origin of the SPC response; ``None`` echoes the ``source`` of the query, as the API does.
+        self.spc_source: Source | None = None
         self.inspections: list[InspectionRead] = [inspection()]
         self.inspections_total: int | None = None
         self.failure: Callable[[httpx.Request], httpx.Response] | None = None
@@ -208,7 +210,7 @@ class MockApi:
         if path == "/metrics/timeseries":
             return httpx.Response(200, json=[p.model_dump(mode="json") for p in self.timeseries])
         if path == "/metrics/spc":
-            source = Source(request.url.params["source"])
+            source = self.spc_source or Source(request.url.params["source"])
             body = self.spc.model_copy(update={"source": source})
             return httpx.Response(200, json=body.model_dump(mode="json"))
         if path == "/inspections":
