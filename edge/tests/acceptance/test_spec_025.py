@@ -1314,7 +1314,9 @@ MAIN_COLLECTED = {SPEC_022: 38, SPEC_023: 22}
 def _collected(path: Path) -> int:
     # `--collect-only` never touches the database: drop both variables of the SPEC-001 policy,
     # so the count is the same with or without `CI=true` / `TEST_DATABASE_URL` (r3 fix).
-    env = {k: v for k, v in os.environ.items() if k not in ("TEST_DATABASE_URL", "CI")}
+    # SPEC-030 section 4.6 (RV-08): the pytest variables of the outer run are dropped too.
+    dropped = ("TEST_DATABASE_URL", "CI", "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_CURRENT_TEST")
+    env = {k: v for k, v in os.environ.items() if k not in dropped}
     proc = subprocess.run(
         [
             sys.executable,
@@ -2645,7 +2647,9 @@ def test_extra_privacy_invalid_file_and_odd_entries(
     code, out, _ = run_privacy(["--dataset-dir", str(ds.root)], capsys)
     assert code == 1
     assert "raw/screw/fair/e.jpg: invalid" in out.splitlines()
-    assert out.splitlines()[-1] == "checked 4 images, 3 with private data"
+    assert "raw/screw/fair/notes.txt: invalid" in out.splitlines()  # SPEC-030 section 4.4
+    assert "raw/screw/fair/upper.JPG: app1" in out.splitlines()  # SPEC-030 section 4.4
+    assert out.splitlines()[-1] == "checked 6 images, 5 with private data"
     code, out, _ = run_privacy(["--dataset-dir", str(ds.root), "--fix"], capsys)
     assert code == 1  # an invalid file is left for the pair to delete
     assert "fixed raw/screw/fair/e.jpg" not in out
