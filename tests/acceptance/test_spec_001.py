@@ -468,8 +468,8 @@ AGENTS = {
     "security-devops": (
         "Segurança e DevOps do PartQC. Use (1) como portão de segurança para SPECs com tag "
         "security ou deploy, depois do reviewer, emitindo security-report PASS/FAIL; (2) como "
-        "autor da SPEC-015 (deploy em Render, Supabase, Streamlit Community Cloud e keep-alive) "
-        "e da manutenção de docs/deployment-plan.md.",
+        "autor da SPEC-015 (deploy na VPS pessoal com Docker Compose e Caddy, banco no Supabase, "
+        "Render como reserva e keep-alive) e da manutenção de docs/deployment-plan.md.",
         "Read, Grep, Glob, Bash, Write, Edit, WebSearch, WebFetch",
     ),
     "tester": (

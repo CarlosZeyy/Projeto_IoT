@@ -1,0 +1,21 @@
+# Caddy do PartQC (SPEC-015 §4.13, ADR-018). O endereço vem de PUBLIC_HOST (infra/.env):
+# nenhum domínio literal neste arquivo (R-13). HTTPS automático e redirecionamento de HTTP
+# para HTTPS são os padrões do Caddy. Sem bloco global e sem log de acesso.
+# /docs e /openapi.json da API não são roteados (ADR-018, decisão 4): caem no Streamlit.
+
+{$PUBLIC_HOST} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# O prefixo não é removido: as rotas da API já começam em /api/v1.
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Todo o resto, inclusive o WebSocket /_stcore/stream e /_stcore/health.
+	handle {
+		reverse_proxy dashboard:8501
+	}
+}

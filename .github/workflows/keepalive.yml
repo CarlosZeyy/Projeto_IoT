@@ -1,0 +1,36 @@
+# Keep-alive externo (SPEC-015 §4.2, ADR-008, ADR-018). O keep-alive principal é o healthcheck
+# do contêiner da API na VPS (SELECT 1 a cada 60 s). Este workflow é a verificação externa: um
+# job vermelho avisa que a VPS ou o banco caiu. A URL vem só do secret KEEPALIVE_URL (nada fixo
+# aqui). O curl roda em silêncio: uma mensagem de erro dele traria o nome do host para o log
+# público do Actions (R-13); só o código de saída é impresso.
+name: keepalive
+
+on:
+  schedule:
+    # A cada 3 dias, às 09:17 UTC: folga contra a pausa de 7 dias do Supabase Free.
+    - cron: "17 9 */3 * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    name: GET /api/v1/health
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Ping the API health endpoint
+        env:
+          KEEPALIVE_URL: ${{ secrets.KEEPALIVE_URL }}
+        run: |
+          if [ -z "${KEEPALIVE_URL}" ]; then
+            echo "::error::secret KEEPALIVE_URL is not set (Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+          rc=0
+          curl -fsS --retry 5 --retry-delay 30 -o /dev/null "${KEEPALIVE_URL}/api/v1/health" 2>/dev/null || rc=$?
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::GET /api/v1/health failed (curl exit code ${rc})"
+            exit 1
+          fi
+          echo "GET /api/v1/health: OK"

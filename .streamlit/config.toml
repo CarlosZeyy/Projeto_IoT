@@ -1,0 +1,16 @@
+# Configuração do Streamlit (SPEC-015 §4.4), lida da pasta de onde se roda o `streamlit run`:
+# a raiz do repositório localmente e /app na imagem. Sem segredos: a chave de leitura fica em
+# .streamlit/secrets.toml (local, fora do Git) ou no infra/.env.dashboard (VPS).
+# Endereço, porta, baseUrlPath e fileWatcherType ficam na linha de comando da imagem, e
+# enableCORS/enableXsrfProtection ficam nos padrões (ligados), que funcionam atrás do Caddy.
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+
+[client]
+# "none": o navegador recebe só uma mensagem genérica; tipo, mensagem e traceback vão para o
+# log do servidor (Streamlit 1.65.0, travado no uv.lock).
+showErrorDetails = "none"

@@ -1,0 +1,24 @@
+# Reserva fria da API no Render (SPEC-015 §4.1, ADR-018). Versionado, mas NÃO publicado no
+# deploy normal: só num incidente, pelo roteiro do docs/deployment-plan.md (§6). Plano free,
+# sem cartão (R-01). Os segredos são preenchidos no painel do Render na criação (sync: false),
+# nunca neste arquivo (R-03).
+services:
+  - type: web
+    name: partqc-api
+    runtime: python
+    plan: free
+    # Região: a mais próxima do projeto Supabase entre as do Render (docs/deployment-plan.md §2).
+    # A região não muda depois de criado o serviço.
+    region: virginia
+    branch: main
+    buildCommand: pip install uv && uv sync --package qc-api --frozen --no-dev
+    startCommand: uv run --package qc-api uvicorn qc_api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      # A mesma versão do Python da imagem base (infra/docker/api.Dockerfile)
+      - key: PYTHON_VERSION
+        value: "3.12.15"
+      - key: DATABASE_URL
+        sync: false
+      - key: READ_API_KEY
+        sync: false

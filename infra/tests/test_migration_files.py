@@ -102,7 +102,7 @@ def test_non_utf8_file_rejected_on_read(tmp_path: Path) -> None:
 
 
 def test_filename_pattern_is_the_spec_regex() -> None:
-    assert FILENAME_PATTERN.pattern == r"^\d{3}_[a-z0-9_]+\.sql$"
+    assert FILENAME_PATTERN.pattern == r"^[0-9]{3}_[a-z0-9_]+\.sql$"
 
 
 @pytest.mark.parametrize(
