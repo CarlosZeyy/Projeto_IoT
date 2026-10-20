@@ -226,7 +226,9 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 8. Um laço em segundo plano publica os pendentes com `HttpPublisher`:
    - em lotes de até 100 via `/inspections/batch`, timeout de 5 s;
    - backoff exponencial de 1 s até 60 s, com jitter;
-   - marca como enviado ao receber `created` ou `duplicate`.
+   - marca como enviado ao receber `created` ou `duplicate`;
+   - o timeout de 5 s vale por operação (conexão, escrita, cada leitura). A partir da SPEC-030, cada requisição tem também um prazo total de 15 s e lê no máximo 512 KiB de resposta (estourar vira retry), e um salto do relógio para trás não prende o retry nem o health check;
+   - um item recusado (413/422) vira `dead` e fica no arquivo. A partir da SPEC-034, `python -m qc_edge.requeue --outbox-path <arquivo> [--yes]` lista os `dead` e os devolve a `pending`, sem mudar o `payload` (a revalidação pelo contrato e a idempotência por `inspection_id` continuam).
 
 ### 6.3 Modo coleta (montagem do dataset)
 
@@ -238,7 +240,7 @@ Nada é enviado à nuvem e nenhuma inferência é feita. Formato do manifest em 
 
 A partir da SPEC-025 (pendências da SPEC-010):
 - o JPEG é gravado **sem** os segmentos APP1 (EXIF, XMP), APP13 (IPTC) e COM e sem nada depois do EOI, por varredura estrutural dos marcadores, sem reencodar (os pixels não mudam). Um JPEG com rotação EXIF (`Orientation` de 2 a 8) é recusado com 415, porque sem o APP1 o `qc_preprocess.load_image` deixaria de girá-lo (ADR-004); a página `/capture` nunca envia esse caso. As fotos de inspeção (`captures/`) continuam gravadas como chegaram, porque nunca saem do notebook;
-- `python -m qc_edge.privacy --dataset-dir <D> [--fix]` confere (e corrige) as imagens já gravadas, e acusa sem corrigir o achado `orientation` (foto a refazer pela página); roda antes de cada backup do dataset no Drive (`docs/dataset-protocol.md` §8);
+- `python -m qc_edge.privacy --dataset-dir <D> [--fix]` confere (e corrige) as imagens já gravadas, e acusa sem corrigir o achado `orientation` (foto a refazer pela página); roda antes de cada backup do dataset no Drive (`docs/dataset-protocol.md` §8). A partir da SPEC-030, confere `.jpg` e `.jpeg` em qualquer caixa, acusa como `invalid` qualquer outro arquivo de `raw/` (exceto os temporários `.*.tmp` da borda), imprime os caminhos com os caracteres de controle escapados e lista o arquivo ilegível como `unreadable`;
 - os diretórios recebem `fsync` depois do `rename` da imagem e da criação de diretórios, antes da linha do manifest;
 - `notes` recusa as categorias Unicode `Cc`, `Cs`, `Cf`, `Zl` e `Zp`, e o `capture_device` troca esses caracteres por espaço antes do corte em 60.
 
