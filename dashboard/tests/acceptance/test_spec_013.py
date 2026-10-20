@@ -328,12 +328,27 @@ def timeout_failure(request: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("timed out", request=request)
 
 
+class NoSecretsFile:
+    """Behaves like ``st.secrets`` when there is no ``secrets.toml`` anywhere (SPEC-029 §4.1).
+
+    Same pattern as ``NoSecretsFile`` in ``test_spec_028.py``, copied so that this file does not
+    import another test module.
+    """
+
+    def __contains__(self, key: object) -> bool:
+        raise FileNotFoundError("No secrets found")
+
+    def __getitem__(self, key: str) -> object:
+        raise FileNotFoundError("No secrets found")
+
+
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """No config from the environment, no secrets file, clean Streamlit caches."""
     for name in CONFIG_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(st, "secrets", NoSecretsFile())
     st.cache_data.clear()
     st.cache_resource.clear()
     yield
@@ -1303,7 +1318,7 @@ def test_extra_retry_while_still_down_is_bounded(fake: FakeApi) -> None:
     at.run()
     assert not at.exception
     assert WAKING in values(at.warning)
-    # The click rerun and the st.rerun() after clearing the cache: 2 attempts, then it stops.
+    # The click rerun and the st.rerun() of the button: 2 attempts, then it stops.
     assert len(fake.requests) <= 2
     fake.reset()
     at.run()

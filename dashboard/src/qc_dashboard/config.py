@@ -9,6 +9,7 @@ only for ``localhost`` or ``127.0.0.1``), so the key never travels in clear text
 from __future__ import annotations
 
 import os
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -87,11 +88,18 @@ def is_secure_api_url(url: str) -> bool:
     """``https://`` with a host, or ``http://`` with the host ``localhost`` or ``127.0.0.1``.
 
     ``urlsplit`` returns the scheme and ``hostname`` in lower case. Anything else (another
-    ``http://`` host, ``[::1]`` included; another scheme; no scheme; no host) is refused.
+    ``http://`` host, ``[::1]`` included; another scheme; no scheme; no host) is refused, and
+    so is a URL with a control character (category ``Cc``: C0, DEL and C1) or an invalid port
+    (not a number, or outside 0-65535), which would otherwise only fail in ``httpx.Client``
+    (SPEC-029 §4.3).
     """
+    # Before urlsplit, which silently drops "\t", "\n" and "\r" (bpo-43882).
+    if any(unicodedata.category(ch) == "Cc" for ch in url):
+        return False
     try:
         parts = urlsplit(url)
         host = parts.hostname
+        _ = parts.port  # raises ValueError for a port that is not a number or out of range
     except ValueError:
         return False
     if parts.scheme == "https":

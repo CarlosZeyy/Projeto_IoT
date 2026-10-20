@@ -4,10 +4,10 @@ One SPC request per render, with a single ``source``, and one figure (R-06): the
 ``simulated`` charts are never drawn together. The chart uses the whole history of the origin;
 the sidebar period does not apply.
 
-The badge follows only the chart origin, and the origin is always written under the title,
-outside the figure (SPEC-028 §4.3). In a new session the chart starts in ``Real``; it follows
-the sidebar (``Simulado`` there -> ``Simulado`` here; ``Real`` or ``Todos`` -> ``Real``), and the
-user can change it in the "Origem da carta" radio.
+The badge follows only the chart origin, requested or returned (SPEC-029 §4.2), and the origin
+is always written under the title, outside the figure (SPEC-028 §4.3). In a new session the
+chart starts in ``Real``; it follows the sidebar (``Simulado`` there -> ``Simulado`` here;
+``Real`` or ``Todos`` -> ``Real``), and the user can change it in the "Origem da carta" radio.
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ source = SOURCE_BY_ORIGIN[origin]
 
 # Badge if, and only if, the chart is simulated; no badge check through the API (§4.3).
 with badge_slot:
-    filters.render_chart_badge(source)
+    badge_shown = filters.render_chart_badge(source)
 origin_caption_slot.caption(filters.spc_origin_caption(source))
 
 with filters.api_guard():
@@ -126,6 +126,11 @@ with filters.api_guard():
         source, TYPE_BY_OPTION[type_option], baseline_lots, min_lot_size, max_points
     )
 origin_caption_slot.caption(filters.spc_origin_caption(spc.source))
+# Defence in depth (SPEC-029 §4.2): the origin the API returned also decides the badge, from the
+# response already read (no new request), and the badge is never shown twice.
+if not badge_shown:
+    with badge_slot:
+        filters.render_chart_badge(spc.source)
 
 if spc.excluded_lots:
     listed = ", ".join(f"{lot.lot_id} (n={lot.n})" for lot in spc.excluded_lots)

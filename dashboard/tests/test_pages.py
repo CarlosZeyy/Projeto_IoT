@@ -752,3 +752,72 @@ def test_model_page_missing_file_absolute_path(factory, no_config_env, monkeypat
     assert_clean(at)
     expected = f"Nenhum modelo avaliado ainda: metrics.json não encontrado em {missing}."
     assert texts(at.info) == [expected]
+
+
+# ---------- SPEC-029 §4.2: badge also by the returned chart origin ----------
+
+PERIOD_CAPTION = (
+    "A carta p usa todo o histórico da origem escolhida; o período da barra lateral não se aplica."
+)
+
+
+@pytest.mark.parametrize(
+    ("sidebar", "returned", "badges", "caption"),
+    [
+        ("Real", "simulated", 1, "Origem da carta: simulado"),
+        ("Real", "live", 0, "Origem da carta: real"),
+        ("Simulado", "simulated", 1, "Origem da carta: simulado"),
+        ("Todos", "simulated", 1, "Origem da carta: simulado"),
+    ],
+)
+def test_spc_badge_by_returned_origin(
+    factory, mock_api, sidebar: str, returned: str, badges: int, caption: str
+) -> None:
+    from qc_contracts import Source
+
+    mock_api.spc_source = Source(returned)
+    at = _spc_page(factory, sidebar)
+    assert_clean(at)
+    assert texts(at.warning).count(BADGE) == badges
+    assert texts(at.sidebar.caption).count(BADGE) == badges
+    assert caption in texts(at.caption)
+    assert len(mock_api.to("/metrics/spc")) == 1
+    assert mock_api.to("/metrics/summary") == []
+
+
+def test_spc_returned_badge_is_in_the_badge_slot(factory, mock_api) -> None:
+    from qc_contracts import Source
+
+    mock_api.spc_source = Source.SIMULATED
+    at = run(page(factory, "controle_estatistico"))
+    assert_clean(at)
+    # Title, origin caption, then the badge slot, before the period caption and the controls.
+    assert texts(at.main.children[2].warning) == [BADGE]
+    assert at.main.children[3].value == PERIOD_CAPTION
+
+
+# ---------- SPEC-029 §4.3: invalid port or control character on the pages ----------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.org:abc",
+        "https://api.example.org:99999",
+        "http://localhost:abc",
+        "http://local\thost:8001",
+        "https://api.exa\nmple.org",
+        "https://api.example.org\x7f",
+        "https://api.exa\x85mple.org",
+    ],
+)
+def test_malformed_url_stops_the_overview(
+    factory, no_config_env, monkeypatch, recorded_sends, url: str
+) -> None:
+    monkeypatch.setenv("API_BASE_URL", url)
+    monkeypatch.setenv("READ_API_KEY", factory.new_key())
+    at = run(page(factory, "visao_geral"))
+    assert_clean(at)
+    assert texts(at.error) == [INSECURE]
+    assert recorded_sends == []
+    assert charts(at) == []
