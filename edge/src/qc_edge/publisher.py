@@ -18,14 +18,22 @@ Errors map to three exceptions:
 
 The device key never appears in a message built here: it is replaced by ``***`` in any text that
 comes from ``httpx`` (R-03).
+
+Besides the ``httpx`` timeout of 5 s per operation (connect, write, each read), every batch
+request has a total deadline of 15 s and reads at most 512 KiB of response (SPEC-030 section
+4.1): the body is streamed, and only read for 2xx, 413 and 422; after each chunk, an elapsed time
+above the deadline or a total above the cap closes the response and raises
+``PublishTransientError`` with a fixed message, so the loop retries later. The deadline uses
+``time.monotonic`` (injectable), never the wall clock. ``check_health`` never reads the body.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import UUID
@@ -42,6 +50,10 @@ API_KEY_HEADER = "X-API-Key"
 BATCH_PATH = "/api/v1/inspections/batch"
 HEALTH_PATH = "/api/v1/health"
 DEFAULT_TIMEOUT_S = 5.0
+REQUEST_DEADLINE_S = 15.0
+MAX_RESPONSE_BYTES = 512 * 1024  # above the 256 KB of input that the API echoes in a 422
+DEADLINE_EXCEEDED = "request deadline exceeded"
+RESPONSE_TOO_LARGE = "response too large"
 MAX_DETAIL_CHARS = 200
 REDACTED = "***"
 
@@ -113,10 +125,14 @@ def check_api_key(api_key: str) -> None:
 class HttpPublisher:
     """``Publisher`` over HTTPS (``http://`` only for ``localhost`` and ``127.0.0.1``).
 
+    ``deadline_s`` (total time of a batch request, checked after each chunk of the response
+    body) and ``max_response_bytes`` (cap of the body read) come from SPEC-030 section 4.1;
+    ``monotonic`` is injectable for the tests.
+
     Raises:
         ValueError: ``base_url`` is not accepted by ``check_cloud_api_url``, the key is empty or
-            not visible ASCII, or ``timeout_s`` is not positive. The messages never contain the
-            key.
+            not visible ASCII, or ``timeout_s``, ``deadline_s`` or ``max_response_bytes`` is not
+            positive. The messages never contain the key.
     """
 
     def __init__(
@@ -125,12 +141,23 @@ class HttpPublisher:
         api_key: str,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         transport: httpx.BaseTransport | None = None,
+        *,
+        deadline_s: float = REQUEST_DEADLINE_S,
+        max_response_bytes: int = MAX_RESPONSE_BYTES,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._base_url = check_cloud_api_url(base_url)
         check_api_key(api_key)
         if not timeout_s > 0:
             raise ValueError("timeout_s must be > 0")
+        if not deadline_s > 0:
+            raise ValueError("deadline_s must be > 0")
+        if not max_response_bytes > 0:
+            raise ValueError("max_response_bytes must be > 0")
         self._api_key = api_key
+        self._deadline_s = deadline_s
+        self._max_response_bytes = max_response_bytes
+        self._monotonic = monotonic
         self._client = httpx.Client(timeout=timeout_s, transport=transport, follow_redirects=False)
 
     def _redact(self, text: str) -> str:
@@ -146,32 +173,59 @@ class HttpPublisher:
         if not 1 <= len(items) <= MAX_BATCH_SIZE:
             raise ValueError(f"a batch has 1 to {MAX_BATCH_SIZE} items, got {len(items)}")
         body = BatchCreate(items=list(items)).model_dump_json()
+        start = self._monotonic()
+        content: bytes | None = None
         try:
-            response = self._client.post(
+            with self._client.stream(
+                "POST",
                 self._base_url + BATCH_PATH,
                 content=body.encode("utf-8"),
                 headers={"Content-Type": "application/json", API_KEY_HEADER: self._api_key},
-            )
+            ) as response:
+                status_code = response.status_code
+                if status_code in REJECTED_STATUSES or 200 <= status_code < 300:
+                    content = self._read_body(response, start)
         except httpx.HTTPError as exc:
             raise PublishTransientError(self._describe(exc)) from None
 
-        status_code = response.status_code
+        # The response is closed here: the body (when needed) was read inside the block.
         if status_code in AUTH_STATUSES:
             raise PublishAuthError(f"HTTP {status_code}")
         if status_code in REJECTED_STATUSES:
-            raise PublishRejectedError(refusal_summary(status_code, response.content))
+            raise PublishRejectedError(refusal_summary(status_code, content or b""))
         if not 200 <= status_code < 300:
             raise PublishTransientError(f"HTTP {status_code}")
-        return _parse_results(response.content, items)
+        return _parse_results(content or b"", items)
+
+    def _read_body(self, response: httpx.Response, start: float) -> bytes:
+        """The body of ``response``, chunk by chunk, within the deadline and the byte cap.
+
+        Raises:
+            PublishTransientError: ``request deadline exceeded`` or ``response too large``
+                (fixed messages, without URL, key or body); the response is closed first.
+            httpx.HTTPError: a network error while reading.
+        """
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_bytes():
+            total += len(chunk)
+            if self._monotonic() - start > self._deadline_s:
+                response.close()
+                raise PublishTransientError(DEADLINE_EXCEEDED)
+            if total > self._max_response_bytes:
+                response.close()
+                raise PublishTransientError(RESPONSE_TOO_LARGE)
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def check_health(self) -> bool:
-        """``GET /api/v1/health`` (no key); ``True`` only with 200."""
+        """``GET /api/v1/health`` (no key); ``True`` only with 200. The body is never read."""
         try:
-            response = self._client.get(self._base_url + HEALTH_PATH)
+            with self._client.stream("GET", self._base_url + HEALTH_PATH) as response:
+                return response.status_code == 200
         except httpx.HTTPError as exc:
             logger.info("cloud health check failed: %s", self._describe(exc))
             return False
-        return response.status_code == 200
 
     def close(self) -> None:
         self._client.close()

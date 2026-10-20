@@ -1,4 +1,7 @@
-"""HTTP publisher (SPEC-009 section 4.2): request shape, status mapping, refusal summary."""
+"""HTTP publisher (SPEC-009 section 4.2): request shape, status mapping, refusal summary.
+
+SPEC-030 section 4.1: total deadline and byte cap of the response.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +17,8 @@ from qc_contracts import BatchCreate
 from qc_edge.publisher import (
     BATCH_PATH,
     HEALTH_PATH,
+    MAX_RESPONSE_BYTES,
+    REQUEST_DEADLINE_S,
     HttpPublisher,
     PublishAuthError,
     PublishRejectedError,
@@ -290,3 +295,191 @@ def test_default_timeout_is_5_seconds() -> None:
         assert publisher._client.timeout == httpx.Timeout(5.0)
     finally:
         publisher.close()
+
+
+# -- deadline and byte cap (SPEC-030 section 4.1) ------------------------------------------------
+
+
+class FakeMonotonic:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class ChunkStream(httpx.SyncByteStream):
+    """Response body in ``chunks``; each chunk advances ``clock`` by ``step_s`` first."""
+
+    def __init__(
+        self,
+        chunks: list[bytes],
+        clock: FakeMonotonic | None = None,
+        step_s: float = 0.0,
+        error: Exception | None = None,
+    ) -> None:
+        self.chunks = chunks
+        self.clock = clock
+        self.step_s = step_s
+        self.error = error
+        self.delivered = 0
+        self.closed = False
+
+    def __iter__(self) -> Any:
+        for chunk in self.chunks:
+            if self.clock is not None:
+                self.clock.now += self.step_s
+            self.delivered += 1
+            yield chunk
+        if self.error is not None:
+            raise self.error
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def streaming_publisher(
+    status: int, stream: ChunkStream, key: str | None = None, **options: Any
+) -> HttpPublisher:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, stream=stream)
+
+    return HttpPublisher(
+        BASE, key or device_key(), transport=httpx.MockTransport(handler), **options
+    )
+
+
+def results_body(items: list[Any]) -> bytes:
+    results = [{"inspection_id": str(i.inspection_id), "status": "created"} for i in items]
+    return json.dumps({"results": results}).encode()
+
+
+def test_defaults_of_the_deadline_and_the_cap() -> None:
+    assert REQUEST_DEADLINE_S == 15.0
+    assert MAX_RESPONSE_BYTES == 512 * 1024
+
+
+def test_a_slow_body_exceeds_the_deadline(fake_cloud: types.ModuleType) -> None:
+    clock = FakeMonotonic()
+    stream = ChunkStream([b"x"] * 10, clock, step_s=4.0)
+    key = device_key()
+    pub = streaming_publisher(200, stream, key, monotonic=clock)
+    with pytest.raises(PublishTransientError) as excinfo:
+        pub.publish_batch([fake_cloud.make_inspection()])
+    message = str(excinfo.value)
+    assert message == "request deadline exceeded"
+    assert stream.delivered <= 5
+    assert stream.closed
+    assert key not in message and "cloud.test" not in message
+    assert excinfo.value.__cause__ is None
+
+
+def test_a_body_within_the_deadline_is_read(fake_cloud: types.ModuleType) -> None:
+    clock = FakeMonotonic()
+    item = fake_cloud.make_inspection()
+    body = results_body([item])
+    chunks = [body[i : i + 10] for i in range(0, len(body), 10)]
+    step = 15.0 / len(chunks)  # exactly 15 s after the last chunk: not above the deadline
+    stream = ChunkStream(chunks, clock, step_s=step)
+    pub = streaming_publisher(200, stream, monotonic=clock)
+    assert pub.publish_batch([item]) == [PublishResult(item.inspection_id, "created")]
+    assert stream.delivered == len(chunks)
+
+
+def test_the_deadline_is_configurable(fake_cloud: types.ModuleType) -> None:
+    clock = FakeMonotonic()
+    stream = ChunkStream([b"{", b"}"], clock, step_s=2.0)
+    pub = streaming_publisher(200, stream, monotonic=clock, deadline_s=1.0)
+    with pytest.raises(PublishTransientError, match="^request deadline exceeded$"):
+        pub.publish_batch([fake_cloud.make_inspection()])
+    assert stream.delivered == 1
+
+
+def test_a_body_above_the_cap_is_too_large(fake_cloud: types.ModuleType) -> None:
+    data = b"x" * (512 * 1024 + 1)
+    stream = ChunkStream([data[i : i + 65536] for i in range(0, len(data), 65536)])
+    key = device_key()
+    with pytest.raises(PublishTransientError) as excinfo:
+        streaming_publisher(200, stream, key).publish_batch([fake_cloud.make_inspection()])
+    assert str(excinfo.value) == "response too large"
+    assert stream.delivered <= 9
+    assert stream.closed
+    assert key not in str(excinfo.value)
+
+
+def test_a_body_of_exactly_the_cap_is_read(fake_cloud: types.ModuleType) -> None:
+    data = b" " * (512 * 1024)  # read in full, then refused as malformed (not too large)
+    stream = ChunkStream([data[i : i + 65536] for i in range(0, len(data), 65536)])
+    with pytest.raises(PublishTransientError, match="malformed"):
+        streaming_publisher(200, stream).publish_batch([fake_cloud.make_inspection()])
+    assert stream.delivered == 8
+
+
+def test_the_cap_is_configurable(fake_cloud: types.ModuleType) -> None:
+    stream = ChunkStream([b"abc", b"de"])
+    pub = streaming_publisher(200, stream, max_response_bytes=4)
+    with pytest.raises(PublishTransientError, match="^response too large$"):
+        pub.publish_batch([fake_cloud.make_inspection()])
+
+
+def test_a_large_422_still_gives_the_summary(fake_cloud: types.ModuleType) -> None:
+    marker = "marker-" + secrets.token_hex(8)
+    errors = [
+        {"type": "x", "loc": ["body", "items", 0], "msg": "bad", "input": marker * 9000},
+        {"type": "y", "loc": ["body", "items", 1], "msg": "bad", "input": "z" * 110_000},
+    ]
+    body = json.dumps({"detail": errors}).encode()
+    assert 300 * 1024 <= len(body) <= 512 * 1024
+    stream = ChunkStream([body[i : i + 65536] for i in range(0, len(body), 65536)])
+    with pytest.raises(PublishRejectedError) as excinfo:
+        streaming_publisher(422, stream).publish_batch([fake_cloud.make_inspection()])
+    assert excinfo.value.detail == "HTTP 422: 2 validation errors"
+    assert marker not in repr(excinfo.value)
+    assert stream.closed
+
+
+@pytest.mark.parametrize("status", [413, 422])
+def test_a_refusal_above_the_cap_is_transient(status: int, fake_cloud: types.ModuleType) -> None:
+    stream = ChunkStream([b"x" * 65536] * 9)
+    with pytest.raises(PublishTransientError, match="^response too large$"):
+        streaming_publisher(status, stream).publish_batch([fake_cloud.make_inspection()])
+
+
+@pytest.mark.parametrize("status", [301, 401, 403, 404, 429, 500, 503])
+def test_other_statuses_never_read_the_body(status: int, fake_cloud: types.ModuleType) -> None:
+    stream = ChunkStream([b"x" * 65536] * 20)
+    with pytest.raises((PublishAuthError, PublishTransientError), match=f"^HTTP {status}$"):
+        streaming_publisher(status, stream).publish_batch([fake_cloud.make_inspection()])
+    assert stream.delivered == 0
+    assert stream.closed
+
+
+def test_check_health_never_reads_the_body() -> None:
+    stream = ChunkStream([b"x" * 65536] * 20)
+    assert streaming_publisher(200, stream).check_health() is True
+    assert stream.delivered == 0
+    assert stream.closed
+
+
+def test_a_network_error_while_reading_is_transient(fake_cloud: types.ModuleType) -> None:
+    key = device_key()
+    stream = ChunkStream([b"{"], error=httpx.ReadTimeout("read timed out " + key))
+    with pytest.raises(PublishTransientError) as excinfo:
+        streaming_publisher(200, stream, key).publish_batch([fake_cloud.make_inspection()])
+    assert "ReadTimeout" in str(excinfo.value)
+    assert key not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"deadline_s": 0},
+        {"deadline_s": -1.0},
+        {"max_response_bytes": 0},
+        {"max_response_bytes": -1},
+    ],
+)
+def test_deadline_and_cap_must_be_positive(options: dict[str, Any]) -> None:
+    (name,) = options
+    with pytest.raises(ValueError, match=name):
+        HttpPublisher(BASE, device_key(), **options)
