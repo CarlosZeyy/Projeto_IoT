@@ -17,6 +17,18 @@ every backup of the dataset to the Drive (``docs/dataset-protocol.md`` section 8
 * An invalid ``--dataset-dir`` or an unknown argument exits with 2; only option names are
   logged, never a value (R-03).
 
+Since SPEC-030 (sections 4.4 and 4.5):
+
+* every regular file of ``raw/`` whose name ends with ``.jpg`` or ``.jpeg`` in any case is
+  checked (and fixed, keeping its name); any other regular file (``.png``, ``.heic``, no
+  extension...) gets the finding ``invalid`` without being read. The temporary files of the edge
+  itself (name starting with ``.`` and ending with ``.tmp``) are ignored;
+* every path written to stdout or to the log goes through ``printable_path``, which escapes the
+  control, format, surrogate and line/paragraph separator characters, so a file name cannot
+  forge an output line or drive the terminal;
+* a file that cannot be read is listed as ``<path>: unreadable`` (besides the error log); it is
+  not counted and makes the exit code 1.
+
 The output (stdout) shows paths relative to ``<D>`` and the fixed finding names, never the
 content of a segment (GPS, device, date) nor an absolute path. Errors go to ``logging``. Nothing
 here opens a network connection (R-02).
@@ -28,6 +40,7 @@ import logging
 import os
 import stat
 import sys
+import unicodedata
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,9 +62,39 @@ EXIT_CLEAN = 0
 EXIT_FINDINGS = 1
 FINDING_INVALID = "invalid"
 FINDING_ORIENTATION = "orientation"
+UNREADABLE = "unreadable"
 # Findings that ``--fix`` never rewrites: the file stays and the exit code is 1.
 UNFIXABLE_FINDINGS = frozenset({FINDING_INVALID, FINDING_ORIENTATION})
-IMAGE_SUFFIX = ".jpg"
+JPEG_SUFFIXES = (".jpg", ".jpeg")  # compared with the lowercase name
+TEMPORARY_PREFIX = "."
+TEMPORARY_SUFFIX = ".tmp"  # ``write_private_file_atomically`` (``mkstemp``) of ``qc_edge.collect``
+_ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+
+
+def printable_path(relative: str) -> str:
+    """``relative`` safe for a terminal or a log line (SPEC-030 section 4.5).
+
+    ``\\`` becomes ``\\\\``, and each character of the Unicode categories ``Cc``, ``Cf``,
+    ``Cs``, ``Zl`` and ``Zp`` becomes ``\\xHH`` (code up to 0xFF), ``\\uHHHH`` (up to 0xFFFF) or
+    ``\\UHHHHHHHH``, in lowercase hexadecimal. Every other character, accented letters included,
+    is kept. A name with bytes that are not UTF-8 reaches Python with surrogates
+    (``surrogateescape``, category ``Cs``) and comes out escaped.
+    """
+    parts: list[str] = []
+    for char in relative:
+        if char == "\\":
+            parts.append("\\\\")
+        elif unicodedata.category(char) in _ESCAPED_CATEGORIES:
+            code = ord(char)
+            if code <= 0xFF:
+                parts.append(f"\\x{code:02x}")
+            elif code <= 0xFFFF:
+                parts.append(f"\\u{code:04x}")
+            else:
+                parts.append(f"\\U{code:08x}")
+        else:
+            parts.append(char)
+    return "".join(parts)
 
 
 @dataclass(frozen=True)
@@ -64,16 +107,29 @@ class ImageFinding:
 
     @property
     def line(self) -> str:
-        return f"{self.relative}: {', '.join(sorted(self.findings))}"
+        return f"{printable_path(self.relative)}: {', '.join(sorted(self.findings))}"
 
 
-def _images(dataset_dir: Path) -> Iterator[tuple[Path, str]]:
-    """Regular ``*.jpg`` files under ``raw/``, in path order; symlinks are never followed."""
+def is_jpeg_name(name: str) -> bool:
+    """``True`` for a name ending with ``.jpg`` or ``.jpeg`` in any case."""
+    return name.lower().endswith(JPEG_SUFFIXES)
+
+
+def is_edge_temporary(name: str) -> bool:
+    """``True`` for a temporary file of the edge (``.<name>.<random>.tmp``)."""
+    return name.startswith(TEMPORARY_PREFIX) and name.endswith(TEMPORARY_SUFFIX)
+
+
+def _files(dataset_dir: Path) -> Iterator[tuple[Path, str]]:
+    """Regular files under ``raw/``, in path order, except the edge temporaries.
+
+    Symlinks, directories and special files are never followed nor returned.
+    """
     raw = dataset_dir / RAW_SUBDIR
     found: list[tuple[str, Path]] = []
     for directory, _, files in os.walk(raw, followlinks=False):
         for name in files:
-            if not name.endswith(IMAGE_SUFFIX):
+            if is_edge_temporary(name):
                 continue
             path = Path(directory) / name
             try:
@@ -112,7 +168,7 @@ def _fix(item: ImageFinding, data: bytes, dataset_dir: Path) -> bool:
         )
     except (OSError, jpeg.JpegStructureError) as exc:
         reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else type(exc).__name__
-        logger.error("cannot fix %s: %s", item.relative, reason)
+        logger.error("cannot fix %s: %s", printable_path(item.relative), reason)
         return False
     return True
 
@@ -122,15 +178,21 @@ def scan(dataset_dir: Path, *, fix: bool, out: TextIO) -> int:
     checked = 0
     with_findings = 0
     remaining = False
-    for path, relative in _images(dataset_dir):
-        try:
-            data = _read(path)
-        except OSError as exc:
-            logger.error("cannot read %s: %s", relative, exc.strerror or type(exc).__name__)
-            remaining = True
-            continue
+    for path, relative in _files(dataset_dir):
+        shown = printable_path(relative)
+        if is_jpeg_name(path.name):
+            try:
+                data = _read(path)
+            except OSError as exc:
+                logger.error("cannot read %s: %s", shown, exc.strerror or type(exc).__name__)
+                out.write(f"{shown}: {UNREADABLE}\n")
+                remaining = True
+                continue
+            findings = _findings(data)
+        else:  # not a JPEG: never read (SPEC-030 section 4.4)
+            data = b""
+            findings = frozenset({FINDING_INVALID})
         checked += 1
-        findings = _findings(data)
         if not findings:
             continue
         with_findings += 1
@@ -140,7 +202,7 @@ def scan(dataset_dir: Path, *, fix: bool, out: TextIO) -> int:
             remaining = True
             continue
         if _fix(item, data, dataset_dir):
-            out.write(f"fixed {relative}\n")
+            out.write(f"fixed {shown}\n")
         else:
             remaining = True
     out.write(f"checked {checked} images, {with_findings} with private data\n")

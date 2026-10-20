@@ -44,6 +44,8 @@ Clock = Callable[[], datetime]
 OUTBOX_FILE_NAME = "outbox.sqlite3"
 MAX_LAST_ERROR = 500
 DEFAULT_FETCH_LIMIT = 100
+DEFAULT_MAX_DELAY_S = 60.0
+"""Longest backoff delay (``MAX_DELAY_S`` of ``qc_edge.publish_loop``, SPEC-009 section 4.3)."""
 
 STATUS_PENDING = "pending"
 STATUS_SENT = "sent"
@@ -171,20 +173,28 @@ class SqliteOutbox:
         except sqlite3.Error as exc:
             raise SinkError(f"outbox write failed ({type(exc).__name__})") from exc
 
-    def fetch_due(self, limit: int = DEFAULT_FETCH_LIMIT) -> list[OutboxItem]:
-        """Pending rows with ``next_attempt_at <= now``, oldest ``created_at`` first.
+    def fetch_due(
+        self, limit: int = DEFAULT_FETCH_LIMIT, *, max_delay_s: float = DEFAULT_MAX_DELAY_S
+    ) -> list[OutboxItem]:
+        """Pending rows that are due, oldest ``created_at`` first (SPEC-030 section 4.2).
 
-        Rows with the same ``created_at`` keep their insertion order.
+        A row is due when ``next_attempt_at <= now`` or ``next_attempt_at > now + max_delay_s``.
+        The backoff never schedules more than ``max_delay_s`` ahead, so the second case only
+        happens after the wall clock jumped back; without it the row would wait the delay plus
+        the size of the jump. Rows with the same ``created_at`` keep their insertion order.
         """
         if limit < 1:
             return []
-        now = self._now()
+        now = self._clock()
+        now_text = format_timestamp(now)
+        horizon = format_timestamp(now + timedelta(seconds=max_delay_s))
         with self._lock:
             rows = self._conn.execute(
                 "SELECT inspection_id, payload, created_at, attempts, next_attempt_at "
-                "FROM outbox WHERE status = 'pending' AND next_attempt_at <= ? "
+                "FROM outbox WHERE status = 'pending' "
+                "AND (next_attempt_at <= ? OR next_attempt_at > ?) "
                 "ORDER BY created_at, rowid LIMIT ?",
-                (now, limit),
+                (now_text, horizon, limit),
             ).fetchall()
         return [
             OutboxItem(

@@ -1021,6 +1021,11 @@ def test_extra_cloud_url_accepted(
     assert len(spy.calls) == 1
 
 
+# SPEC-030 section 4.6: the credential is built at run time (generated password), never a literal.
+CREDENTIAL_PASSWORD = secrets.token_hex(8)
+CREDENTIAL_URL = "https://user:" + CREDENTIAL_PASSWORD + "@api.exemplo.org"
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -1032,7 +1037,7 @@ def test_extra_cloud_url_accepted(
         "ftp://api.exemplo.org",
         "api.exemplo.org",
         "https://",
-        "https://user:pw@api.exemplo.org",
+        pytest.param(CREDENTIAL_URL, id="credential-in-url"),
         "https://api.exemplo.org/?next=x",
     ],
 )
@@ -1055,8 +1060,8 @@ def test_extra_cloud_url_refused_with_or_without_stub(
     text = "\n".join([log_text(caplog), out.out, out.err])
     assert "CLOUD_API_URL" in text
     assert spy.calls == []
-    if "user:pw" in url:
-        assert "user:pw" not in text  # a credential in the URL is never echoed
+    if url == CREDENTIAL_URL:
+        assert CREDENTIAL_PASSWORD not in text  # a credential in the URL is never echoed
 
 
 def test_extra_empty_cloud_url_means_not_set(

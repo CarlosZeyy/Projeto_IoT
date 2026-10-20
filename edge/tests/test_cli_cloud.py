@@ -242,10 +242,15 @@ def test_loop_with_key_and_local_url(
     assert device_key not in caplog.text
 
 
-@pytest.mark.parametrize("url", ["http://api.exemplo.org", "https://user:pw@api.exemplo.org"])
+@pytest.mark.parametrize("credentials", [False, True], ids=["plain-http", "credentials"])
 def test_invalid_cloud_url_exits_2(
-    spy: _Spy, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, url: str
+    spy: _Spy, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, credentials: bool
 ) -> None:
+    # The URL with credentials is built at run time (no literal credential, SPEC-030 section 4.3).
+    password = secrets.token_hex(4)
+    url = (
+        "https://user:" + password + "@api.exemplo.org" if credentials else "http://api.exemplo.org"
+    )
     monkeypatch.setenv("DEVICE_API_KEY", key())
     monkeypatch.setenv("CLOUD_API_URL", url)
     with caplog.at_level(logging.INFO, logger="qc_edge"), pytest.raises(SystemExit) as excinfo:
@@ -254,6 +259,7 @@ def test_invalid_cloud_url_exits_2(
     assert "CLOUD_API_URL" in caplog.text
     assert url not in caplog.text
     assert "api.exemplo.org" not in caplog.text
+    assert password not in caplog.text
     assert spy.app is None
 
 

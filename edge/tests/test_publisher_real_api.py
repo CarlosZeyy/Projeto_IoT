@@ -1,7 +1,10 @@
 """Publisher against the real ``qc-api`` on the test database (SPEC-009 section 4.2, SPEC-004).
 
-The ``qc_api`` app runs in process (``TestClient`` transport, never the network) over
-``TEST_DATABASE_URL`` (``db`` marker: skipped without it). It checks what the fake cloud of the
+The ``qc_api`` app runs in process (a ``TestClient``, never the network) over
+``TEST_DATABASE_URL`` (``db`` marker: skipped without it). The publisher reaches it through
+``TestClientTransport``, which uses only the public API of the ``TestClient`` (SPEC-030 section
+4.3), so it works whether Starlette builds the ``TestClient`` on ``httpx`` or on ``httpx2`` (the
+``train`` extra installs the latter). It checks what the fake cloud of the
 other tests only imitates: the ``BatchResult`` of the real route, ``duplicate`` on a resend, 401
 for an unknown key, and the real 422 ``Value cannot be stored`` (a ``real`` column underflow)
 isolated by the bisection.
@@ -20,6 +23,7 @@ import pytest
 
 pytest.importorskip("qc_api")
 
+import httpx  # noqa: E402
 import psycopg  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -48,9 +52,47 @@ def api(clean_db: str) -> Iterator[tuple[TestClient, str]]:
         yield client, key
 
 
+# Headers that describe the connection or the encoding of one hop, not the message.
+_HOP_HEADERS = frozenset(
+    {"host", "connection", "content-length", "content-encoding", "transfer-encoding"}
+)
+
+
+class TestClientTransport(httpx.BaseTransport):
+    """``httpx`` transport that forwards each request to a ``TestClient`` by its public API.
+
+    The response comes back as an ``httpx.Response`` with the status, the headers and the body
+    the app returned (already decoded, hence without ``content-encoding``).
+    """
+
+    __test__ = False  # not a test class, despite the name
+
+    def __init__(self, client: TestClient) -> None:
+        self._client = client
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        headers = {
+            name: value
+            for name, value in request.headers.items()
+            if name.lower() not in _HOP_HEADERS
+        }
+        answer: Any = self._client.request(
+            request.method,
+            str(request.url),
+            headers=headers,
+            content=request.read(),
+            follow_redirects=False,
+        )
+        response_headers = [
+            (name, value)
+            for name, value in answer.headers.items()
+            if name.lower() not in _HOP_HEADERS
+        ]
+        return httpx.Response(answer.status_code, headers=response_headers, content=answer.content)
+
+
 def publisher(client: TestClient, key: str) -> HttpPublisher:
-    transport: Any = client._transport  # the in-process ASGI transport of the TestClient
-    return HttpPublisher(BASE, key, transport=transport)
+    return HttpPublisher(BASE, key, transport=TestClientTransport(client))
 
 
 def stored_ids(conninfo: str) -> set[str]:

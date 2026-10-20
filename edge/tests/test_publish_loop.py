@@ -533,3 +533,91 @@ def test_app_lifespan_starts_and_stops_the_thread(
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         conn.close()
+
+
+# -- SPEC-030: deadline as a transient error, wall clock jumping back -----------------------------
+
+
+class _SlowStream(httpx.SyncByteStream):
+    """200 whose body arrives 1 byte per chunk, each chunk 4 s later on the fake monotonic clock."""
+
+    def __init__(self, monotonic: list[float]) -> None:
+        self.monotonic = monotonic
+
+    def __iter__(self) -> Any:
+        for _ in range(10):
+            self.monotonic[0] += 4.0
+            yield b"x"
+
+
+def test_a_deadline_is_a_retry_and_nothing_is_lost(
+    tmp_path: Path, fake_cloud: types.ModuleType
+) -> None:
+    monotonic = [0.0]
+    slow = {"on": True}
+    cloud = fake_cloud.FakeCloud()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if slow["on"]:
+            cloud.requests.append(request)
+            return httpx.Response(200, stream=_SlowStream(monotonic))
+        return cloud.handle(request)
+
+    env = Env(tmp_path, fake_cloud)
+    env.publisher.close()
+    env.publisher = HttpPublisher(
+        fake_cloud.BASE_URL,
+        env.key,
+        transport=httpx.MockTransport(handler),
+        monotonic=lambda: monotonic[0],
+    )
+    env.loop = PublishLoop(
+        env.outbox, env.publisher, env.state, clock=env.clock, rng=random.Random(0)
+    )
+    try:
+        items = env.put(3)
+        env.loop.run_once()
+        rows = env.rows()
+        assert [rows[i.inspection_id]["status"] for i in items] == ["pending"] * 3
+        assert [rows[i.inspection_id]["attempts"] for i in items] == [1] * 3
+        assert {rows[i.inspection_id]["last_error"] for i in items} == {"request deadline exceeded"}
+        assert env.state.connectivity == "offline"
+        slow["on"] = False
+        env.clock.advance(2)
+        env.loop.run_once()
+        assert env.outbox.stats().pending == 0
+        assert len(cloud.stored) == 3
+        assert set(cloud.stored) == {item.inspection_id for item in items}
+    finally:
+        env.publisher.close()
+        env.outbox.close()
+
+
+def test_a_retry_is_not_held_by_a_clock_jump_back(env: Env) -> None:
+    env.cloud.fail = lambda request, items: httpx.ConnectError("refused")
+    (item,) = env.put(1)
+    env.loop.run_once()
+    next_at = parse_timestamp(env.rows()[item.inspection_id]["next_attempt_at"])
+    assert timedelta(seconds=0.8) <= next_at - env.clock.now <= timedelta(seconds=1.2)
+    env.cloud.fail = None
+    env.clock.advance(-3600)
+    env.loop.run_once()
+    assert env.rows()[item.inspection_id]["status"] == "sent"
+    assert env.cloud.writes == [item.inspection_id]
+
+
+def test_a_health_check_after_a_clock_jump_back(env: Env) -> None:
+    env.loop._last_contact = None  # as after start(): the first idle cycle checks the cloud
+    env.loop.run_once()  # health check at T (last contact T)
+    assert len(env.cloud.health_requests) == 1
+    env.clock.advance(-3600)
+    env.loop.run_once()
+    assert len(env.cloud.health_requests) == 2
+    env.loop.run_once()  # same instant: 0 s since the last contact
+    assert len(env.cloud.requests) == 2
+    env.clock.advance(59)
+    env.loop.run_once()
+    assert len(env.cloud.requests) == 2
+    env.clock.advance(1)
+    env.loop.run_once()
+    assert len(env.cloud.health_requests) == 3
