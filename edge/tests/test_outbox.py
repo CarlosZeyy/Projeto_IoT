@@ -412,3 +412,59 @@ def test_committed_puts_survive_sigkill(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         conn.close()
+
+
+# -- wall clock jumping back (SPEC-030 section 4.2) ----------------------------------------------
+
+
+def test_fetch_due_returns_a_row_scheduled_beyond_the_longest_delay(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any
+) -> None:
+    edge, beyond, near = (fake_cloud.make_inspection() for _ in range(3))
+    for inspection in (edge, beyond, near):
+        outbox.put(inspection)
+    outbox.mark_retry([edge.inspection_id], "boom", lambda n: 60.0)
+    outbox.mark_retry([beyond.inspection_id], "boom", lambda n: 60.000001)
+    outbox.mark_retry([near.inspection_id], "boom", lambda n: 1.0)
+    # now + 60 s exactly is still a normal backoff; anything after it is a jump back.
+    assert [item.inspection_id for item in outbox.fetch_due(max_delay_s=60)] == [
+        beyond.inspection_id
+    ]
+    assert outbox.fetch_due() == outbox.fetch_due(max_delay_s=60.0)
+    assert [item.inspection_id for item in outbox.fetch_due(max_delay_s=0.5)] == [
+        edge.inspection_id,
+        beyond.inspection_id,
+        near.inspection_id,
+    ]
+
+
+def test_fetch_due_after_the_clock_jumped_back(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any
+) -> None:
+    inspection = fake_cloud.make_inspection()
+    outbox.put(inspection)
+    outbox.mark_retry([inspection.inspection_id], "boom", lambda n: 1.0)
+    assert outbox.fetch_due() == []
+    clock.advance(-3600)
+    (item,) = outbox.fetch_due(max_delay_s=60)
+    assert item.inspection_id == inspection.inspection_id
+    assert item.attempts == 1
+
+
+def test_fetch_due_never_returns_sent_or_dead_rows_after_a_jump(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any
+) -> None:
+    sent, dead = fake_cloud.make_inspection(), fake_cloud.make_inspection()
+    outbox.put(sent)
+    outbox.put(dead)
+    outbox.mark_sent([sent.inspection_id])
+    outbox.mark_dead(dead.inspection_id, "HTTP 422")
+    clock.advance(-3600)
+    assert outbox.fetch_due(max_delay_s=60) == []
+
+
+def test_default_max_delay_matches_the_backoff_cap() -> None:
+    from qc_edge.outbox import DEFAULT_MAX_DELAY_S
+    from qc_edge.publish_loop import MAX_DELAY_S
+
+    assert DEFAULT_MAX_DELAY_S == MAX_DELAY_S == 60.0

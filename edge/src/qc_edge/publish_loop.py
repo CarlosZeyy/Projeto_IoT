@@ -5,8 +5,9 @@ step 8, and section 8, "cloud down").
 ``run_once`` every ``interval_s`` seconds. One cycle:
 
 1. ``auth_error`` -> no request at all, until ``qc-edge`` restarts.
-2. ``fetch_due(100)``; nothing due -> a health check when ``health_every_s`` passed since the
-   last contact with the cloud (``online``/``offline``); done.
+2. ``fetch_due(100, max_delay_s=60)``; nothing due -> a health check when ``health_every_s``
+   passed since the last contact with the cloud, or when the wall clock is now before that
+   contact (a jump back, SPEC-030 section 4.2) (``online``/``offline``); done.
 3. ``publish_batch``:
    * success (``created`` or ``duplicate``) -> ``sent``, ``last_success_at = now``, ``online``;
    * transient error -> retry in ``min(60, 2**n * U(0.8, 1.2))`` s (``n`` = attempts before the
@@ -154,7 +155,7 @@ class PublishLoop:
         resolved: set[UUID] = set()
         items: list[OutboxItem] = []
         try:
-            items = self._outbox.fetch_due(DEFAULT_FETCH_LIMIT)
+            items = self._outbox.fetch_due(DEFAULT_FETCH_LIMIT, max_delay_s=MAX_DELAY_S)
             if not items:
                 self._maybe_check_health()
                 return
@@ -192,9 +193,10 @@ class PublishLoop:
         return inspections
 
     def _maybe_check_health(self) -> None:
+        """Health check after ``health_every_s`` without contact, or after a clock jump back."""
         now = self._clock()
         last = self._last_contact
-        if last is not None and (now - last).total_seconds() < self._health_every_s:
+        if last is not None and 0 <= (now - last).total_seconds() < self._health_every_s:
             return
         self._last_contact = now
         healthy = self._publisher.check_health()
