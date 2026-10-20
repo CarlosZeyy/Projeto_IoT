@@ -51,7 +51,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [012](specs/SPEC-012-ml-treino-export.md) | ML: treino, avaliação, ONNX e paridade | ml-engineer | — | 011 (e 002) | S3 | Done (CA-28 manual pendente até o dataset real) |
 | [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | Done (CA-26 manual confirmado pelo humano) |
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
-| [015](specs/SPEC-015-deploy.md) | Deploy na VPS pessoal (Docker Compose + Caddy), banco no Supabase e keep-alive | security-devops | deploy, security, infra | 004, 013, 026, 027, 028 (e 003, 005, 006, 014) | S4 | In Test (r1) |
+| [015](specs/SPEC-015-deploy.md) | Deploy na VPS pessoal (Docker Compose + Caddy), banco no Supabase e keep-alive | security-devops | deploy, security, infra | 004, 013, 026, 027, 028 (e 003, 005, 006, 014) | S4 | In Review (r1) |
 | [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais | ml-engineer + developer | contrato | 012 (e 002, 003, 008, 011, 013) | S6 | Draft |
 | [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006 (e 003, 004) | S6 | Draft |
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos | developer | contrato, security | 004 (e 002, 003, 009, 013) | S6 | Draft |
