@@ -13,7 +13,10 @@
 | **Defeituoso** | Inspeção com grau `poor` ou `unusable` (ADR-013) |
 | **Grau** | Estado da peça em 5 níveis: perfeito, bom, mediano, ruim, inutilizável |
 | **Idempotência** | Enviar a mesma inspeção várias vezes produz um único registro |
-| **`item_id`** | Identificador da **peça física** (ex.: `S-012`). Várias fotos podem ter o mesmo `item_id` |
+| **Imagem externa** | Imagem de um dataset público ou da internet, com licença aceita e fonte registrada em `ml/external_sources.csv`. Tem `item_id` `X<tipo>-NNNN` e vai só para o treino (ADR-020) |
+| **Importação** | Entrada no dataset de um arquivo que não veio da página `/capture` (foto de conhecido ou imagem externa), por `python -m qc_edge.importer` (SPEC-036) |
+| **`item_id`** | Identificador da **peça física** (ex.: `S-012`). Várias fotos podem ter o mesmo `item_id`. Nas imagens externas, `XS-0001` etc. (ADR-020) |
+| **Origem da imagem** | `capture` (página `/capture`), `contributor` (foto de conhecido) ou `external` (imagem externa). Fica em `DATASET_DIR/sources.csv`; a imagem sem linha nele é `capture` (SPEC-035) |
 | **Lote (`lot_id`)** | Grupo de peças inspecionadas juntas, informado pelo operador. É o subgrupo do SPC |
 | **Loop** | Ciclo developer → tester → reviewer (→ security) de uma SPEC, com no máximo 3 rodadas |
 | **Manifest** | CSV que lista cada imagem do dataset com seus rótulos |

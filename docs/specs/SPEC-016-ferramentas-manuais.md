@@ -9,7 +9,7 @@
 | Depende de | SPEC-012 (e SPEC-002, SPEC-003, SPEC-008, SPEC-011, SPEC-013 para os ajustes) |
 | Semana alvo | S6 |
 | Requisitos cobertos | RF-16; PRD §4.2 |
-| ADRs relevantes | ADR-001, ADR-004, ADR-005, ADR-014; **ADR novo** sobre grau nulo em tipos sem grau (pendente) |
+| ADRs relevantes | ADR-001, ADR-004, ADR-005, ADR-014, ADR-020; **ADR novo** sobre grau nulo em tipos sem grau (pendente) |
 
 > **Rascunho.** Precisa de refinamento do `architect`, do ADR indicado em §6 e de aprovação humana antes de virar `Ready`.
 
@@ -43,7 +43,7 @@ Um modelo `partqc-mnv3-v<N>` que identifica as 5 ferramentas manuais (além de p
   - fotos próprias, com o protocolo de captura (`dataset-protocol.md` §3);
   - I3D-Tools (<https://huggingface.co/datasets/i3dlabiisc/I3D-Tools-Dataset>): MIT, cerca de 35 mil imagens, 16 classes, incluindo alicate, chave inglesa, chave de fenda e serra; formato de detecção → recortar as caixas; **não** tem chave Allen;
   - Workshop Tools (<https://universe.roboflow.com/long-oybdw/workshop-tools-swpfs>): CC BY 4.0, exige atribuição.
-- Imagens públicas: só treino e validação; o teste das ferramentas usa **só fotos próprias** (domínio da demo). Cada imagem pública é tratada como uma peça (`item_id` próprio).
+- Imagens públicas: **só treino** (ADR-020), nunca validação nem teste; a validação e o teste das ferramentas usam só fotos próprias ou de conhecidos (domínio da demo). Cada imagem pública é tratada como uma peça, com `item_id` `XT-NNNN`, e entra pela importação da SPEC-036, com a fonte no registro `ml/external_sources.csv` (SPEC-035). O critério de grau por tipo (acima) conta só as imagens não externas, como as metas de volume do MVP.
 - A ordem de deploy segue a skill `contrato-api`: contracts → banco → API → dashboard → borda.
 - **Carta p (SPC):** a SPEC diz se os tipos novos entram na carta agregada (hoje, a consulta da SPEC-006 usa `object_type <> 'unknown'`, então um tipo novo entraria sozinho) e no filtro `object_type` da rota. Hoje, o `SpcObjectType` de `qc_api.routers.metrics` deriva de `ObjectType` menos `unknown` e aceitaria um valor novo sem decisão explícita. A SPEC troca esse enum dinâmico por uma classe declarada (`class SpcObjectType(StrEnum)`), com um teste que compara os membros com a lista decidida, e atualiza o CA-13 da SPEC-006 se a lista mudar (RV-01 de `reviews/SPEC-006/r1-review-report.md`).
 
@@ -59,7 +59,7 @@ Um modelo `partqc-mnv3-v<N>` que identifica as 5 ferramentas manuais (além de p
 
 1. **Invariante do contrato (bloqueante):** hoje `grade` é `null` **se e somente se** `object_type == unknown` (`architecture.md` §3.2 e `check` do banco). Uma ferramenta sem grau precisaria de `grade = null` com `object_type != unknown`. Opções: (a) mudar a invariante para `grade is None ⇔ object_type ∈ {unknown} ∪ tipos sem grau` (ADR + versão major ou minor? a skill `contrato-api` não classifica mudança de invariante); (b) só aceitar ferramentas que cumpram o critério de grau; (c) campo novo `graded: bool`. Precisa de ADR e decisão humana.
 2. **Teste congelado:** a skill `ml-pipeline` §2 manda peças novas só para treino/val. Sem um ADR, as ferramentas **não teriam teste**. Proposta: ADR que permita estender o teste **só com peças das classes novas**, sem mexer nas atribuições existentes.
-3. `item_id` de imagens públicas: o padrão `^[SNOT]-\d{3}$` não comporta milhares de imagens. Novo prefixo e mais dígitos? Isso muda o protocolo e a SPEC-011.
+3. ~~`item_id` de imagens públicas: o padrão `^[SNOT]-\d{3}$` não comporta milhares de imagens. Novo prefixo e mais dígitos? Isso muda o protocolo e a SPEC-011.~~ Resolvida pelo ADR-020 e pela SPEC-035: `XT-NNNN` (4 dígitos). Falta só liberar o prefixo `T`/`XT` (hoje recusado no MVP) junto com os tipos novos.
 4. `labels_overrides.csv` só corrige grau. Corrigir tipo (ex.: uma imagem `other` que é uma ferramenta) exige coluna nova?
 5. Mapeamento de classes públicas (ex.: "wrench" genérico × chave inglesa) e quantos recortes por imagem usar.
 6. A rubrica §1.1 (dano funcional de ferramentas) precisa de um piloto de concordância como o de parafusos?
@@ -70,3 +70,4 @@ Um modelo `partqc-mnv3-v<N>` que identifica as 5 ferramentas manuais (além de p
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-17 | §4 ganha o requisito "Carta p (SPC)" e §6 ganha a pergunta 7: os tipos novos e o filtro `object_type` do SPC precisam de decisão explícita. A SPEC continua `Draft`. | RV-01 de `reviews/SPEC-006/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-20 | §4: imagens públicas passam de "treino e validação" para **só treino**, com `item_id` `XT-NNNN`, importação pela SPEC-036 e registro de fontes da SPEC-035; o critério de grau conta só as imagens não externas. §6, pergunta 3: resolvida pelo ADR-020. ADRs relevantes: o ADR-020 entra junto com os demais. A SPEC continua `Draft`. | Decisão do humano de 2026-10-19 (ADR-020) | Orquestrador, a pedido do humano |

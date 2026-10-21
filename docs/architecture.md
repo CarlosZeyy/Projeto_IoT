@@ -246,6 +246,11 @@ A partir da SPEC-025 (pendências da SPEC-010):
 
 O pipeline (SPEC-011) lê o manifest só com `csv`/`pandas`, acusa linha sem arquivo e arquivo sem linha, e aplica `exclusions.csv` (foto que precisa sair do dataset, como uma com pessoa; R-14).
 
+**Importação de fotos que não vêm da página** (ADR-020; a partir das SPECs 035 e 036):
+- `python -m qc_edge.importer --dataset-dir <D> --inbox <I> --plan <P> --privacy-checked [--dry-run]` lê arquivos de uma pasta de entrada fora de `DATASET_DIR` e um plano CSV preenchido pela dupla. Cada imagem é normalizada como a página faz (rotação EXIF aplicada, lado maior em até 1280 px, JPEG q=90, sem metadados) e gravada com o mesmo layout, o mesmo `flock`, as mesmas permissões e o mesmo `fsync` da coleta. Sem rede;
+- o manifest não muda. A origem de cada imagem importada (`contributor` = foto de conhecido, `external` = imagem de dataset público) fica em `DATASET_DIR/sources.csv`; a imagem sem linha nele é `capture`. As fontes externas ficam no registro `ml/external_sources.csv` (no Git, sem imagens), com uma lista fechada de licenças;
+- as imagens externas têm `item_id` `X<tipo>-NNNN` e vão sempre para o treino: o `qc_ml.split.rows_for` recusa uma delas em `val` ou `test`, e o split recusa mais de 30% delas no treino (padrão). A rota de coleta continua recusando esse `item_id`.
+
 ### 6.4 Configuração (`.env` da borda)
 
 `EDGE_HOST` (0.0.0.0; só IPv4 literal, SPEC-025), `EDGE_PORT` (8000), `EDGE_DATA_DIR` (padrão `edge/data`, no `.gitignore`), `EDGE_SESSION_TOKEN` (opcional), `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` (os três últimos são opcionais e sobrescrevem o `decision.json`).
@@ -261,7 +266,7 @@ Cada versão vive em `ml/models/<model_version>/`. **O nome do diretório é o `
 | `labels.json` | `{"object_types": ["screw","nut","other"], "grades": ["perfect","good","fair","poor","unusable"]}` |
 | `preprocessing.json` | Saída de `PreprocessParams.to_json()`: `resize_shorter`, `crop`, `mean`, `std` |
 | `decision.json` | `type_threshold`, `unusable_threshold`, `grade_review_threshold` (escolhidos na **validação**) |
-| `metrics.json` | Métricas do teste final (ver a skill `ml-pipeline`) |
+| `metrics.json` | Métricas do teste final (ver a skill `ml-pipeline`). A partir da SPEC-035, `counts.<split>` traz também `by_origin` (`capture`, `contributor`, `external`) e `by_source`; `val` e `test` têm sempre 0 imagens externas (ADR-020) |
 | `training_config.json` | Backbone, hiperparâmetros, seeds, versão do manifest, hash do split |
 | `parity_fixture.npz` | Cerca de 8 entradas pré-processadas, geradas a partir de imagens **sintéticas** (nunca fotos reais no Git), e as saídas do torch, para o teste de paridade com ONNX sem precisar de torch |
 
@@ -300,6 +305,7 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
 | Porta da borda alcançada fora da rede da dupla (Wi-Fi do campus, bridges do Docker) | Regra de firewall só para a sub-rede da LAN ou do hotspot, só durante a sessão (§8); o token cobre o resto |
 | Fotos lidas por outra conta local do notebook | `captures/` e `DATASET_DIR` com diretórios `0700` e arquivos `0600` (SPEC-025 e SPEC-010); retenção das fotos de inspeção em `docs/dataset-protocol.md` §9 (R-14) |
 | Foto do dataset levando a localização (EXIF GPS), o aparelho ou um vídeo (Motion Photo) para o backup no Drive e o Colab, ou uma foto com pessoa no backup (SEC-10-01 e SEC-10-08 de `reviews/SPEC-010/r1-security-report.md`) | Modo coleta grava sem APP1, APP13, COM e trailer, e `python -m qc_edge.privacy` antes de cada backup (SPEC-025, `Done` antes do primeiro backup); remoção de foto com pessoa por `exclusions.csv`, inclusive do backup (`docs/dataset-protocol.md` §8 e §8.1, SPEC-011) |
+| Foto recebida de um conhecido levando GPS, aparelho ou vídeo para o dataset e o backup, ou uma pessoa no quadro; imagem externa sem licença (ADR-020) | A importação reencoda sem metadados e confere o resultado, nunca lê fora da pasta de entrada, que fica fora do dataset e do backup, e exige `--privacy-checked` (checagem humana); fonte externa só com licença da lista e registrada (SPEC-036, SPEC-035; `docs/dataset-protocol.md` §10) |
 | `API_BASE_URL` do dashboard com `http://` mandando a `READ_API_KEY` em claro (SEC-13-01 de `reviews/SPEC-013/r2-security-report.md`) | O dashboard recusa esquema que não seja `https://`, salvo `http://` em `localhost`/`127.0.0.1` (SPEC-028); em produção, o compose define `API_BASE_URL=https://${PUBLIC_HOST}` (SPEC-015 §4.12) |
 | Chave de dispositivo vazada | Hash no banco; rotação por `register_device.py --rotate` |
 | Leitura indevida pela chave anon do Supabase | RLS sem políticas; a API usa `DATABASE_URL` só no servidor |
