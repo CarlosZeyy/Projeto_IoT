@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -214,3 +214,4 @@ Contexto comum: `DATASET_DIR`, a pasta de entrada e o registro em `tmp_path`; re
 |---|---|---|---|
 | 2026-10-20 | SPEC criada (`Draft`). Decisões do architect: (a) CLI na borda (developer), reaproveitando a gravação, o lock, as permissões, o `fsync` e a varredura do JPEG da coleta; (b) normalização igual à da página (rotação aplicada, lado maior em até 1280 px, JPEG q=90, sem metadados), com a orientação lida antes da remoção estrutural dos segmentos, em vez de recusar a rotação EXIF como a rota de coleta; (c) plano CSV validado inteiro antes de gravar, e linhas já importadas puladas pelo SHA-256 do arquivo recebido; (d) imagem recusada não para a importação, falha de E/S para; (e) manifest antes do `sources.csv`, com rollback; (f) `--privacy-checked` obrigatório e pasta de entrada fora do dataset; (g) cobertura do console sem as imagens externas. | Decisão do humano de 2026-10-19 (ADR-020) | Orquestrador, a pedido do humano |
 | 2026-10-23 | Confirmada pelo humano, sem mudança de texto, a decisão (b): a importação aplica a rotação EXIF e reencoda (lado maior até 1280 px, JPEG q=90, sem metadados), como no ADR-020, decisão 5. CA-04: caso novo com a fonte do registro em `license=CC-BY-NC-SA-4.0` → `source_license_not_allowed` (agora 2 casos), pela lista de licenças nova da SPEC-035 §4.3 (sem NonCommercial nem ShareAlike), que o §4.2 já referencia. Cabeçalho: ADR-020 `Aceito`. | Decisão do humano de 2026-10-23 | Architect, a pedido do humano |
+| 2026-10-23 | Aprovada pelo humano (`Draft` → `Ready`), com as decisões confirmadas: rotação EXIF aplicada e reencode na importação, teto de 30%, faixa 500–999 só como convenção e lista de licenças sem NonCommercial nem ShareAlike. | Mensagem do humano de 2026-10-23 | Orquestrador, a pedido do humano |

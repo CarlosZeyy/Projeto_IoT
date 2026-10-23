@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | ml-engineer |
 | Tags | — |
@@ -280,3 +280,4 @@ Consultados pelo architect em **2026-10-20**; a coluna "Uso possível" foi revis
 |---|---|---|---|
 | 2026-10-20 | SPEC criada (`Draft`). Decisões do architect: (a) duas SPECs, esta para o `qc-ml` (ml-engineer) e a SPEC-036 para a importação na borda (developer), por causa do hook de caminhos e do reuso do `DatasetWriter`; (b) manifest inalterado e origem em `DATASET_DIR/sources.csv`, em vez de colunas novas; (c) `item_id` externo `X<tipo>-NNNN`, que decide sozinho a regra do split; (d) externas fora dos estratos, sempre no treino, com teto de 30% e guarda no `rows_for`; (e) registro de fontes `ml/external_sources.csv` no Git como arquivo de atribuições, com lista fechada de licenças; (f) contagem por origem no relatório de dados e no `counts` do `metrics.json`, sem mudar as chaves de topo; (g) Anexo A com os datasets avaliados. ADR-020 (`Proposto`) criado. | Decisão do humano de 2026-10-19 (fotos de conhecidos e imagens externas) | Orquestrador, a pedido do humano |
 | 2026-10-23 | §4.3: `ALLOWED_LICENSES` reduzida a `CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0` e `BSD-3-Clause` (NonCommercial e ShareAlike recusadas com `invalid_license`). CA-05: 3 casos novos (`CC-BY-NC-SA-4.0`, `CC-BY-SA-4.0`, `CC-BY-NC-4.0` → `invalid_license`; agora 6 casos). §1 e §7 (nota das licenças) alinhados. §9 passa a registrar as decisões confirmadas: teto de 30%, lista nova e faixa 500–999 só como recomendação. Anexo A: #1, #2, #7 e #8 marcados como não permitidos e "Leitura para a escolha" reescrita (o `unusable` fica sem fonte externa permitida). Cabeçalho: ADR-020 `Aceito`. | Decisão do humano de 2026-10-23 (o `model.onnx` é publicado num Release público) | Architect, a pedido do humano |
+| 2026-10-23 | Aprovada pelo humano (`Draft` → `Ready`), com as decisões confirmadas: rotação EXIF aplicada e reencode na importação, teto de 30%, faixa 500–999 só como convenção e lista de licenças sem NonCommercial nem ShareAlike. | Mensagem do humano de 2026-10-23 | Orquestrador, a pedido do humano |

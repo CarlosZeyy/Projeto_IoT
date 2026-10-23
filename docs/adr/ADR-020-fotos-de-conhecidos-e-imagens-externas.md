@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Proposto |
+| Status | Aceito (aprovado pelo humano em 2026-10-23, com a lista de licenças sem NonCommercial nem ShareAlike) |
 | Data | 2026-10-20 |
 | Decisores | Dupla (decisão do humano, Carlos, em 2026-10-19, e lista de licenças em 2026-10-23; redigido pelo agente architect) |
 | Relacionados | ADR-001 (a consequência sobre o uso opcional do MVTec AD deixa de valer, decisão 3), ADR-003, ADR-004, ADR-014 (complementado, não substituído), SPEC-010, SPEC-011, SPEC-012, SPEC-016, SPEC-025, SPEC-035, SPEC-036, R-02, R-11, R-13, R-14, N-11 |
