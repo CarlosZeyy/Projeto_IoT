@@ -40,7 +40,7 @@ Este documento vale para humanos e agentes. Em caso de conflito com qualquer out
 | N-08 | Transporte borda → nuvem | HTTP; MQTT opcional na Fase 3 | ADR-009 |
 | N-09 | Modo de captura | Foto por disparo; vídeo ao vivo na Fase 3 | ADR-003 |
 | N-10 | Visual do dashboard | Streamlit + Plotly; layout livre dentro da SPEC-013 | ADR-007 |
-| N-11 | Protocolo de captura | 3 a 5 ângulos por peça por estágio, fundo liso | `docs/dataset-protocol.md` |
+| N-11 | Protocolo de captura | 3 a 5 ângulos por peça por estágio, fundo liso | `docs/dataset-protocol.md`; ADR-020 (fotos de conhecidos e imagens externas) |
 
 ## Convenções (obrigatórias, mas de baixo impacto)
 
