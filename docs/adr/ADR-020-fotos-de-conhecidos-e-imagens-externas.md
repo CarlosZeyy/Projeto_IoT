@@ -57,6 +57,7 @@ Fatos que pesam na decisão:
   - `qc_ml.data` aceita `X[SNOT]-[0-9]{4}`, lê e valida `sources.csv` e `ml/external_sources.csv` (SPEC-035);
   - o split põe toda imagem externa no treino, falha se uma peça externa aparecer em `val` ou `test` em qualquer versão, e respeita o teto (SPEC-035);
   - o `metrics.json` mostra, por split, a contagem de imagens por origem, e a entrada do CHANGELOG cita as fontes externas com a licença (SPEC-035);
+  - as notas do GitHub Release do modelo, geradas por `python -m qc_ml.report release-notes`, citam na própria página do Release cada fonte externa com o crédito, a licença e os links, ou dizem que o modelo não usa imagens externas (SPEC-035 §4.6; decisão do humano de 2026-10-23);
   - a CLI de importação (SPEC-036) e o passo a passo do `docs/dataset-protocol.md` §10;
   - a SPEC-016 segue esta decisão para as imagens públicas de ferramentas (só treino, prefixo `XT-`).
 
@@ -73,3 +74,4 @@ Fatos que pesam na decisão:
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-23 | Decisão 3: lista de licenças reduzida a `CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0` e `BSD-3-Clause`; NonCommercial e ShareAlike proibidas (inclusive o MVTec AD). Contexto, Consequências (o `unusable` sem fonte externa permitida; nota no ADR-001), Relacionados e Quando revisitar ajustados. Confirmados sem mudança de texto: a normalização com a rotação EXIF aplicada e o reencode (decisão 5), o teto de 30% (decisão 2) e a faixa 500–999 só como recomendação (decisão 1). | Decisão do humano de 2026-10-23 (o `model.onnx` é publicado num GitHub Release público) | Architect, a pedido do humano |
+| 2026-10-23 | "O que passa a ser obrigatório": as notas do GitHub Release do modelo, geradas por `python -m qc_ml.report release-notes`, citam cada fonte externa com o crédito, a licença e os links, ou dizem que o modelo não usa imagens externas (SPEC-035 §4.6). | Decisão do humano de 2026-10-23 (créditos visíveis no Release) | Architect, a pedido do humano |
