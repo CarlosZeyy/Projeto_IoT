@@ -49,6 +49,8 @@ O domínio do MVP é **parafuso e porca de aço**, cada um classificado em `perf
   - sem pessoas identificáveis nas fotos (R-14);
   - todo tipo novo de objeto entra no contrato com aumento de versão (R-04).
 
+**Nota (2026-10-23):** o uso opcional do MVTec AD previsto acima deixa de valer. O ADR-020, com a lista de licenças decidida pelo humano em 2026-10-23, exclui as fontes NonCommercial e ShareAlike, inclusive o MVTec AD (CC BY-NC-SA 4.0), porque o `model.onnx` é publicado num GitHub Release público. O resto deste ADR não muda. (Architect, a pedido do humano.)
+
 ## Quando revisitar
 
 - Se, ao fim da S2, houver menos de 500 imagens ou algum grau tiver menos de 4 peças físicas.
