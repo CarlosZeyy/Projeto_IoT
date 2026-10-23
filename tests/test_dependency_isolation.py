@@ -6,6 +6,7 @@ SPEC-001 §4.5.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -70,7 +71,8 @@ def test_ml_train_extra_declares_training_stack(lock: dict) -> None:
 
     pyproject = tomllib.loads((ROOT / "ml/pyproject.toml").read_text(encoding="utf-8"))
     declared = set(pyproject["project"]["optional-dependencies"]["train"])
-    assert declared == {"torch", "torchvision", "timm", "onnx", "coral-pytorch"}
+    names = {re.match(r"[A-Za-z0-9._-]+", dep)[0].lower() for dep in declared}
+    assert names == {"torch", "torchvision", "timm", "onnx", "coral-pytorch"}
 
 
 def test_ml_train_extra_reaches_torch_in_closure(lock: dict) -> None:
