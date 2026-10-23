@@ -730,7 +730,7 @@ def test_ca16_type_threshold_max_with_false_unknown_at_most_5pct() -> None:
 def test_ca17_unusable_threshold_for_recall_90pct() -> None:
     p_unusable = [0.45, 0.40, 0.35, 0.30, 0.25, 0.22, 0.18, 0.15, 0.125, 0.05]
     type_probs = [[0.99, 0.005, 0.005]] * 10
-    grade_probs = [[0.0, 0.0, 1.0 - 0.55 - p, 0.55, p] for p in p_unusable]
+    grade_probs = [[0.0, 0.0, 1.0 - (0.55 + p), 0.55, p] for p in p_unusable]
     preds = _preds("val", type_probs, grade_probs, [0] * 10, [4] * 10)
     result = choose_thresholds(preds, LABELS)
     assert result.decision["unusable_threshold"] == 0.12
@@ -758,7 +758,7 @@ def test_ca18_review_threshold_targets_10pct() -> None:
     decided = decision_mod.apply_decision(type_probs, grade_probs, LABELS, result.decision)
     assert float(np.mean(decided.needs_review)) == pytest.approx(0.10)
 
-    conf = [0.5525 + 0.005 * i for i in range(100)]
+    conf = [min(0.5525 + 0.005 * i, 1.0) for i in range(100)]
     grade_probs = [_one_grade(1, c) for c in conf]
     preds = _preds("val", type_probs, grade_probs, [0] * 100, [1] * 100)
     result = choose_thresholds(preds, LABELS)
