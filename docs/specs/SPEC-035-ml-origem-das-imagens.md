@@ -41,7 +41,7 @@ Esta SPEC é a parte do `qc-ml` (`docs/architecture.md` §7; skill `ml-pipeline`
 - `ml/src/qc_ml/split.py`: regra das externas, teto, `IMAGE_FILE_PATTERN` e a guarda do `rows_for` (§4.4); opções `--external-sources` e `--max-external-fraction` da CLI.
 - `ml/src/qc_ml/evaluate.py`: `by_origin` e `by_source` em `counts` (§4.6).
 - `TrainConfig` (no módulo em que está definido hoje): campo `external_sources` (§4.6).
-- `ml/src/qc_ml/report.py`: seção "Dados" da entrada do CHANGELOG e opção `--external-sources` (§4.6).
+- `ml/src/qc_ml/report.py`: seção "Dados" da entrada do CHANGELOG, opção `--external-sources` e subcomando `release-notes`, que gera as notas do GitHub Release do modelo com os créditos das fontes externas (§4.6).
 - `ml/src/qc_ml/synthetic.py`: parâmetros `external_items_per_stratum` e `contributor_items_per_stratum` (§4.7).
 - `ml/external_sources.csv` (novo, só com o cabeçalho; as linhas são acrescentadas pela dupla, §4.3).
 - `ml/README.md`: seção "Origem das imagens" (§4.8).
@@ -156,7 +156,7 @@ Chaves novas, além das da SPEC-011 §4.2:
 
 Mudam de escopo, sem mudar de formato: `items_per_grade`, `images_per_item`, `below_target` e `below_minimum` passam a contar **só** as imagens não externas. As metas de volume (`docs/dataset-protocol.md` §4) são de peças físicas fotografadas pela dupla ou por conhecidos, e cada imagem externa é uma peça. `n_images`, `n_items` e `counts` continuam contando todas as imagens. Sem imagens externas, todas as chaves antigas dão os mesmos valores de hoje.
 
-### 4.6 Métricas e CHANGELOG
+### 4.6 Métricas, CHANGELOG e notas do Release
 
 - **Registro nas etapas do pipeline:** `TrainConfig` (SPEC-012 §4.2) ganha o campo `external_sources: str | None = None`, o caminho do registro passado ao `load_manifest` por `train`, `thresholds`, `evaluate` e `pipeline` (`None` = `DEFAULT_EXTERNAL_SOURCES`, §4.2). Não é um hiperparâmetro e não entra em `deviations_from_defaults`. As configs existentes, sem o campo, continuam válidas.
 - `qc_ml.evaluate.split_counts` acrescenta a cada split de `counts`:
@@ -171,18 +171,44 @@ Mudam de escopo, sem mudar de formato: `items_per_grade`, `images_per_item`, `be
 
   Um `metrics.json` sem `by_origin` (gerado antes desta SPEC) não ganha a seção. A tabela de métricas e as demais seções não mudam (CA-25 da SPEC-012).
 
+**Notas do Release (`release-notes`).** Os créditos das fontes externas têm de aparecer na **própria página** do GitHub Release do modelo, e não só no CHANGELOG ou no registro (decisão do humano de 2026-10-23). O texto das notas é gerado, nunca escrito à mão:
+
+```text
+python -m qc_ml.report release-notes --model-dir <dir> [--external-sources <arquivo>] [--output <arquivo>]
+```
+
+- **Entradas:** `<dir>/model.sha256` (64 hex minúsculos + `\n`, SPEC-012 §4.3) e `<dir>/metrics.json`. `--external-sources` tem o mesmo padrão do `changelog` (`DEFAULT_EXTERNAL_SOURCES`, §4.2) e é lido com `load_external_sources` (§4.3). Registro ausente = registro vazio.
+- **Saída:** sem `--output`, o texto vai para o stdout. Com `--output`, o arquivo é criado ou sobrescrito, em UTF-8 sem BOM, com `\n`, e o stdout fica vazio. Nos dois casos, o conteúdo é o mesmo, byte a byte, e termina com um único `\n`.
+- **Texto** (Markdown, que a página do Release renderiza), nesta ordem, com uma linha em branco entre os blocos:
+  1. `sha256: <os 64 hex do model.sha256>` (a mesma linha que a SPEC-012 §4.9 punha em `--notes`);
+  2. `## Fontes externas e créditos`;
+  3. **com fonte externa** (`counts.train.by_source` presente e não vazio): uma linha por fonte, na **mesma ordem** da seção `### Dados` do CHANGELOG (ordem de `source_id`) e com o mesmo `<n>`, `` - `<source_id>`: <n> imagens, <license>. Crédito: <attribution> | Licença: <license_url> | Fonte: <url> `` (lidos do registro). Fonte ausente do registro → a mesma linha do CHANGELOG, `` - `<source_id>`: <n> imagens, licença não encontrada no registro ``, e o aviso `warning: source not in registry: <source_id>` na saída de erro (o código de saída continua 0; o `ml/README.md` proíbe publicar o Release com essa linha, §4.8);
+     **sem fonte externa** (`counts.train.by_source` vazio, ou `counts` sem `by_source`, caso de um `metrics.json` gerado antes desta SPEC, quando o pipeline recusava `item_id` externo): a linha única `Este modelo não usa imagens externas (ADR-020).`;
+  4. ``Registro das fontes: `ml/external_sources.csv`. Histórico do modelo: `ml/models/CHANGELOG.md`.``
+- **Erros** (código 2, mensagem na saída de erro, stdout vazio e `--output` nem criado nem alterado): `model.sha256` ausente ou fora do formato; `metrics.json` ausente ou JSON inválido; registro com algum problema do §4.3 (`ManifestError`).
+- Os textos vêm do registro, que já recusa caracteres de controle e separadores de linha (§4.3): cada fonte ocupa exatamente uma linha. Nenhuma outra informação do `metrics.json` entra nas notas.
+
 ### 4.7 Dataset sintético
 
 `make_synthetic_dataset(root, *, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0)`. "Estrato" = cada um dos 10 pares `screw`/`nut` × grau e, com `include_other`, o `other`.
 
 - `contributor_items_per_stratum = c`: em cada estrato, `c` peças de conhecido, numeradas a partir de 501 por letra (`S-501`, `S-502`…; a numeração continua entre os estratos da mesma letra), cada uma com `images_per_item` imagens, e uma linha `contributor` em `sources.csv` por imagem, com `contributor=c01`.
-- `external_items_per_stratum = k`: em cada estrato, `k` peças externas, numeradas a partir de `0001` por letra (`XS-0001`…), cada uma com **1** imagem (ângulo 0), e uma linha `external` por imagem, com `source_id=synthetic` e `source_ref=synthetic/<item_id>.png`. O gerador grava também `root/external_sources.csv` com uma única fonte `synthetic` (`CC0-1.0`, `https://example.org/synthetic`, atribuição `Synthetic test images`, `retrieved_at` = `2026-10-20`).
+- `external_items_per_stratum = k`: em cada estrato, `k` peças externas, numeradas a partir de `0001` por letra (`XS-0001`…), cada uma com **1** imagem (ângulo 0), e uma linha `external` por imagem, com `source_id=synthetic` e `source_ref=synthetic/<item_id>.png`. O gerador grava também `root/external_sources.csv` com uma única fonte `synthetic` (`CC0-1.0`, `url` = `https://example.org/synthetic`, `license_url` = `https://creativecommons.org/publicdomain/zero/1.0/`, atribuição `Synthetic test images`, `retrieved_at` = `2026-10-20`).
 - O `input_sha256` das linhas é o SHA-256 do arquivo gravado (o sintético não tem arquivo recebido).
 - Com `c = 0` e `k = 0` (o padrão), os arquivos gerados são iguais, byte a byte, aos de hoje, e nem o `sources.csv` nem o `external_sources.csv` são criados.
 
 ### 4.8 `ml/README.md`
 
 Seção "Origem das imagens": as três origens; o formato do `item_id` externo; `sources.csv` (gravado só pela importação da SPEC-036, nunca à mão); o registro `ml/external_sources.csv` e as licenças aceitas; "externas só no treino" e o teto (`--max-external-fraction`); e a referência a `docs/dataset-protocol.md` §10.
+
+A mesma seção traz o passo do Release (SPEC-012 §4.9), que passa a ser o abaixo. O passo antigo do README, com `--notes "sha256: …"`, é trocado por uma referência a esta seção:
+
+```text
+python -m qc_ml.report release-notes --model-dir ml/models/<v> --output ml/models/<v>/release-notes.md
+gh release create model-<v> ml/models/<v>/model.onnx --title "Modelo <v>" --notes-file ml/models/<v>/release-notes.md
+```
+
+O README diz que: as notas do Release são **sempre** o arquivo gerado (nunca `--notes` à mão); se o modelo usou imagens externas, a seção "Fontes externas e créditos" com o crédito, a licença e os links de cada fonte é **obrigatória** na página do Release (as licenças com atribuição, como `CC-BY-4.0`, `MIT`, `Apache-2.0` e `BSD-3-Clause`, exigem o crédito); e o Release **não** é publicado se o arquivo tiver a linha `licença não encontrada no registro` (registre a fonte, §4.3, e gere de novo). O `release-notes.md` pode ir para o Git junto com o `model.sha256`.
 
 ## 5. Critérios de aceite
 
@@ -208,12 +234,17 @@ Contexto comum: datasets do `make_synthetic_dataset` em `tmp_path`, sempre com `
 - **CA-13 (CHANGELOG e atribuição)** — *Dado* o `metrics.json` do CA-12 e o registro sintético, *quando* `python -m qc_ml.report changelog --model-dir <dir> --external-sources <root>/external_sources.csv` roda, *então* a entrada contém a seção `### Dados`, a linha `- Validação e teste: 0 e 0 imagens externas (ADR-020).`, a linha `- Treino: 11 imagens externas de 55 (0,2000).` e a linha `` - `synthetic`: 11 imagens, CC0-1.0. Crédito: Synthetic test images ``; com um registro só com o cabeçalho, a linha da fonte termina com `licença não encontrada no registro`; e, com um `metrics.json` cujo `counts` não tem `by_origin`, a entrada não tem `### Dados`.
 - **CA-14 (registro do repositório)** — *Dado* o repositório, *quando* `ml/external_sources.csv` é lido, *então* a primeira linha é exatamente `source_id,title,url,license,license_url,attribution,retrieved_at`, `load_external_sources` não levanta erro, e `git check-ignore ml/external_sources.csv` sai com 1 (não ignorado).
 - **CA-15 (gerador)** — *Dado* `make_synthetic_dataset` com os parâmetros padrão em dois diretórios, um deles com `external_items_per_stratum=0, contributor_items_per_stratum=0` explícitos, *então* os dois diretórios têm os mesmos arquivos com os mesmos bytes, e nenhum tem `sources.csv` nem `external_sources.csv`.
+- **CA-16 (notas do Release, com fonte)** — *Dado* o diretório de modelo do CA-12 (`model.sha256` da fixture e o `metrics.json` gerado) e o registro sintético, *quando* `python -m qc_ml.report release-notes --model-dir <dir> --external-sources <root>/external_sources.csv --output <tmp>/notes.md` roda, *então* sai com 0, o stdout fica vazio e o arquivo é UTF-8, termina com um único `\n` e tem, nesta ordem: a primeira linha `sha256: <conteúdo do model.sha256 sem o \n>`; a linha `## Fontes externas e créditos`; exatamente uma linha que começa com `` - ` ``, igual a `` - `synthetic`: 11 imagens, CC0-1.0. Crédito: Synthetic test images | Licença: https://creativecommons.org/publicdomain/zero/1.0/ | Fonte: https://example.org/synthetic ``; e a linha ``Registro das fontes: `ml/external_sources.csv`. Histórico do modelo: `ml/models/CHANGELOG.md`.``. O arquivo não contém `não usa imagens externas`. A linha da fonte começa com a linha da fonte da seção `### Dados` do `changelog` do CA-13 (mesmos dados). *Quando* o mesmo comando roda sem `--output`, *então* o stdout é igual, byte a byte, ao arquivo.
+- **CA-17 (notas do Release, fonte fora do registro e ordem)** — *Dado* o `metrics.json` do CA-16 editado pelo teste para `counts.train.by_source == {"zz-fora": 2, "synthetic": 11}`, *quando* `release-notes` roda com o registro sintético, *então* sai com 0; as linhas que começam com `` - ` `` são, nesta ordem, a linha `synthetic` do CA-16 e `` - `zz-fora`: 2 imagens, licença não encontrada no registro ``; a saída de erro contém `warning: source not in registry: zz-fora`; e, com o mesmo `metrics.json` e o mesmo registro, cada linha de fonte das notas começa com a linha de fonte de mesma posição na seção `### Dados` do `changelog`. *Dado* o `metrics.json` do CA-16 sem edição e um registro só com o cabeçalho, *então* a única linha de fonte é `` - `synthetic`: 11 imagens, licença não encontrada no registro ``.
+- **CA-18 (notas do Release, sem externas)** — *Dado* o diretório de modelo do CA-16 com o `metrics.json` editado pelo teste, em casos separados, (a) com `by_source` igual a `{}` e `by_origin.external` igual a 0 nos três splits e (b) sem as chaves `by_origin` e `by_source` em nenhum split (como um `metrics.json` anterior a esta SPEC), *quando* `release-notes` roda com o registro sintético, *então* sai com 0, as notas têm a linha `sha256: …`, a linha `## Fontes externas e créditos`, a linha `Este modelo não usa imagens externas (ADR-020).` e a linha dos caminhos do CA-16, e nenhuma linha começa com `` - ` ``.
+- **CA-19 (notas do Release, erros)** — *Dado* o diretório de modelo do CA-16, *quando*, em casos separados, o `model.sha256` é apagado, o `model.sha256` tem 63 caracteres hexadecimais, o `metrics.json` é apagado, o `metrics.json` não é JSON válido, ou o registro tem a fonte com `license=CC-BY-NC-4.0`, e `release-notes` roda com `--output <tmp>/notes.md`, *então* sai com 2, o stdout fica vazio e `<tmp>/notes.md` não existe. *Dado* `<tmp>/notes.md` já existente com o conteúdo `antigo\n`, no caso do `model.sha256` apagado, *então* o arquivo continua com `antigo\n`.
+- **CA-20 (README)** — *Dado* `ml/README.md`, *quando* se isola o trecho da seção cujo título contém `Origem das imagens` até o próximo título de nível igual ou superior, *então* ele contém `ml/external_sources.csv`, `--max-external-fraction`, `qc_ml.report release-notes`, `--notes-file` e `licença não encontrada no registro`.
 
 ## 6. Plano de testes
 
 | Tipo | O que | Onde |
 |---|---|---|
-| Unitário (autor) | Regex e letra do tipo; cada problema de `sources.csv` e do registro; exclusão × `sources.csv`; split com externas (v1, versões seguintes, `history`, teto no limite e acima, `Fraction`); guarda do `rows_for`; relatório; `split_counts`; seção do CHANGELOG; gerador | `ml/tests/` |
+| Unitário (autor) | Regex e letra do tipo; cada problema de `sources.csv` e do registro; exclusão × `sources.csv`; split com externas (v1, versões seguintes, `history`, teto no limite e acima, `Fraction`); guarda do `rows_for`; relatório; `split_counts`; seção do CHANGELOG; notas do Release (com fonte, fora do registro, sem externas, erros); gerador | `ml/tests/` |
 | Aceite (tester) | Um por CA, com `make_synthetic_dataset` em `tmp_path`; CLIs via `main(argv)` ou subprocesso | `ml/tests/acceptance/test_spec_035.py` |
 
 - Nada é mockado além do sistema de arquivos temporário. Sem internet e sem dados reais. Nenhum CA usa torch.
@@ -227,7 +258,8 @@ Contexto comum: datasets do `make_synthetic_dataset` em `tmp_path`, sempre com `
 - **Contagem por imagem:** cada imagem externa é uma peça. Um dataset público com várias fotos do mesmo objeto pode usar o mesmo `item_id` externo para elas (decisão da dupla na importação). Como as externas só vão para o treino, isso não afeta a R-11.
 - **Colunas novas do `load_manifest`:** `origin`, `contributor` e `source_id` entram depois de `grade_original` e `overridden`. O `PartsDataset` e o `predict` não as usam.
 - **`DEFAULT_EXTERNAL_SOURCES`:** depende do layout do repositório (`ml/src/qc_ml/` → `ml/`). Num pacote instalado fora do repositório (não é o caso do projeto), o arquivo não existe e o registro fica vazio.
-- **Licenças NonCommercial e ShareAlike:** o registro **recusa** `CC-BY-NC-4.0`, `CC-BY-SA-4.0` e `CC-BY-NC-SA-4.0` (`invalid_license`), por decisão do humano de 2026-10-23 (ADR-020, decisão 3): o `model.onnx` é publicado num Release público (SPEC-012 §4.9). Não acrescente outro identificador à tupla sem um ADR novo. As licenças da lista que exigem crédito (`CC-BY-4.0`, `MIT`, `Apache-2.0`, `BSD-3-Clause`) são atendidas pela coluna `attribution` e pela seção `### Dados` do CHANGELOG (§4.6).
+- **Licenças NonCommercial e ShareAlike:** o registro **recusa** `CC-BY-NC-4.0`, `CC-BY-SA-4.0` e `CC-BY-NC-SA-4.0` (`invalid_license`), por decisão do humano de 2026-10-23 (ADR-020, decisão 3): o `model.onnx` é publicado num Release público (SPEC-012 §4.9). Não acrescente outro identificador à tupla sem um ADR novo. As licenças da lista que exigem crédito (`CC-BY-4.0`, `MIT`, `Apache-2.0`, `BSD-3-Clause`) são atendidas pela coluna `attribution`, pela seção `### Dados` do CHANGELOG e pelas notas do Release geradas pelo `release-notes` (§4.6), que põem o crédito na própria página do Release.
+- **Notas do Release:** reaproveite a mesma função que monta as linhas de fonte do CHANGELOG (ordem e contagem), para que as duas saídas nunca divirjam (CA-17). Não escape nem reformate o `attribution`: o registro já é revisado por PR e recusa quebras de linha (§4.3).
 - **Planilhas:** `sources.csv` e `external_sources.csv` têm texto vindo de fora (`source_ref`, `title`, `attribution`). A regra do manifest vale para eles: não abrir em planilha (`docs/dataset-protocol.md` §5).
 
 ## 8. Definição de pronto
@@ -235,7 +267,7 @@ Contexto comum: datasets do `make_synthetic_dataset` em `tmp_path`, sempre com `
 - [ ] Todos os CAs com teste de aceite passando (test-report PASS)
 - [ ] review-report APPROVED
 - [ ] CI verde (sem torch); `ruff` limpo
-- [ ] `ml/README.md` atualizado (§4.8) e `ml/external_sources.csv` no Git
+- [ ] `ml/README.md` atualizado (§4.8, inclusive o passo do Release com `--notes-file`) e `ml/external_sources.csv` no Git
 - [ ] ADR-020 `Aceito` pelo humano
 - [ ] PR aberto com os relatórios; merge conforme R-09 (delegado ao orquestrador, ADR-016)
 
@@ -281,3 +313,4 @@ Consultados pelo architect em **2026-10-20**; a coluna "Uso possível" foi revis
 | 2026-10-20 | SPEC criada (`Draft`). Decisões do architect: (a) duas SPECs, esta para o `qc-ml` (ml-engineer) e a SPEC-036 para a importação na borda (developer), por causa do hook de caminhos e do reuso do `DatasetWriter`; (b) manifest inalterado e origem em `DATASET_DIR/sources.csv`, em vez de colunas novas; (c) `item_id` externo `X<tipo>-NNNN`, que decide sozinho a regra do split; (d) externas fora dos estratos, sempre no treino, com teto de 30% e guarda no `rows_for`; (e) registro de fontes `ml/external_sources.csv` no Git como arquivo de atribuições, com lista fechada de licenças; (f) contagem por origem no relatório de dados e no `counts` do `metrics.json`, sem mudar as chaves de topo; (g) Anexo A com os datasets avaliados. ADR-020 (`Proposto`) criado. | Decisão do humano de 2026-10-19 (fotos de conhecidos e imagens externas) | Orquestrador, a pedido do humano |
 | 2026-10-23 | §4.3: `ALLOWED_LICENSES` reduzida a `CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0` e `BSD-3-Clause` (NonCommercial e ShareAlike recusadas com `invalid_license`). CA-05: 3 casos novos (`CC-BY-NC-SA-4.0`, `CC-BY-SA-4.0`, `CC-BY-NC-4.0` → `invalid_license`; agora 6 casos). §1 e §7 (nota das licenças) alinhados. §9 passa a registrar as decisões confirmadas: teto de 30%, lista nova e faixa 500–999 só como recomendação. Anexo A: #1, #2, #7 e #8 marcados como não permitidos e "Leitura para a escolha" reescrita (o `unusable` fica sem fonte externa permitida). Cabeçalho: ADR-020 `Aceito`. | Decisão do humano de 2026-10-23 (o `model.onnx` é publicado num Release público) | Architect, a pedido do humano |
 | 2026-10-23 | Aprovada pelo humano (`Draft` → `Ready`), com as decisões confirmadas: rotação EXIF aplicada e reencode na importação, teto de 30%, faixa 500–999 só como convenção e lista de licenças sem NonCommercial nem ShareAlike. | Mensagem do humano de 2026-10-23 | Orquestrador, a pedido do humano |
+| 2026-10-23 | §4.6: subcomando novo `python -m qc_ml.report release-notes --model-dir <dir> [--external-sources <arquivo>] [--output <arquivo>]`, que gera as notas do GitHub Release: linha `sha256:`, seção "Fontes externas e créditos" com uma linha por fonte (mesma ordem e mesmos dados da seção `### Dados` do CHANGELOG, mais o link da licença e o da fonte; fonte fora do registro com a mesma linha do CHANGELOG e aviso), a frase "Este modelo não usa imagens externas (ADR-020)." sem externas, e os caminhos de `ml/external_sources.csv` e do CHANGELOG. §4.7: o registro sintético ganha `license_url` fixo. §4.8: o passo do Release no `ml/README.md` usa `--notes-file` com o arquivo gerado, e o arquivo de créditos é obrigatório quando o modelo usou fontes externas. §3.1, §6, §7 e §8 alinhados. CAs novos CA-16 a CA-20. Nenhum CA existente muda; contrato e chaves do `metrics.json` não mudam. Classificação ADR-019: exige humano (X-5: comando e comportamento novos; X-2: ADR-020 alterado junto). SPEC marcada como "**Aguardando reaprovação humana**". | Decisão do humano de 2026-10-23 (créditos visíveis no Release) | Architect, a pedido do humano |
