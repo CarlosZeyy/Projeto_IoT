@@ -122,3 +122,23 @@ Os outros testes de aceite antigos passam.
 - [x] `.env.example` atualizado (se houver variável nova): não há variável nova
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] Nenhum `.onnx` novo no Git e nenhum dado em `ml/data/`. Os testes usam cópias da fixture em `tmp_path`, e o export de verificação foi gravado no scratchpad da sessão.
+
+## Adendo do developer (§4.8)
+
+| Campo | Valor |
+|---|---|
+| Autor | developer |
+| Commit | `bde95df` (`bde95df18be8de8172aec448b61023ed72fc7ae4`), só `tests/test_dependency_isolation.py` |
+
+**Mudança.** Em `test_ml_train_extra_declares_training_stack`, a igualdade exata das strings do extra `train` (antiga linha 73) passou a ser igualdade exata dos **nomes** dos requisitos. O nome é o prefixo de cada string que casa `[A-Za-z0-9._-]+`, em minúsculas, então o especificador de versão, o marcador e os extras ficam de fora. O conjunto esperado continua `{"torch", "torchvision", "timm", "onnx", "coral-pytorch"}`, com `==`, nem mais nem menos. Entrou o `import re`, e não se usa `packaging`. Nenhuma outra linha do arquivo mudou: as asserções sobre o `uv.lock` ficaram iguais.
+
+**Resultado de `uv run pytest -q tests/test_dependency_isolation.py`:**
+
+```text
+..............                                                           [100%]
+14 passed in 0.06s
+```
+
+`uv run ruff check .` e `uv run ruff format --check .`: limpos (`All checks passed!`, `226 files already formatted`).
+
+SPEC_ISSUE: nenhum.
