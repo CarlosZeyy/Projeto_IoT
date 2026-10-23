@@ -15,6 +15,7 @@ CLI::
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -34,7 +35,11 @@ FIXTURE_KEYS: tuple[str, ...] = ("inputs", "type_probs", "grade_probs", "model_s
 
 @dataclass(frozen=True)
 class ParityResult:
-    """``ok`` is ``max_abs_diff < 1e-4 and argmax_equal and sha256_match``."""
+    """``ok`` is ``max_abs_diff < 1e-4 and argmax_equal and sha256_match``.
+
+    A shape mismatch or any non-finite value (ONNX output or fixture reference) gives
+    ``ok=False``, ``max_abs_diff=inf`` and ``argmax_equal=False`` (SPEC-031 section 4.1).
+    """
 
     ok: bool
     max_abs_diff: float
@@ -71,24 +76,41 @@ def check_parity(model_dir: Path | str) -> ParityResult:
     inputs = np.ascontiguousarray(fixture["inputs"], dtype=np.float32)
     outputs = session.run(list(OUTPUT_NAMES), {INPUT_NAME: inputs})
     expected = (fixture["type_probs"], fixture["grade_probs"])
-    max_abs_diff = 0.0
-    argmax_equal = True
-    for got, want in zip(outputs, expected, strict=True):
-        got = np.asarray(got, dtype=np.float64)
-        want = np.asarray(want, dtype=np.float64)
+    sha256_match = fixture_sha == digest
+    pairs = [
+        (np.asarray(got, dtype=np.float64), np.asarray(want, dtype=np.float64))
+        for got, want in zip(outputs, expected, strict=True)
+    ]
+    for got, want in pairs:
         if got.shape != want.shape:
             return ParityResult(
                 ok=False,
-                max_abs_diff=float("inf"),
+                max_abs_diff=math.inf,
                 argmax_equal=False,
-                sha256_match=fixture_sha == digest,
+                sha256_match=sha256_match,
                 message=f"shape {got.shape} differs from the fixture {want.shape}",
             )
-        max_abs_diff = max(max_abs_diff, float(np.max(np.abs(got - want))) if got.size else 0.0)
+    if not all(np.isfinite(array).all() for pair in pairs for array in pair):
+        # A NaN would vanish from a plain max(); fail before computing any difference.
+        problems = ["non-finite values in the ONNX outputs or in the fixture"]
+        if not sha256_match:
+            problems.append("the fixture was made for another model (model_sha256 differs)")
+        return ParityResult(
+            ok=False,
+            max_abs_diff=math.inf,
+            argmax_equal=False,
+            sha256_match=sha256_match,
+            message="; ".join(problems),
+        )
+    max_abs_diff = 0.0
+    argmax_equal = True
+    for got, want in pairs:
+        if got.size:
+            # np.maximum propagates NaN (np.fmax and max() would drop it).
+            max_abs_diff = float(np.maximum(max_abs_diff, np.max(np.abs(got - want))))
         argmax_equal = argmax_equal and bool(
             np.array_equal(np.argmax(got, axis=1), np.argmax(want, axis=1))
         )
-    sha256_match = fixture_sha == digest
     ok = max_abs_diff < TOLERANCE and argmax_equal and sha256_match
     problems = []
     if not max_abs_diff < TOLERANCE:

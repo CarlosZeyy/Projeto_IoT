@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 
 from qc_ml.data import (
+    ITEM_ID_PATTERN,
     SPLIT_NAMES,
     configure_logging,
     dominant_grade,
@@ -43,10 +44,9 @@ from qc_ml.errors import ManifestError, SplitError, SplitIntegrityError
 
 SPLIT_COLUMNS: tuple[str, str] = ("image_path", "split")
 SPLIT_FILE_PATTERN = re.compile(r"split_v([1-9][0-9]*)\.csv")
-# File name written by the collect mode (SPEC-010): <item_id>__<angle>__<ts>.jpg.
-IMAGE_FILE_PATTERN = re.compile(r"([SNOT]-[0-9]{3})__[0-4]__[0-9]{8}T[0-9]{6}Z\.jpg")
-# A valid item_id (SPEC-011 §4.4, source 2): excluded rows skip the row checks of load_manifest.
-ITEM_ID_PATTERN = re.compile(r"[SNOT]-[0-9]{3}")
+# File name written by the collect mode (SPEC-010): <item_id>__<angle>__<ts>.jpg. The item_id
+# part reuses qc_ml.data.ITEM_ID_PATTERN, the single definition of a valid item_id (SPEC-031).
+IMAGE_FILE_PATTERN = re.compile(rf"({ITEM_ID_PATTERN.pattern})__[0-4]__[0-9]{{8}}T[0-9]{{6}}Z\.jpg")
 DEFAULT_RATIOS: tuple[float, float, float] = (0.70, 0.15, 0.15)
 OUTDATED_MESSAGE = "split outdated: run qc_ml.split"
 MIN_STRATUM_ITEMS = 3

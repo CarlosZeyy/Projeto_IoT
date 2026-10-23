@@ -57,11 +57,27 @@ INPUT_NAME = "image"
 OUTPUT_NAMES: tuple[str, str] = ("type_probs", "grade_probs")
 
 
+def _log_export_warnings(caught: Sequence[warnings.WarningMessage]) -> None:
+    """Log the warnings captured during ``torch.onnx.export`` as ``WARNING``; never re-emit.
+
+    Each ``DeprecationWarning`` (or subclass) becomes ``torch.onnx.export: <message>``: the
+    TorchScript exporter (``dynamo=False``) is deprecated upstream, and logging its notices keeps
+    a change of that path visible in the training log (SPEC-031 section 4.3). Any other captured
+    warning is logged too, with its category, so that capturing does not hide it.
+    """
+    for item in caught:
+        if issubclass(item.category, DeprecationWarning):
+            logger.warning("torch.onnx.export: %s", item.message)
+        else:
+            logger.warning("torch.onnx.export (%s): %s", item.category.__name__, item.message)
+
+
 def export_onnx(model: nn.Module, out_path: Path | str, opset: int = OPSET) -> Path:
     """Export ``ProbabilityWrapper(model)`` (or ``model`` if already wrapped) to ``out_path``.
 
     Uses the TorchScript-based exporter (``dynamo=False``), which needs no extra dependency.
-    ``onnx.checker.check_model`` runs on the result.
+    The deprecation warnings emitted by ``torch.onnx.export`` are logged as ``WARNING`` on
+    ``qc_ml.export`` (not re-emitted). ``onnx.checker.check_model`` runs on the result.
 
     Raises:
         ExportError: ``opset < 17`` or the checker rejects the model.
@@ -74,8 +90,8 @@ def export_onnx(model: nn.Module, out_path: Path | str, opset: int = OPSET) -> P
     out_path.parent.mkdir(parents=True, exist_ok=True)
     dummy = torch.zeros(1, 3, 224, 224, dtype=torch.float32)
     axes = {name: {0: "batch"} for name in (INPUT_NAME, *OUTPUT_NAMES)}
-    with warnings.catch_warnings(), torch.no_grad():
-        warnings.simplefilter("ignore", DeprecationWarning)  # legacy exporter notice
+    with warnings.catch_warnings(record=True) as caught, torch.no_grad():
+        warnings.simplefilter("always")  # record every warning, even under "error" filters
         torch.onnx.export(
             wrapper,
             (dummy,),
@@ -87,6 +103,7 @@ def export_onnx(model: nn.Module, out_path: Path | str, opset: int = OPSET) -> P
             do_constant_folding=True,
             dynamo=False,
         )
+    _log_export_warnings(caught)
     try:
         onnx.checker.check_model(onnx.load(str(out_path)))
     except onnx.checker.ValidationError as exc:

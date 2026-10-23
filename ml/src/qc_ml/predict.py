@@ -42,7 +42,8 @@ class Predictions:
     ``type_probs`` is ``[N, T]`` and ``grade_probs`` ``[N, 5]`` (float64); ``true_type_idx`` is
     the position of the true ``object_type`` in ``labels.object_types``; ``true_grade_idx`` the
     position of the true grade, or ``-1`` without grade. The constructor converts sequences to
-    numpy arrays and checks the shapes.
+    numpy arrays and checks the shapes; every probability must be finite and in ``[0, 1]``
+    (``ValueError`` otherwise, naming only the field).
     """
 
     split: str
@@ -71,6 +72,12 @@ class Predictions:
             raise ValueError(f"grade_probs must have shape [{n}, 5], got {grade_probs.shape}")
         if true_type.shape != (n,) or true_grade.shape != (n,):
             raise ValueError("true_type_idx and true_grade_idx must have one value per image")
+        for name, probs in (("type_probs", type_probs), ("grade_probs", grade_probs)):
+            # Fail loud before thresholds/metrics are computed from a broken model (SPEC-031).
+            if not np.isfinite(probs).all():
+                raise ValueError(f"{name} has non-finite values")
+            if probs.size and (probs.min() < 0.0 or probs.max() > 1.0):
+                raise ValueError(f"{name} has values outside [0, 1]")
         object.__setattr__(self, "image_paths", paths)
         object.__setattr__(self, "type_probs", type_probs)
         object.__setattr__(self, "grade_probs", grade_probs)

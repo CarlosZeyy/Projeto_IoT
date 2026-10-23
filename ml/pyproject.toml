@@ -16,7 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 # Heavy training stack (ADR-004): only with `uv sync --all-packages --extra train`.
 train = [
-    "torch",
+    "torch<2.15",
     "torchvision",
     "timm",
     "onnx",
