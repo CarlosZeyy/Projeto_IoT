@@ -77,7 +77,8 @@ def export_onnx(model: nn.Module, out_path: Path | str, opset: int = OPSET) -> P
 
     Uses the TorchScript-based exporter (``dynamo=False``), which needs no extra dependency.
     The deprecation warnings emitted by ``torch.onnx.export`` are logged as ``WARNING`` on
-    ``qc_ml.export`` (not re-emitted). ``onnx.checker.check_model`` runs on the result.
+    ``qc_ml.export`` (not re-emitted), once per call, also when ``torch.onnx.export`` raises;
+    its exception then leaves unchanged. ``onnx.checker.check_model`` runs on the result.
 
     Raises:
         ExportError: ``opset < 17`` or the checker rejects the model.
@@ -90,20 +91,25 @@ def export_onnx(model: nn.Module, out_path: Path | str, opset: int = OPSET) -> P
     out_path.parent.mkdir(parents=True, exist_ok=True)
     dummy = torch.zeros(1, 3, 224, 224, dtype=torch.float32)
     axes = {name: {0: "batch"} for name in (INPUT_NAME, *OUTPUT_NAMES)}
-    with warnings.catch_warnings(record=True) as caught, torch.no_grad():
-        warnings.simplefilter("always")  # record every warning, even under "error" filters
-        torch.onnx.export(
-            wrapper,
-            (dummy,),
-            str(out_path),
-            input_names=[INPUT_NAME],
-            output_names=list(OUTPUT_NAMES),
-            dynamic_axes=axes,
-            opset_version=opset,
-            do_constant_folding=True,
-            dynamo=False,
-        )
-    _log_export_warnings(caught)
+    caught: list[warnings.WarningMessage] = []
+    try:
+        with warnings.catch_warnings(record=True) as caught, torch.no_grad():
+            warnings.simplefilter("always")  # record every warning, even under "error" filters
+            torch.onnx.export(
+                wrapper,
+                (dummy,),
+                str(out_path),
+                input_names=[INPUT_NAME],
+                output_names=list(OUTPUT_NAMES),
+                dynamic_axes=axes,
+                opset_version=opset,
+                do_constant_folding=True,
+                dynamo=False,
+            )
+    finally:
+        # Outside catch_warnings (a warning from logging is not trapped in the list), and also
+        # when the export raises: the warnings explain a break of the exporter (SPEC-037 4.6).
+        _log_export_warnings(caught)
     try:
         onnx.checker.check_model(onnx.load(str(out_path)))
     except onnx.checker.ValidationError as exc:

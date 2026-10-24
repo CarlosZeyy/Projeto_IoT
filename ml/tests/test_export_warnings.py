@@ -59,3 +59,28 @@ def test_export_logs_captured_warnings(
         assert f"torch.onnx.export: {MARKER}" in messages
     else:  # not a deprecation: still logged (with its category), never re-emitted
         assert f"torch.onnx.export ({category.__name__}): {MARKER}" in messages
+
+
+def test_export_logs_warnings_when_the_export_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SPEC-037 section 4.6: the warnings captured until the failure are logged once, and the
+    exception of ``torch.onnx.export`` leaves unchanged."""
+    warning_marker = f"{MARKER}-before-failure"
+    error_marker = "spec037-export-failure-marker"
+
+    def warn_and_fail(*args, **kwargs):
+        warnings.warn(warning_marker, DeprecationWarning, stacklevel=1)
+        raise RuntimeError(error_marker)
+
+    monkeypatch.setattr(torch.onnx, "export", warn_and_fail)
+    caplog.set_level(logging.WARNING, logger="qc_ml.export")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(RuntimeError, match=error_marker):
+            export_mod.export_onnx(_tiny_net(), tmp_path / "model.onnx")
+    records = [
+        r for r in caplog.records if r.name == "qc_ml.export" and r.levelno == logging.WARNING
+    ]
+    assert [r.getMessage() for r in records] == [f"torch.onnx.export: {warning_marker}"]
+    assert not (tmp_path / "model.onnx").exists()

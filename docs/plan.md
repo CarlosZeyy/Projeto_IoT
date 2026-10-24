@@ -73,7 +73,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [034](specs/SPEC-034-reenvio-dead-outbox.md) | Reenvio de itens `dead` do outbox | developer | security | 009, 030 | S5 | In Security (r1) |
 | [035](specs/SPEC-035-ml-origem-das-imagens.md) | ML: origem das imagens (conhecidos e externas), externas só no treino e atribuições | ml-engineer | — | 031, 011, 012 | S3 | Done |
 | [036](specs/SPEC-036-importacao-de-fotos.md) | Importação para o dataset de fotos que não vêm da página `/capture` | developer | security | 035, 030, 025, 010 | S3 | Ready |
-| [037](specs/SPEC-037-manutencao-ml-origem.md) | Manutenção do ML (contagens do `metrics.json` nas notas do Release e no CHANGELOG, teto com underflow, cabeçalho exato, gerador sintético e avisos do export) | ml-engineer | — | 035 (e 031) | S3–S4 | Ready |
+| [037](specs/SPEC-037-manutencao-ml-origem.md) | Manutenção do ML (contagens do `metrics.json` nas notas do Release e no CHANGELOG, teto com underflow, cabeçalho exato, gerador sintético e avisos do export) | ml-engineer | — | 035 (e 031) | S3–S4 | In Review (r1) |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
 

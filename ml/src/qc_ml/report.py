@@ -12,6 +12,9 @@ of the model, with the same source lines plus the licence and source links; it f
 when a source used in train is not in the registry, so that no notes without the full credit
 are ever generated.
 
+Both commands fail (exit 2, nothing written) when a count they show is not a non-negative
+integer (SPEC-037 section 4.1): a value with a line break would otherwise forge a source line.
+
 No torch, no sklearn here (CA-27).
 
 CLI::
@@ -226,6 +229,56 @@ def source_lines(
     return result
 
 
+INVALID_COUNT = "invalid count in metrics.json: "
+SPLITS: tuple[str, ...] = ("train", "val", "test")
+
+
+class InvalidCountsError(ValueError):
+    """Counts of ``metrics.json`` that are shown are not non-negative integers (exit 2).
+
+    ``fields`` are the paths of the invalid counts (e.g. ``counts.train.n_images``); the values
+    are never part of the message (SPEC-037 section 4.1).
+    """
+
+    def __init__(self, fields: Sequence[str]) -> None:
+        self.fields = list(fields)
+        super().__init__("\n".join(f"{INVALID_COUNT}{name}" for name in self.fields))
+
+
+def is_valid_count(value: Any) -> bool:
+    """A JSON integer ``>= 0`` (``bool`` is not a count, although it is an ``int`` in Python)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def check_counts(metrics: Mapping[str, Any], *, data_section: bool) -> None:
+    """Check the counts of ``metrics.json`` before any line that shows them is built.
+
+    The single check behind ``release-notes`` and ``changelog`` (SPEC-037 section 4.1):
+    ``counts.train.by_source.<id>`` for each source (``<id>`` as ``shown_source_id``) and, with
+    ``data_section`` (the ``### Dados`` section is generated), also ``counts.train.n_images``
+    and ``counts.<split>.by_origin.external`` of the three splits, which must be present.
+
+    Raises:
+        InvalidCountsError: with every invalid field, in that order.
+        ValueError: ``counts.train.by_source`` is present but is not a JSON object.
+    """
+    fields: list[str] = []
+    if data_section:
+        if not is_valid_count(_counts_of(metrics, "train").get("n_images")):
+            fields.append("counts.train.n_images")
+        for split in SPLITS:
+            by_origin = _counts_of(metrics, split).get("by_origin")
+            value = by_origin.get("external") if isinstance(by_origin, Mapping) else None
+            if not is_valid_count(value):
+                fields.append(f"counts.{split}.by_origin.external")
+    by_source = train_sources(metrics)
+    for source_id in sorted(by_source):
+        if not is_valid_count(by_source[source_id]):
+            fields.append(f"counts.train.by_source.{shown_source_id(source_id)}")
+    if fields:
+        raise InvalidCountsError(fields)
+
+
 def _fraction_ceiling(numerator: Any, denominator: Any) -> str:
     """``numerator / denominator`` with 4 decimals, decimal comma, rounded up (exact)."""
     if not (isinstance(numerator, int) and isinstance(denominator, int)) or denominator <= 0:
@@ -235,9 +288,14 @@ def _fraction_ceiling(numerator: Any, denominator: Any) -> str:
 
 
 def data_section(metrics: Mapping[str, Any], registry: Mapping[str, ExternalSource]) -> list[str]:
-    """Lines of ``### Dados`` (empty for a ``metrics.json`` without ``by_origin``)."""
+    """Lines of ``### Dados`` (empty for a ``metrics.json`` without ``by_origin``).
+
+    Raises:
+        InvalidCountsError: a count shown in the section is invalid (``check_counts``).
+    """
     if not _has_origins(metrics):
         return []
+    check_counts(metrics, data_section=True)
     e_train = _external_images(metrics, "train")
     n_train = _counts_of(metrics, "train").get("n_images", 0)
     lines = [
@@ -261,7 +319,12 @@ def changelog_entry(
 
     ``registry`` (``source_id -> ExternalSource``) gives the licence and credit of the sources
     in the ``### Dados`` section; ``None`` is an empty registry.
+
+    Raises:
+        InvalidCountsError: the section is generated and one of its counts is invalid.
     """
+    if _has_origins(metrics):
+        check_counts(metrics, data_section=True)  # before any line is built
     version = metrics.get("model_version", "?")
     lines = [f"## {version} — {_entry_date(metrics)}", ""]
     lines += [
@@ -315,11 +378,14 @@ def release_notes(
     """Markdown of the GitHub Release notes (SPEC-035 section 4.6), ending with one ``\\n``.
 
     Raises:
+        InvalidCountsError: a count of ``counts.train.by_source`` is not a non-negative integer
+            (checked before the sources missing from the registry, SPEC-037 section 4.1).
         ReleaseNotesError: a source of ``counts.train.by_source`` is not in the registry; the
             message has one ``source not in registry: <source_id>`` line per missing source, in
             ``source_id`` order (``<invalid source_id>`` for an id outside the registry format).
         ValueError: ``counts.train.by_source`` is not a JSON object.
     """
+    check_counts(metrics, data_section=False)
     lines = source_lines(train_sources(metrics), registry)
     missing = [source_id for source_id, _, source in lines if source is None]
     if missing:
@@ -372,6 +438,11 @@ def _print_problems(problems: Sequence[Any]) -> None:
         print(problem, file=sys.stderr)
 
 
+def _print_invalid_counts(prefix: str, exc: InvalidCountsError) -> None:
+    for name in exc.fields:
+        print(f"{prefix} {INVALID_COUNT}{name}", file=sys.stderr)
+
+
 def _release_notes_main(args: argparse.Namespace) -> int:
     """Every check runs before ``--output`` is opened; on error nothing is written."""
     try:
@@ -379,6 +450,9 @@ def _release_notes_main(args: argparse.Namespace) -> int:
         metrics = load_metrics(args.model_dir)
         registry = _load_registry(args.external_sources)
         text = release_notes(digest, metrics, registry)
+    except InvalidCountsError as exc:
+        _print_invalid_counts("release-notes failed:", exc)
+        return EXIT_ERROR
     except ReleaseNotesError as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_ERROR
@@ -447,6 +521,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_ERROR
     try:
         entry = changelog_entry(metrics, previous, registry)
+    except InvalidCountsError as exc:
+        _print_invalid_counts("report failed:", exc)
+        return EXIT_ERROR
     except ValueError as exc:
         print(f"report failed: {exc}", file=sys.stderr)
         return EXIT_ERROR

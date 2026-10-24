@@ -241,7 +241,9 @@ def make_synthetic_dataset(
 
     Raises:
         FileExistsError: ``root/manifest.csv`` already exists.
-        ValueError: non-positive counts, negative ``c``/``k`` or too many items of a type.
+        ValueError: non-positive counts, negative ``c``/``k``, too many items of a type, or
+            ``c > 0`` with an own item numbered 501 or more (it would collide with a contributor
+            item, SPEC-037 section 4.5).
     """
     if items_per_stratum < 1 or images_per_item < 1:
         raise ValueError("items_per_stratum and images_per_item must be >= 1")
@@ -254,6 +256,17 @@ def make_synthetic_dataset(
     last_contributor = CONTRIBUTOR_FIRST_NUMBER - 1 + contributor_items_per_stratum * len(GRADES)
     if last_contributor > MAX_ITEMS_PER_TYPE:
         raise ValueError(f"contributor items go up to {MAX_ITEMS_PER_TYPE} per type")
+    if contributor_items_per_stratum > 0:
+        # SPEC-037 section 4.5: the contributor items start at 501 in every letter, so an own
+        # item numbered 501 or more would share its item_id with one of them (another label).
+        last_own = {ITEM_PREFIXES[t]: items_per_stratum * len(GRADES) for t in GRADED_OBJECT_TYPES}
+        if include_other:
+            last_own[ITEM_PREFIXES["other"]] = items_per_stratum
+        if any(last >= CONTRIBUTOR_FIRST_NUMBER for last in last_own.values()):
+            raise ValueError(
+                "items_per_stratum is too large for contributor_items_per_stratum > 0: the own "
+                f"items would reach {CONTRIBUTOR_FIRST_NUMBER}, the first contributor item number"
+            )
     if external_items_per_stratum * len(GRADES) > MAX_EXTERNAL_ITEMS_PER_TYPE:
         raise ValueError(f"at most {MAX_EXTERNAL_ITEMS_PER_TYPE} external items per type")
     root = Path(root)
