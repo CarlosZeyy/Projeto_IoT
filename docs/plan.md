@@ -52,12 +52,12 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | Done (CA-26 manual confirmado pelo humano) |
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
 | [015](specs/SPEC-015-deploy.md) | Deploy na VPS pessoal (Docker Compose + Caddy), banco no Supabase e keep-alive | security-devops | deploy, security, infra | 004, 013, 026, 027, 028 (e 003, 005, 006, 014) | S4 | In Security (r2; portões PASS, aguardando os CAs manuais na VPS) |
-| [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais | ml-engineer + developer | contrato | 012 (e 002, 003, 008, 011, 013) | S6 | Draft |
-| [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006 (e 003, 004) | S6 | Draft |
-| [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos | developer | contrato, security | 004 (e 002, 003, 009, 013) | S6 | Draft |
-| [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS) | developer | security | 008 (e 007, 009) | S8 | Draft |
-| [020](specs/SPEC-020-mqtt.md) | Fase 3: transporte MQTT | developer | security | 009 (e 004) | S8 | Draft |
-| [021](specs/SPEC-021-ferramentas-eletricas.md) | Fase 3: ferramentas elétricas (identificação) | ml-engineer + developer | contrato | 016 | S8 | Draft |
+| [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais (contrato 0.4.0, tipos sem grau e teste estendido; ADR-021/022 `Proposto`) | developer + ml-engineer | contrato, security | 034, 035, 036, 037, 026, 028 (e 008, 010, 011, 012, 013) | S5–S6 | Draft |
+| [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006, 015, 016, 026 (e 003, 004, 014) | S6 | Draft |
+| [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos (contrato 0.5.0) | developer | contrato, security | 034, 016, 030 (e 004, 009, 013, 028) | S6 | Draft |
+| [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030 (e 007, 009, 024) | S8 | Draft |
+| [020](specs/SPEC-020-mqtt.md) | Fase 3: transporte MQTT (Mosquitto local e ponte) | developer | security | 009, 030, 034 (e 004) | S8 | Draft |
+| [021](specs/SPEC-021-ferramentas-eletricas.md) | Fase 3: ferramentas elétricas (só identificação, contrato 0.6.0) | developer + ml-engineer | contrato, security | 016, 018, 034 | S8 | Draft |
 | [022](specs/SPEC-022-manutencao-setup.md) | Manutenção do setup (hook, CI sem senha, commits do architect) | developer | infra | 001 | S1 | Done |
 | [023](specs/SPEC-023-pacotes-compartilhados-0-2.md) | Pacotes compartilhados 0.2.0 (teto de `latency_ms`, proporção da imagem, flag de JPEG truncado) | developer | contrato, security | 002 | S2 | Done |
 | [024](specs/SPEC-024-preprocess-0-3-scans-jpeg.md) | `qc-preprocess` 0.3.0 (limite de scans do JPEG) | developer | security | 023 | S2 | Done |
@@ -98,7 +98,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 - **034** por último, depois da 030 (mesmo módulo), mas `Done` antes de a 016 ou a 018 entrar em `In Dev` (primeira mudança de contrato com a borda em operação).
 - A 017 (`Draft`) continua depois da 012, como na ordem acima; a posição dela em relação a estas manutenções fica com o humano.
 
-**Ordem do loop aprovada pelo humano em 2026-10-23:** 031 → 035 → 036 → 032 → 034. A Fase 2 (016–018) não está aprovada e não entra no loop.
+**Ordem do loop aprovada pelo humano em 2026-10-23:** 031 → 035 → 036 → 032 → 034. A Fase 2 (016–018) não está aprovada e não entra no loop. (Em 2026-10-24 o humano liberou as Fases 2 e 3; as SPECs 016 a 021 aguardam a aprovação do conteúdo. Ordem proposta mais abaixo, no parágrafo "Fases 2 e 3".)
 
 **Fotos de fora da página (ADR-020 `Aceito` e SPECs 035/036 `Ready` em 2026-10-23):** 031 → 035 → 036, com a 030 `Done` antes da 036. As duas precisam estar `Done` **antes do `split_v1`**, para que as fotos de conhecidos importadas antes dele possam cair no teste (ADR-014). Até lá, nenhum arquivo recebido entra em `ml/data/` (`docs/dataset-protocol.md` §10).
 
@@ -106,6 +106,21 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 
 - Entram: RV-01 (= T-01 do test-report, média: contagens do `metrics.json` só como `int` não negativo nas notas do Release e na seção `### Dados` do CHANGELOG, senão saída 2 sem gravar nada), RV-02 (teto com underflow), RV-03 (`<invalid source_id>` no CHANGELOG como comportamento), RV-04 (cabeçalho exato com `unexpected_header`) e RV-05 (colisão de `item_id` no gerador) de `reviews/SPEC-035/r1-review-report.md`, e o RV-01 de `reviews/SPEC-031/r1-review-report.md` (avisos do export no `finally`).
 - Fica sem ação: o RV-02 da SPEC-031 (requisito repetido em `tests/test_dependency_isolation.py`), salvo decisão contrária do humano na aprovação (SPEC-037 §3.2 e §9).
+
+**Fases 2 e 3 (liberadas pelo humano em 2026-10-24; SPECs 016 a 021 revistas, todas `Draft`, e ADRs 021 e 022 `Proposto`, aguardando aprovação humana).** Ordem proposta depois de 036 → 037 → 032 → 034:
+
+```text
+034 ─► 016 ─► 018 ─► 017 ─┬─ (portão: Fase 2 fechada até 22/11, M3) ─► 020 ─► 019 ─► 021
+                          └─ sem o portão: Fase 3 fica para depois da entrega
+```
+
+- **016 primeiro** (Fase 2, caminho crítico): destrava a coleta humana das fotos de ferramentas, que só pode começar depois do merge dela, e o modelo com ferramentas tem de estar treinado até o M3. É também a primeira mudança de contrato com a borda em operação, por isso a **034 `Done` antes** (prazo da 034). Exige os ADRs 021 e 022 `Aceito`.
+- **018 em seguida:** a segunda mudança de contrato (0.5.0), logo depois da primeira, para concentrar os deploys "API primeiro" antes do congelamento; independe de dados.
+- **017 por último na Fase 2:** só API, sem contrato, risco baixo; usa o SPC por `grade is not null` da 016 e precisa da API publicada (015) para o CA manual.
+- **Portão da Fase 3:** a regra de escopo continua (PRD §4.3): o loop só executa 019, 020 e 021 se a Fase 2 fechar até 22/11. Se o professor exigir MQTT (pergunta 1), a 020 sobe para logo depois da 017, mesmo sem o portão.
+- **020 antes da 019:** é toda testável no CI (broker em memória) e não depende do navegador dos celulares; a 019 depende do teste humano da CA do `mkcert` nos dois celulares (SPEC-019 §3.3), que pode ser feito antes, em paralelo.
+- **021 por último:** depende das fotos das ferramentas elétricas e gera um modelo depois do congelamento (M3); a troca do modelo da demo é decisão humana (SPEC-021 §9).
+- Paralelismo (worktrees, SPEC-033): 019 e 020 tocam módulos diferentes da borda e podem correr juntas; 016, 017 e 018 tocam a API e as migrações e ficam em sequência.
 
 - A **SPEC-023** (pacotes 0.2.0, pendências do review da SPEC-002) entra **antes** da 004 e da 007 e pode correr em paralelo com a 003 (`002 → 023 → 004/007`).
 - A **SPEC-024** (`qc-preprocess` 0.3.0, SEC-01 do security-report da SPEC-023) entra **antes** da 007 (`023 → 024 → 007`). A 004 depende dela só pela migração das expectativas de versão (abaixo), e a 024 já está mergeada (PR #9).
@@ -182,3 +197,4 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | 2026-10-19 | Decisão do humano: o dataset passa a aceitar **fotos de conhecidos** (tiradas em outros celulares, recebidas como arquivo; valem como fotos próprias, em todos os splits, pela R-11) e **imagens de datasets públicos ou da internet** com licença que permita uso acadêmico e fonte registrada (**só no treino**, complemento e não base). O MVP continua parafuso e porca; pregos e outros objetos em `other`; ferramentas na Fase 2. ADR-020 (`Proposto`): externas com `item_id` `X<tipo>-NNNN`, sempre no treino, teto de 30%, lista fechada de licenças e registro `ml/external_sources.csv` no Git; manifest inalterado, origem em `DATASET_DIR/sources.csv`; importação que normaliza como a página. SPEC-035 (ML, ml-engineer) e SPEC-036 (importação na borda, developer) criadas como `Draft`. `docs/dataset-protocol.md` §10 nova; `docs/architecture.md` §6.3, §7 e §9 anotados "a partir das SPECs 035/036". SPECs 010, 011 e 012 (`Done`) com nota só de texto no Histórico; SPEC-016 (`Draft`) alinhada (imagens públicas só no treino, prefixo `XT-`). Nenhuma outra SPEC muda de status |
 | 2026-10-23 | Aprovações do humano: ADR-020 `Aceito`; SPECs 035 e 036 `Draft` → `Ready`, com as decisões: a importação aplica a rotação EXIF e reencoda (lado maior até 1280 px, JPEG q=90, sem metadados); teto de 30% de imagens externas no treino; faixa 500–999 para peças de conhecidos só como convenção, sem validação; licenças aceitas só `CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0` e `BSD-3-Clause` (ShareAlike e NonCommercial fora, inclusive o MVTec AD, porque o `model.onnx` é publicado no GitHub), ajustada pelo architect no ADR-020, nas SPECs 035/036, no Anexo A, no `docs/dataset-protocol.md` e com nota no ADR-001. Pergunta 9 ao professor (datasets públicos e fotos de terceiros), ligada à 3. N-11 cita o ADR-020. Ordem do loop: 031 → 035 → 036 → 032 → 034; a 035 e a 036 `Done` antes do `split_v1`; nenhuma foto recebida entra em `ml/data/` antes da 036 `Done`. A Fase 2 (016–018) segue sem aprovação |
 | 2026-10-24 | SPEC-037 (manutenção do ML, ml-engineer) criada como `Draft`, com as pendências não bloqueantes dos portões r1 das SPECs 031 e 035; **aguarda aprovação humana** e tem de estar `Done` **antes do primeiro GitHub Release de um modelo** (créditos das fontes externas na página pública; decisão do humano de 2026-10-23). Decisões propostas pelo architect: contagens só `int` não negativo, cabeçalho exato com `unexpected_header` e RV-02 da 031 sem ação. Ordem sugerida: 031 → 035 → 036 → 037 → 032 → 034. Nenhuma outra SPEC muda de status |
+| 2026-10-24 | Decisão do humano: o projeto inteiro está liberado, todas as fases (Fase 2: SPECs 016, 017, 018; Fase 3: 019, 020, 021). O architect reviu as seis (todas continuam `Draft`, aguardando aprovação humana) e propôs os ADRs 021 (tipos sem grau no contrato; SPC e taxa de defeito por `grade is not null`) e 022 (extensão única do teste para cada tipo novo), ambos `Proposto`. Contrato planejado: 0.4.0 (016), 0.5.0 (018), 0.6.0 (021). A 016 passa a ter a tag `security` e duas partes (developer e ml-engineer); a 021 também. A regra de escopo da Fase 3 continua (só se a Fase 2 fechar até 22/11). Ordem proposta: 034 → 016 → 018 → 017 → (portão) 020 → 019 → 021. `docs/architecture.md` anotado "a partir da SPEC-0XX" (§3.1, §3.2, §3.4, §4, §6.1, §6.2, §7, §10). Nenhuma outra SPEC muda de status |
