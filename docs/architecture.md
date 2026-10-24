@@ -66,6 +66,8 @@ Expansões futuras de `ObjectType`, cada uma acompanhada de aumento de versão:
 - **Fase 2:** `pliers`, `adjustable_wrench`, `allen_key`, `flat_screwdriver`, `phillips_screwdriver`.
 - **Fase 3:** `angle_grinder`, `saw`, `drill`, `cordless_screwdriver`.
 
+**Grupos de grau** (ADR-021, `Proposto`; a partir da SPEC-016, contrato 0.4.0): `GRADE_REQUIRED_OBJECT_TYPES` (`screw`, `nut`), `GRADE_FORBIDDEN_OBJECT_TYPES` (`unknown` e, a partir da SPEC-021, as ferramentas elétricas) e `GRADE_OPTIONAL_OBJECT_TYPES` (as ferramentas manuais). Cada tipo está em exatamente um grupo.
+
 A classe `other` do modelo é sempre mapeada para `unknown` no contrato.
 
 **Regra de defeito** (ADR-013), implementada uma única vez em `qc_contracts.is_defective(grade)`: `poor` e `unusable` são defeituosos; os demais graus não. `grade = None` (objeto `unknown`) não é defeito e **não entra no SPC**.
@@ -79,7 +81,7 @@ A classe `other` do modelo é sempre mapeada para `unknown` no contrato.
 | `lot_id` | str | `^[A-Za-z0-9_-]{1,40}$`, informado pelo operador |
 | `inspected_at` | datetime | com fuso; normalizado para UTC; não pode estar mais de 5 min no futuro |
 | `object_type` | ObjectType | |
-| `grade` | Grade \| null | `null` **se e somente se** `object_type == unknown` |
+| `grade` | Grade \| null | `null` **se e somente se** `object_type == unknown`. A partir da SPEC-016 (ADR-021): obrigatório nos tipos de grau obrigatório, `null` nos tipos sem grau e opcional nos de grau opcional (§3.1) |
 | `grade_score` | float \| null | 0–4, valor esperado Σ i·p(i); `null` quando `grade` é `null` |
 | `type_confidence` | float | 0–1 |
 | `grade_confidence` | float \| null | 0–1; `null` quando `grade` é `null` |
@@ -111,7 +113,7 @@ Campos extras são rejeitados (`extra="forbid"`).
 ### 3.4 SPC — carta p por lote (ADR-013)
 
 - **Subgrupo:** `lot_id`. Os lotes são ordenados pelo menor `inspected_at`.
-- **Registros considerados:** `object_type != unknown` e `source` filtrado (padrão `live`).
+- **Registros considerados:** `object_type != unknown` e `source` filtrado (padrão `live`). A partir da SPEC-016 (ADR-021): `grade is not null`, que seleciona as mesmas linhas nos dados do MVP; a mesma regra vale para o denominador de `defect_rate` no resumo e na série temporal.
 - **Por lote:** `n` = número de inspeções, `defects` = número de defeituosas, `p = defects / n`.
 - **Lotes excluídos:** com `n < min_lot_size` (padrão 5). Saem do cálculo e são listados em `excluded_lots`.
 - **Linha central:** `p̄ = Σ defects / Σ n` nos primeiros `baseline_lots` lotes válidos (padrão 20; se houver menos, usa todos).
@@ -155,6 +157,10 @@ Resposta (com os campos da 0.3.0; `points` abreviado a 1 dos 100 itens de uma hi
 | `GET /metrics/timeseries` | leitura | `bucket=minute|hour|day` e filtros | 005 |
 | `GET /metrics/spc` | leitura | `source`, `object_type` (opcional), `baseline_lots`, `min_lot_size`; `max_points` (2 a 500, padrão 100), com o corte do §3.4 | 006, 026 |
 | `GET /lots` | leitura | `Page[LotSummary]`: lotes com `n`, `defects` e período | 005 |
+| `POST /devices/{device_id}/heartbeat` | dispositivo | `HeartbeatCreate` → 204 (a partir da SPEC-018) | 018 |
+| `GET /devices` | leitura | `list[DeviceStatus]` com `online` calculado no servidor (a partir da SPEC-018) | 018 |
+
+A partir da SPEC-017, a API tem um laço em segundo plano, desligado por padrão (`ALERTS_ENABLED`), que avisa no Telegram quando um lote concluído fica fora de controle (tabela `alerts_sent`; sem rota nova).
 
 **Autenticação** (header `X-API-Key`):
 - **Dispositivo:** a chave é gerada por `scripts/register_device.py`. Só o hash SHA-256 fica na tabela `devices`, e a comparação usa `secrets.compare_digest`. O `device_id` do corpo precisa ser o dono da chave; caso contrário, retorna 403. A cada escrita, atualiza `devices.last_seen_at`.
@@ -204,6 +210,7 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 | `GET /capture?t=<token>` | celular | Página HTML/JS mínima: campo de lote, modo (inspeção/coleta), botão "Fotografar" (`<input type=file accept="image/*" capture="environment">`) e resultado. O JS redimensiona para no máximo 1280 px no lado maior e reencoda em JPEG (q=0,9) via canvas, o que também corrige a rotação EXIF |
 | `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG; limites próprios da rota: ≤ 3 MiB e ≤ 4 M pixels, checados pelo cabeçalho antes de decodificar (SPEC-007 §4.7); depois, as regras do `qc_preprocess.load_image`: ≤ 40 M pixels, proporção ≤ 10:1, JPEG com ≤ 64 marcadores de scan; tudo dentro do limitador de decodificações, §9), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
 | `GET /api/status` | console e celular | Modelo (versão, sha), outbox (pendentes), conectividade com a nuvem |
+| `GET /live?t=<token>` e `POST /api/live/frame` | celular | Vídeo ao vivo com uma inspeção por peça estável; exige HTTPS na LAN (`EDGE_TLS_CERT`/`EDGE_TLS_KEY`, CA local do `mkcert`). A partir da SPEC-019 (Fase 3) |
 
 **Sem modelo carregado** (`MODEL_DIR` vazio, por exemplo na S2, antes do primeiro treino): a borda sobe normalmente, o modo `collect` funciona e o modo `inspect` responde 503 com `{"detail": "model not loaded"}` (a página mostra o rótulo PT-BR). O stub de desenvolvimento (`--stub-model`, SPEC-007) **nunca** publica na nuvem: com ele, a borda usa o `InMemorySink` e não abre o outbox, então as inspeções do stub somem quando o processo termina e nenhuma subida posterior pode enviá-las (SPEC-009 §4.4, R-06).
 
@@ -228,6 +235,7 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
    - backoff exponencial de 1 s até 60 s, com jitter;
    - marca como enviado ao receber `created` ou `duplicate`;
    - o timeout de 5 s vale por operação (conexão, escrita, cada leitura). A partir da SPEC-030, cada requisição tem também um prazo total de 15 s e lê no máximo 512 KiB de resposta (estourar vira retry), e um salto do relógio para trás não prende o retry nem o health check;
+   - a partir da SPEC-020 (Fase 3), `EDGE_PUBLISHER=mqtt` troca o `HttpPublisher` por um `MqttPublisher` (Mosquitto só em loopback no notebook e uma ponte, `python -m qc_edge.mqtt_bridge`, que repassa à mesma rota HTTP); o item só vira enviado com a resposta da ponte, nunca pelo PUBACK;
    - um item recusado (413/422) vira `dead` e fica no arquivo. A partir da SPEC-034, `python -m qc_edge.requeue --outbox-path <arquivo> [--yes]` lista os `dead` e os devolve a `pending`, sem mudar o `payload` (a revalidação pelo contrato e a idempotência por `inspection_id` continuam).
 
 ### 6.3 Modo coleta (montagem do dataset)
@@ -263,7 +271,7 @@ Cada versão vive em `ml/models/<model_version>/`. **O nome do diretório é o `
 |---|---|
 | `model.onnx` | Entrada `image` float32 `[N,3,224,224]`; saídas `type_probs` `[N,T]` e `grade_probs` `[N,5]` |
 | `model.sha256` | Hash do `model.onnx` (vai em cada inspeção) |
-| `labels.json` | `{"object_types": ["screw","nut","other"], "grades": ["perfect","good","fair","poor","unusable"]}` |
+| `labels.json` | `{"object_types": ["screw","nut","other"], "grades": ["perfect","good","fair","poor","unusable"]}`. A partir da SPEC-016, também `ungraded_object_types` (lista opcional, padrão `[]`): os tipos que o modelo não gradua (ADR-021) |
 | `preprocessing.json` | Saída de `PreprocessParams.to_json()`: `resize_shorter`, `crop`, `mean`, `std` |
 | `decision.json` | `type_threshold`, `unusable_threshold`, `grade_review_threshold` (escolhidos na **validação**) |
 | `metrics.json` | Métricas do teste final (ver a skill `ml-pipeline`). A partir da SPEC-035, `counts.<split>` traz também `by_origin` (`capture`, `contributor`, `external`) e `by_source`; `val` e `test` têm sempre 0 imagens externas (ADR-020) |
@@ -324,7 +332,7 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
 
 ## 10. Testes (regras do projeto)
 
-- **Marcadores:** `db` (exige `TEST_DATABASE_URL`; sem ela, o teste é pulado, e no CI a sessão falha; SPEC-001 e SPEC-003), `acceptance`, `slow` e `docker`. O `docker` exige Docker com BuildKit e Compose v2, roda só com `PARTQC_DOCKER_TESTS=1` (senão, o teste é pulado) e é executado pelo workflow `docker`, e não pelo `ci` (SPEC-015 §4.14).
+- **Marcadores:** `db` (exige `TEST_DATABASE_URL`; sem ela, o teste é pulado, e no CI a sessão falha; SPEC-001 e SPEC-003), `acceptance`, `slow` e `docker`. O `docker` exige Docker com BuildKit e Compose v2, roda só com `PARTQC_DOCKER_TESTS=1` (senão, o teste é pulado) e é executado pelo workflow `docker`, e não pelo `ci` (SPEC-015 §4.14). A partir da SPEC-020, o `mqtt` exige o `mosquitto` instalado e roda só com `PARTQC_MQTT_TESTS=1` (senão, o teste é pulado), fora do CI.
 - **Sem suíte dentro da suíte** (RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md`):
   - Nenhum teste roda a suíte inteira em subprocesso (`pytest` sem caminhos, ou com um diretório inteiro de `testpaths`). Com k testes assim, cada um se protegendo só da própria recursão, a suíte roda muitas vezes por execução, e uma execução interna pode recriar o schema do banco de teste no meio da sessão externa.
   - Um CA do tipo "`ruff check`, `ruff format --check` e `pytest -q` terminam com código 0" é verificado pelo CI (R-09) e pela execução da suíte inteira que o tester já faz e registra no test-report. Ele não ganha teste automatizado: o test-report o marca como "verificado pela execução da suíte" e cita a contagem de testes. As SPECs novas não precisam escrever esse CA, porque a Definição de pronto já exige CI verde.
