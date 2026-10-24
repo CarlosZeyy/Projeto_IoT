@@ -1,7 +1,10 @@
 import pytest
 
 from qc_contracts import (
+    GRADE_FORBIDDEN_OBJECT_TYPES,
+    GRADE_OPTIONAL_OBJECT_TYPES,
     GRADE_ORDER,
+    GRADE_REQUIRED_OBJECT_TYPES,
     CaptureMode,
     Grade,
     ObjectType,
@@ -12,7 +15,16 @@ from qc_contracts import (
 
 
 def test_enum_values() -> None:
-    assert [m.value for m in ObjectType] == ["screw", "nut", "unknown"]
+    assert [m.value for m in ObjectType] == [
+        "screw",
+        "nut",
+        "unknown",
+        "pliers",
+        "adjustable_wrench",
+        "allen_key",
+        "flat_screwdriver",
+        "phillips_screwdriver",
+    ]
     assert [m.value for m in Grade] == ["perfect", "good", "fair", "poor", "unusable"]
     assert [m.value for m in Source] == ["live", "simulated"]
     assert [m.value for m in CaptureMode] == ["inspect", "collect"]
@@ -48,3 +60,30 @@ def test_grade_from_index_rejects_out_of_range(i: object) -> None:
 def test_grade_index_rejects_unknown_string() -> None:
     with pytest.raises(ValueError):
         grade_index("bogus")  # type: ignore[arg-type]
+
+
+def test_grade_groups() -> None:
+    assert {ObjectType.SCREW, ObjectType.NUT} == GRADE_REQUIRED_OBJECT_TYPES
+    assert {ObjectType.UNKNOWN} == GRADE_FORBIDDEN_OBJECT_TYPES
+    assert {
+        ObjectType.PLIERS,
+        ObjectType.ADJUSTABLE_WRENCH,
+        ObjectType.ALLEN_KEY,
+        ObjectType.FLAT_SCREWDRIVER,
+        ObjectType.PHILLIPS_SCREWDRIVER,
+    } == GRADE_OPTIONAL_OBJECT_TYPES
+
+
+def test_grade_groups_partition_object_type() -> None:
+    groups = (
+        GRADE_REQUIRED_OBJECT_TYPES,
+        GRADE_FORBIDDEN_OBJECT_TYPES,
+        GRADE_OPTIONAL_OBJECT_TYPES,
+    )
+    for group in groups:
+        assert isinstance(group, frozenset)
+    assert not GRADE_REQUIRED_OBJECT_TYPES & GRADE_FORBIDDEN_OBJECT_TYPES
+    assert not GRADE_REQUIRED_OBJECT_TYPES & GRADE_OPTIONAL_OBJECT_TYPES
+    assert not GRADE_FORBIDDEN_OBJECT_TYPES & GRADE_OPTIONAL_OBJECT_TYPES
+    assert frozenset().union(*groups) == set(ObjectType)
+    assert sum(len(group) for group in groups) == len(ObjectType) == 8

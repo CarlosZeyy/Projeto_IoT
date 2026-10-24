@@ -20,7 +20,13 @@ from pydantic import (
     model_validator,
 )
 
-from qc_contracts.enums import Grade, ObjectType, Source
+from qc_contracts.enums import (
+    GRADE_FORBIDDEN_OBJECT_TYPES,
+    GRADE_REQUIRED_OBJECT_TYPES,
+    Grade,
+    ObjectType,
+    Source,
+)
 
 # Public regexes, reused by the API and the scripts without redefinition.
 DEVICE_ID_PATTERN = r"^[a-z0-9-]{3,32}$"
@@ -79,8 +85,12 @@ class _InspectionBase(BaseModel):
 
     @model_validator(mode="after")
     def _check_grade_invariants(self) -> Self:
-        if (self.grade is None) != (self.object_type == ObjectType.UNKNOWN):
-            raise ValueError("grade must be null if and only if object_type is 'unknown'")
+        # Grade groups of ADR-021: required (screw, nut), forbidden (unknown) or optional (the
+        # hand tools). The messages name the rule, never the values.
+        if self.grade is None and self.object_type in GRADE_REQUIRED_OBJECT_TYPES:
+            raise ValueError("grade must not be null for a grade-required object_type")
+        if self.grade is not None and self.object_type in GRADE_FORBIDDEN_OBJECT_TYPES:
+            raise ValueError("grade must be null for a grade-forbidden object_type")
         if (self.grade_score is None) != (self.grade is None):
             raise ValueError("grade_score must be null if and only if grade is null")
         if (self.grade_confidence is None) != (self.grade is None):
