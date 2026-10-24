@@ -3,11 +3,16 @@
 R-11 and ADR-014: every image of an item lands in the same split; the test set of ``split_v1`` is
 frozen (new items only go to train/val); ``rows_for`` is the only way to get the rows of a split.
 
+ADR-020 and SPEC-035 section 4.4: every external image (``is_external_item``) goes to train in
+every version, outside the strata; ``rows_for`` refuses one in val or test; the fraction of
+external images in train has a ceiling (``max_external_fraction``, 30% by default).
+
 No torch here (SPEC-011 section 4.5).
 
 CLI::
 
-    python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42
+    python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42 \
+        [--external-sources <file>] [--max-external-fraction 0.30]
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ import tempfile
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -36,6 +42,7 @@ from qc_ml.data import (
     SPLIT_NAMES,
     configure_logging,
     dominant_grade,
+    is_external_item,
     load_exclusions,
     load_manifest,
     print_problems,
@@ -44,10 +51,14 @@ from qc_ml.errors import ManifestError, SplitError, SplitIntegrityError
 
 SPLIT_COLUMNS: tuple[str, str] = ("image_path", "split")
 SPLIT_FILE_PATTERN = re.compile(r"split_v([1-9][0-9]*)\.csv")
-# File name written by the collect mode (SPEC-010): <item_id>__<angle>__<ts>.jpg. The item_id
-# part reuses qc_ml.data.ITEM_ID_PATTERN, the single definition of a valid item_id (SPEC-031).
-IMAGE_FILE_PATTERN = re.compile(rf"({ITEM_ID_PATTERN.pattern})__[0-4]__[0-9]{{8}}T[0-9]{{6}}Z\.jpg")
+# File name written by the collect mode (SPEC-010) and the importer (SPEC-036):
+# <item_id>__<angle>__<ts>.jpg. The item_id part reuses qc_ml.data.ITEM_ID_PATTERN, the single
+# definition of a valid item_id (SPEC-031 section 4.6, SPEC-035 section 4.1).
+IMAGE_FILE_PATTERN = re.compile(
+    "(" + ITEM_ID_PATTERN.pattern + r")__[0-4]__[0-9]{8}T[0-9]{6}Z\.jpg"
+)
 DEFAULT_RATIOS: tuple[float, float, float] = (0.70, 0.15, 0.15)
+DEFAULT_MAX_EXTERNAL_FRACTION = 0.30  # ADR-020, decision 2
 OUTDATED_MESSAGE = "split outdated: run qc_ml.split"
 MIN_STRATUM_ITEMS = 3
 
@@ -162,7 +173,7 @@ def item_id_resolver(df: pd.DataFrame) -> Callable[[str], str | None]:
 
     1. the row of ``df`` with that ``image_path``, including a row that is in ``excluded``;
     2. ``df.attrs["excluded_items"]`` (set by ``load_manifest``), only if the ``item_id`` matches
-       ``[SNOT]-[0-9]{3}``; otherwise the image goes on to source 3;
+       ``ITEM_ID_PATTERN``; otherwise the image goes on to source 3;
     3. the SPEC-010 file name ``<item_id>__<angle>__<ts>.jpg`` (last path component).
 
     An image without any source resolves to ``None`` and is ignored by the callers.
@@ -192,7 +203,8 @@ def item_history(splits: Sequence[pd.DataFrame], df: pd.DataFrame) -> dict[str, 
         SplitIntegrityError: an item has images in two or more splits, over all rows of all
             frames (inside one frame too). The message has the ``item_id`` and, for each split,
             the files it came from (``attrs["split_file"]``, or ``#<index in the list>``). The
-            conflict is never resolved here.
+            conflict is never resolved here. Also when an external item (``is_external_item``)
+            has an image in ``val`` or ``test`` in any version (SPEC-035 section 4.4).
     """
     resolve = item_id_resolver(df)
     seen: dict[str, dict[str, list[str]]] = defaultdict(dict)
@@ -217,6 +229,17 @@ def item_history(splits: Sequence[pd.DataFrame], df: pd.DataFrame) -> dict[str, 
         raise SplitIntegrityError(
             "split history conflict (R-11; never resolved automatically): " + " | ".join(conflicts)
         )
+    outside = [
+        f"external item {item_id} is in {split} in {', '.join(seen[item_id][split])}"
+        for item_id in sorted(seen)
+        if is_external_item(item_id)
+        for split in sorted(seen[item_id])
+        if split != "train"
+    ]
+    if outside:
+        raise SplitIntegrityError(
+            "external images only go to train (ADR-020): " + " | ".join(outside)
+        )
     return {item_id: next(iter(by_split)) for item_id, by_split in seen.items()}
 
 
@@ -230,6 +253,37 @@ def check_item_integrity(df: pd.DataFrame, splits: Sequence[str] | pd.Series) ->
             )
 
 
+def _check_max_external_fraction(value: float) -> Fraction:
+    """``Fraction(str(value))``; ``ValueError`` outside ``0 < value <= 1``."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"max_external_fraction must be a number in (0, 1], got {value!r}")
+    if not 0 < value <= 1:
+        raise ValueError(f"max_external_fraction must be in (0, 1], got {value!r}")
+    return Fraction(str(value))
+
+
+def _check_external_history(
+    previous_splits: Mapping[str, set[str]], history: Mapping[str, str]
+) -> None:
+    """An external item in ``val``/``test`` in ``previous`` or ``history`` breaks ADR-020."""
+    problems = [
+        f"external item {item_id} is in {split} in the previous split"
+        for item_id in sorted(previous_splits)
+        if is_external_item(item_id)
+        for split in sorted(previous_splits[item_id])
+        if split != "train"
+    ]
+    problems += [
+        f"external item {item_id} is in {split} in the split history"
+        for item_id, split in sorted(history.items())
+        if is_external_item(item_id) and split != "train"
+    ]
+    if problems:
+        raise SplitIntegrityError(
+            "external images only go to train (ADR-020): " + " | ".join(problems)
+        )
+
+
 def make_split(
     df: pd.DataFrame,
     seed: int = 42,
@@ -237,6 +291,7 @@ def make_split(
     previous: pd.DataFrame | None = None,
     excluded: frozenset[str] = frozenset(),
     history: Mapping[str, str] | None = None,
+    max_external_fraction: float = DEFAULT_MAX_EXTERNAL_FRACTION,
 ) -> SplitResult:
     """Split ``df`` (from ``load_manifest``) by item, stratified by (type, dominant grade).
 
@@ -256,12 +311,22 @@ def make_split(
     error about missing images look only at ``previous``. A ``history`` entry without images in
     ``df`` is ignored.
 
+    External items (``is_external_item``, SPEC-035 section 4.4) always go to train, in every
+    version. They are left out of the strata, the permutation and the rounding: the other items
+    are allocated as if they did not exist, and ``small_stratum`` counts only the other items.
+    After the allocation, the fraction of external images among the train images must not be
+    above ``max_external_fraction`` (exact comparison with ``Fraction``).
+
     Raises:
+        ValueError: ``max_external_fraction`` outside ``(0, 1]``.
         SplitError: invalid ratios, previous split or ``history`` value, ``history`` without
-            ``previous``, or a frozen test image is missing.
+            ``previous``, a frozen test image is missing, or the external fraction in train is
+            above ``max_external_fraction``.
         SplitIntegrityError: an item would end up in two splits, its images in ``previous`` are
-            in two splits, or ``history`` disagrees with ``previous`` for it.
+            in two splits, ``history`` disagrees with ``previous`` for it, or an external item
+            is in ``val``/``test`` in ``previous`` or in ``history``.
     """
+    ceiling = _check_max_external_fraction(max_external_fraction)
     _, r_val, r_test = _check_ratios(ratios)
     r_train = Decimal(1) - r_val - r_test
     history = dict(history or {})
@@ -273,7 +338,8 @@ def make_split(
     rng = np.random.default_rng(seed)
     resolve = item_id_resolver(df)  # before the excluded rows leave df (source 1)
     df = df[~df["image_path"].isin(list(excluded))]
-    strata = item_strata(df)
+    external = df["item_id"].map(lambda i: is_external_item(str(i))).astype(bool)
+    strata = item_strata(df[~external])  # external items stay out of the strata
     images_by_item: dict[str, list[str]] = defaultdict(list)
     for item_id, image_path in zip(df["item_id"], df["image_path"], strict=True):
         images_by_item[item_id].append(image_path)
@@ -286,6 +352,9 @@ def make_split(
         assignment, allocation_warnings = _allocate(groups, rng, r_val, r_test)
         warnings.extend(allocation_warnings)
         prev: dict[str, str] = {}
+        for item_id in images_by_item:
+            if is_external_item(item_id):
+                assignment[item_id] = "train"
     else:
         prev = _previous_map(previous)
         current = set(df["image_path"])
@@ -314,6 +383,7 @@ def make_split(
             item_id = resolve(image_path)
             if item_id is not None:
                 previous_splits[item_id].add(split)
+        _check_external_history(previous_splits, history)
         assignment = {}
         new_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
         for item_id in sorted(images_by_item):
@@ -329,7 +399,9 @@ def make_split(
                     f"item {item_id} is in {earlier} in the split history but in {old[0]} in "
                     "the previous split"
                 )
-            if earlier is not None:
+            if is_external_item(item_id):
+                assignment[item_id] = "train"  # ADR-020: always train, outside the strata
+            elif earlier is not None:
                 assignment[item_id] = earlier
             elif old:
                 assignment[item_id] = old[0]
@@ -346,6 +418,14 @@ def make_split(
     for image_path, split in zip(df["image_path"], splits, strict=True):
         if image_path in prev and prev[image_path] != split:
             raise SplitIntegrityError(f"{image_path} would move from {prev[image_path]} to {split}")
+    n_train = sum(1 for split in splits if split == "train")
+    n_external_train = sum(
+        1 for split, is_ext in zip(splits, external, strict=True) if is_ext and split == "train"
+    )
+    if n_train and Fraction(n_external_train, n_train) > ceiling:
+        raise SplitError(
+            f"external fraction in train {n_external_train}/{n_train} above {max_external_fraction}"
+        )
     frame = (
         pd.DataFrame(
             {
@@ -442,13 +522,20 @@ def rows_for(df: pd.DataFrame, split_df: pd.DataFrame, which: SplitName) -> pd.D
     Raises:
         ValueError: ``which`` is not ``train``, ``val`` or ``test``.
         SplitError: an image of ``df`` has no split (``split outdated: run qc_ml.split``).
-        SplitIntegrityError: an item of ``df`` has images in two splits.
+        SplitIntegrityError: an item of ``df`` has images in two splits, or an external image
+            (``is_external_item``) would be returned for ``val`` or ``test`` (SPEC-035 4.4): the
+            thresholds, the early stopping and the evaluation never see an external image.
     """
     if which not in SPLIT_NAMES:
         raise ValueError(f"which must be one of {', '.join(SPLIT_NAMES)}, got {which!r}")
     splits = assign_splits(df, split_df)
     check_item_integrity(df, splits)
-    return df[splits == which].reset_index(drop=True)
+    rows = df[splits == which].reset_index(drop=True)
+    if which != "train":
+        external = sorted({str(i) for i in rows["item_id"] if is_external_item(str(i))})
+        if external:
+            raise SplitIntegrityError(f"external image in {which}: {', '.join(external)}")
+    return rows
 
 
 def split_versions(splits_dir: Path) -> list[int]:
@@ -480,9 +567,22 @@ def _counts(frame: pd.DataFrame, df: pd.DataFrame) -> dict[str, dict[str, int]]:
     items = dict(zip(df["image_path"], df["item_id"], strict=True))
     images = {s: int((frame["split"] == s).sum()) for s in SPLIT_NAMES}
     item_sets: dict[str, set[str]] = {s: set() for s in SPLIT_NAMES}
+    external = dict.fromkeys(SPLIT_NAMES, 0)
     for image_path, split in zip(frame["image_path"], frame["split"], strict=True):
-        item_sets[split].add(items[image_path])
-    return {"images": images, "items": {s: len(item_sets[s]) for s in SPLIT_NAMES}}
+        item_id = items[image_path]
+        item_sets[split].add(item_id)
+        external[split] += int(is_external_item(str(item_id)))
+    return {
+        "images": images,
+        "items": {s: len(item_sets[s]) for s in SPLIT_NAMES},
+        "n_external_images": external,
+    }
+
+
+def external_fraction_train(counts: Mapping[str, Mapping[str, int]]) -> float | None:
+    """``n_external_images.train / images.train`` of ``_counts``; ``None`` without train."""
+    n_train = counts["images"]["train"]
+    return counts["n_external_images"]["train"] / n_train if n_train else None
 
 
 def write_split(
@@ -493,20 +593,28 @@ def write_split(
     *,
     seed: int,
     ratios: Sequence[float],
+    max_external_fraction: float = DEFAULT_MAX_EXTERNAL_FRACTION,
 ) -> Path:
-    """Write ``split_v<N>.json``, ``.sha256`` and, last, ``.csv``; return the CSV path."""
+    """Write ``split_v<N>.json``, ``.sha256`` and, last, ``.csv``; return the CSV path.
+
+    The JSON has ``max_external_fraction`` (the ceiling used), ``external_fraction_train``
+    (``null`` without train images) and ``counts.n_external_images`` by split (SPEC-035 4.4).
+    """
     splits_dir.mkdir(parents=True, exist_ok=True)
     csv_name = f"split_v{version}.csv"
     csv_path = splits_dir / csv_name
     content = split_csv_bytes(result.frame)
     digest = hashlib.sha256(content).hexdigest()
+    counts = _counts(result.frame, df)
     meta = {
         "split_file": csv_name,
         "seed": seed,
         "ratios": [float(r) for r in ratios],
         "parent": None if version == 1 else f"split_v{version - 1}",
         "manifest_sha256": df.attrs.get("manifest_sha256"),
-        "counts": _counts(result.frame, df),
+        "max_external_fraction": float(max_external_fraction),
+        "external_fraction_train": external_fraction_train(counts),
+        "counts": counts,
         "warnings": result.warnings,
     }
     meta_bytes = (json.dumps(meta, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
@@ -527,6 +635,17 @@ def _same_split(frame: pd.DataFrame, previous: pd.DataFrame) -> bool:
 # ---------------------------------------------------------------------------------------------
 
 
+def _fraction_argument(text: str) -> float:
+    """A decimal number in ``(0, 1]`` (``argparse`` type of ``--max-external-fraction``)."""
+    try:
+        value = Decimal(text.strip())
+    except InvalidOperation:
+        raise argparse.ArgumentTypeError(f"not a decimal number: {text!r}") from None
+    if not value.is_finite() or not 0 < value <= 1:
+        raise argparse.ArgumentTypeError(f"must be in (0, 1], got {text!r}")
+    return float(value)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m qc_ml.split", description="Create or extend the item-grouped split."
@@ -534,6 +653,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-dir", type=Path, default=Path("ml/data"))
     parser.add_argument("--splits-dir", type=Path, default=Path("ml/splits"))
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--external-sources",
+        type=Path,
+        default=None,
+        help="registry of the external sources (default: ml/external_sources.csv)",
+    )
+    parser.add_argument(
+        "--max-external-fraction",
+        type=_fraction_argument,
+        default=DEFAULT_MAX_EXTERNAL_FRACTION,
+        help="ceiling of the fraction of external images in train, in (0, 1] (default 0.30)",
+    )
     return parser
 
 
@@ -552,7 +683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK if exc.code == 0 else EXIT_ERROR
 
     try:
-        df = load_manifest(args.dataset_dir)
+        df = load_manifest(args.dataset_dir, external_sources=args.external_sources)
         excluded = load_exclusions(args.dataset_dir)
     except ManifestError as exc:
         print_problems(exc.problems, sys.stderr)
@@ -594,7 +725,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         result = make_split(
-            df, seed=args.seed, previous=previous, excluded=excluded, history=history
+            df,
+            seed=args.seed,
+            previous=previous,
+            excluded=excluded,
+            history=history,
+            max_external_fraction=args.max_external_fraction,
         )
     except SplitError as exc:
         print(f"split error: {exc}", file=sys.stderr)
@@ -604,7 +740,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"split unchanged: split_v{versions[-1]}")
         return EXIT_OK
     version = versions[-1] + 1 if versions else 1
-    path = write_split(args.splits_dir, version, result, df, seed=args.seed, ratios=DEFAULT_RATIOS)
+    path = write_split(
+        args.splits_dir,
+        version,
+        result,
+        df,
+        seed=args.seed,
+        ratios=DEFAULT_RATIOS,
+        max_external_fraction=args.max_external_fraction,
+    )
     counts = _counts(result.frame, df)
     print(
         f"split written: {path.name} (images {counts['images']}, items {counts['items']}, "
