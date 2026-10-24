@@ -195,14 +195,27 @@ class CsvTable:
     malformed_paths: list[str] = field(default_factory=list)
 
 
+# Problems after which ``parse_csv`` reads no row (the file is not usable at all).
+HEADER_PROBLEMS: frozenset[str] = frozenset(
+    {"missing_column", "unexpected_header", "unreadable_csv"}
+)
+
+
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def parse_csv(data: bytes, file_name: str, required: Sequence[str]) -> CsvTable:
+def parse_csv(
+    data: bytes, file_name: str, required: Sequence[str], *, exact_header: bool = False
+) -> CsvTable:
     """Parse CSV bytes with ``csv.reader``; record numbers count the header as 1.
 
     Blank records are skipped (as ``csv.DictReader`` does) and do not get a number.
+
+    A missing required column gives one ``missing_column`` per column. With ``exact_header``
+    (only ``sources.csv`` and the registry, SPEC-037 section 4.4), a header with every required
+    column that is not exactly ``required`` (extra, repeated or empty column, other order) gives
+    one ``unexpected_header``. Either way no row is read.
     """
     table = CsvTable()
     try:
@@ -230,6 +243,18 @@ def parse_csv(data: bytes, file_name: str, required: Sequence[str]) -> CsvTable:
                     "missing_column", file_name, 1, None, f"missing column {column!r}{hint}"
                 )
             )
+        return table
+    if exact_header and tuple(table.header) != tuple(required):
+        # The header read is not echoed: it may carry anything (control characters included).
+        table.problems.append(
+            ManifestProblem(
+                "unexpected_header",
+                file_name,
+                1,
+                None,
+                f"the header must be exactly {','.join(required)} (in this order, no other column)",
+            )
+        )
         return table
 
     for number, record in enumerate(records[1:], start=2):
@@ -480,7 +505,7 @@ def _read_registry(path: Path | str) -> _Registry:
         return result
     data = path.read_bytes()
     result.sha256 = _sha256_hex(data)
-    table = parse_csv(data, EXTERNAL_SOURCES_FILE, EXTERNAL_SOURCE_COLUMNS)
+    table = parse_csv(data, EXTERNAL_SOURCES_FILE, EXTERNAL_SOURCE_COLUMNS, exact_header=True)
     result.problems.extend(table.problems)
     for line, row in table.rows:
         line_problems = _registry_row_problems(line, row)
@@ -534,7 +559,7 @@ def load_external_sources(path: Path | str) -> dict[str, ExternalSource]:
 @dataclass
 class _Sources:
     present: bool = False  # the file exists
-    readable: bool = True  # header and CSV are usable (no missing_column/unreadable_csv)
+    readable: bool = True  # header and CSV are usable (no problem in HEADER_PROBLEMS)
     sha256: str | None = None
     # image_path -> row of the valid, non-excluded lines (first line of a repeated path).
     rows: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -591,9 +616,9 @@ def _read_sources(dataset_dir: Path, known_ids: set[str], excluded: Iterable[str
     result.present = True
     data = path.read_bytes()
     result.sha256 = _sha256_hex(data)
-    table = parse_csv(data, SOURCES_FILE, SOURCE_COLUMNS)
+    table = parse_csv(data, SOURCES_FILE, SOURCE_COLUMNS, exact_header=True)
     result.problems.extend(table.problems)
-    if any(p.code in ("missing_column", "unreadable_csv") for p in table.problems):
+    if any(p.code in HEADER_PROBLEMS for p in table.problems):
         result.readable = False
         return result
     result.listed.update(table.malformed_paths)
