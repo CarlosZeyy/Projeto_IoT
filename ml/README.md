@@ -1,8 +1,8 @@
 # qc-ml — dados, split, treino e avaliação
 
-Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste.
+Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste. A SPEC-035 acrescenta a **origem das imagens** (fotos de conhecidos e imagens externas, seção [Origem das imagens](#origem-das-imagens-spec-035)).
 
-Referências: `docs/dataset-protocol.md`, `docs/architecture.md` §7, skill `ml-pipeline`, ADR-004, ADR-005 e ADR-014.
+Referências: `docs/dataset-protocol.md`, `docs/architecture.md` §7, skill `ml-pipeline`, ADR-004, ADR-005, ADR-014 e ADR-020.
 
 ## Instalação
 
@@ -23,7 +23,7 @@ Todos os comandos rodam a partir da raiz do repositório e saem com `0` em caso 
 uv run --package qc-ml python -m qc_ml.data validate --dataset-dir ml/data
 ```
 
-- Lê `manifest.csv`, aplica `labels_overrides.csv` e `exclusions.csv` (se existirem) e decodifica todas as imagens com `qc_preprocess.load_image`.
+- Lê `manifest.csv`, aplica `labels_overrides.csv` e `exclusions.csv` (se existirem), confere `sources.csv` e o registro `ml/external_sources.csv` (seção [Origem das imagens](#origem-das-imagens-spec-035); outro registro com `--external-sources <arquivo>`) e decodifica todas as imagens com `qc_preprocess.load_image`.
 - Sem problemas: imprime `manifest ok: <n> images, <m> items, <k> excluded, <j> overridden`.
 - Com problemas: imprime um problema por linha (`<arquivo>:<registro>: <código>: <image_path>: <mensagem>`) e, depois, uma linha `count <código>: <n>` por código, em ordem alfabética.
 - `too_many_jpeg_scans` indica foto com vídeo anexado ("foto com movimento"): refotografe com o recurso desligado (`docs/dataset-protocol.md` §3). Não corte o arquivo.
@@ -36,7 +36,7 @@ uv run --package qc-ml python -m qc_ml.data report --dataset-dir ml/data \
     --split ml/splits/split_v1.csv --out ml/reports/data_report.json
 ```
 
-Contagens por tipo × grau × split, peças por grau, imagens por peça e as combinações abaixo da meta (`below_target`: < 120 imagens ou < 12 peças) e do mínimo (`below_minimum`: < 8 peças). Sem `--split`, as contagens saem só com `total`.
+Contagens por tipo × grau × split, peças por grau, imagens por peça e as combinações abaixo da meta (`below_target`: < 120 imagens ou < 12 peças) e do mínimo (`below_minimum`: < 8 peças). Sem `--split`, as contagens saem só com `total`. Também traz a contagem por origem (`counts_by_origin`, `n_contributors`, `by_source`, `external_fraction_train`); as peças por grau, as imagens por peça e as metas contam só as imagens não externas.
 
 ### Split por peça (R-11)
 
@@ -97,8 +97,7 @@ Encadeia os passos abaixo e para no primeiro erro (saída 2). Cada passo também
 5. Gere a entrada do CHANGELOG e confira cada número com o `metrics.json`:
    `uv run --package qc-ml python -m qc_ml.report changelog --model-dir ml/models/partqc-mnv3-v1 --append ml/models/CHANGELOG.md`. Preencha "O que mudou" e "Problemas conhecidos".
 6. Paridade com o modelo real: `uv run pytest -q ml/tests/test_parity.py` (o teste roda para cada `ml/models/*/` com `model.onnx` local).
-7. Publique o Release com a conta CarlosZeyy (prefixo `GH_TOKEN="$(gh auth token --user CarlosZeyy)"`, como no `CLAUDE.md`):
-   `gh release create model-partqc-mnv3-v1 ml/models/partqc-mnv3-v1/model.onnx --title "Modelo partqc-mnv3-v1" --notes "sha256: $(cat ml/models/partqc-mnv3-v1/model.sha256)"`.
+7. Publique o Release com a conta CarlosZeyy (prefixo `GH_TOKEN="$(gh auth token --user CarlosZeyy)"`, como no `CLAUDE.md`), com as notas **geradas** pelo `qc_ml.report release-notes`: o passo está em [Origem das imagens → Notas do Release](#notas-do-release-com-os-créditos), que é a forma de publicar todo modelo (`gh release create ... --notes-file`).
    Na borda: `gh release download model-partqc-mnv3-v1 -p model.onnx -D ml/models/partqc-mnv3-v1` e `sha256sum ml/models/partqc-mnv3-v1/model.onnx`.
 
 Vão para o Git: os JSONs, o `parity_fixture.npz`, o `model.sha256`, os PNGs de `ml/reports/` e o `ml/models/CHANGELOG.md`. **Não** vão: `model.onnx` e os checkpoints (`.gitignore`).
@@ -111,9 +110,39 @@ Vão para o Git: os JSONs, o `parity_fixture.npz`, o `model.sha256`, os PNGs de 
 uv run --package qc-ml python ml/scripts/make_tiny_fixture.py
 ```
 
+## Origem das imagens (SPEC-035)
+
+Desde o ADR-020, o dataset tem três origens. Em todas, o `item_id` e o grau são decididos pela dupla, com a rubrica (`docs/dataset-protocol.md` §10).
+
+| Origem | O que é | `item_id` | Splits |
+|---|---|---|---|
+| `capture` | foto da página `/capture` (sem linha em `sources.csv`) | `S-012`, `N-034`, `O-005` | treino, validação e teste |
+| `contributor` | foto de um conhecido, importada | `S-501`… (faixa 500–999, recomendação) | treino, validação e teste |
+| `external` | imagem de dataset público ou da internet, importada | `XS-0001`, `XN-0001`, `XO-0001` (4 dígitos, obrigatório) | **só treino**, sempre |
+
+- **O prefixo `X` decide sozinho** que a imagem é externa e vai para o treino (`qc_ml.data.is_external_item`). `XT-` e `T-` continuam recusados até a SPEC-016.
+- **`DATASET_DIR/sources.csv`** (`image_path,origin,contributor,source_id,source_ref,input_sha256`) diz a origem de cada imagem importada. É gravado **só** pela importação da borda (`python -m qc_edge.importer`, SPEC-036), nunca à mão, e não deve ser aberto em planilha. O `contributor` é um código (`c01`), nunca um nome ou telefone. O `validate` acusa, entre outros, `missing_source` (imagem `X…` sem linha: siga o `docs/dataset-protocol.md` §10.7), `unknown_source_id` (fonte fora do registro) e `duplicate_input` (o mesmo arquivo importado duas vezes).
+- **Registro `ml/external_sources.csv`** (`source_id,title,url,license,license_url,attribution,retrieved_at`), no Git: uma linha por fonte, acrescentada pela dupla por PR depois de conferir a licença na página oficial. Uma fonte nunca sai do registro. Licenças aceitas (ADR-020): `CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0` e `BSD-3-Clause`; NonCommercial, ShareAlike e NoDerivatives são recusadas (`invalid_license`). As CLIs `data validate`, `data report`, `split`, `report changelog` e `report release-notes` aceitam `--external-sources <arquivo>`; nos passos do modelo, o campo `external_sources` do `TrainConfig` (padrão: este arquivo). Registro ausente = registro vazio.
+- **Externas só no treino:** o `qc_ml.split` põe toda imagem externa no treino, em todas as versões, fora dos estratos (as demais peças são sorteadas como se elas não existissem). Uma peça externa em validação ou teste, num split anterior ou no histórico, é erro, e o `rows_for(..., "val" | "test")` recusa imagem externa. O `split_v<N>.json` traz `max_external_fraction`, `external_fraction_train` e `counts.n_external_images`.
+- **Teto:** no máximo 30% de imagens externas entre as imagens de treino (comparação exata). Acima disso, o split sai com 2 (`external fraction in train <n>/<total> above 0.3`) e não grava nada. Outro teto, em (0, 1], com `--max-external-fraction <x>` (fica registrado no `split_v<N>.json`). O split nunca descarta imagens para caber no teto.
+- **Métricas:** o `metrics.json` traz, em cada split de `counts`, `by_origin` (`capture`, `contributor`, `external`) e `by_source`. `counts.val.by_origin.external` e `counts.test.by_origin.external` são sempre 0. A entrada do CHANGELOG (`qc_ml.report changelog`) ganha a seção `### Dados` com as externas por split e uma linha de crédito por fonte.
+
+### Notas do Release (com os créditos)
+
+As notas do GitHub Release são **sempre** o arquivo gerado, nunca `--notes` escrito à mão:
+
+```bash
+uv run --package qc-ml python -m qc_ml.report release-notes --model-dir ml/models/<v> --output ml/models/<v>/release-notes.md
+GH_TOKEN="$(gh auth token --user CarlosZeyy)" gh release create model-<v> ml/models/<v>/model.onnx --title "Modelo <v>" --notes-file ml/models/<v>/release-notes.md
+```
+
+- O arquivo tem a linha `sha256: …` do `model.sha256`, a seção "Fontes externas e créditos" e os caminhos do registro e do CHANGELOG. Se o modelo usou imagens externas, essa seção, com o crédito, a licença e os links de cada fonte, é **obrigatória** na página do Release: as licenças com atribuição (`CC-BY-4.0`, `MIT`, `Apache-2.0`, `BSD-3-Clause`) exigem o crédito. Sem externas, a seção diz que o modelo não usa imagens externas.
+- Se o `release-notes` sair com 2 e `source not in registry: <source_id>`, a fonte tem de ser registrada em `ml/external_sources.csv` antes de gerar as notas de novo: sem isso, não há notas nem Release. Nesse caso, o arquivo de `--output` não é criado nem alterado. A linha `licença não encontrada no registro` só aparece no CHANGELOG, como marca.
+- O `release-notes.md` pode ir para o Git junto com o `model.sha256`.
+
 ## Dataset sintético (testes)
 
-`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0)` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente. Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
+`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0)` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. Com `contributor_items_per_stratum` e `external_items_per_stratum`, acrescenta peças de conhecido (`S-501`…) e imagens externas (`XS-0001`…, 1 imagem cada) por estrato, com `sources.csv` e o registro `root/external_sources.csv` (fonte `synthetic`, `CC0-1.0`). `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente. Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
 
 ## Testes
 

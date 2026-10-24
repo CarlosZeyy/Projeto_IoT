@@ -436,7 +436,7 @@ def train(config: TrainConfig, *, resume: bool = False) -> TrainResult:
 
     started_at = _now()
     set_seeds(config.seed)
-    df = load_manifest(config.dataset_dir)
+    df = load_manifest(config.dataset_dir, external_sources=config.external_sources)
     split_df = split.load_split(config.split_file)
     train_rows = split.rows_for(df, split_df, "train")
     val_rows = split.rows_for(df, split_df, "val")

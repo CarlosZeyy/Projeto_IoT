@@ -89,6 +89,9 @@ class TrainConfig:
     reports_root: str = "ml/reports"
     checkpoints_root: str = "ml/checkpoints"
     smoke: bool = False
+    # SPEC-035 section 4.6: registry passed to load_manifest by train, thresholds and evaluate
+    # (None = ml/external_sources.csv). A path, not a hyperparameter.
+    external_sources: str | None = None
 
     def __post_init__(self) -> None:
         problems: list[str] = []
@@ -112,6 +115,8 @@ class TrainConfig:
                 ok = isinstance(value, int | float) and not isinstance(value, bool)
                 if ok:
                     object.__setattr__(self, f.name, float(value))
+            elif f.type == "str | None":
+                ok = value is None or isinstance(value, str)
             else:
                 ok = isinstance(value, str)
             if not ok:
@@ -163,6 +168,8 @@ class TrainConfig:
                 problems.append(f"{name} must not be empty")
         if not self.checkpoints_root:
             problems.append("checkpoints_root must not be empty")
+        if self.external_sources is not None and not self.external_sources:
+            problems.append("external_sources must not be empty (use null for the default)")
 
     # -- helpers ----------------------------------------------------------------------------
 
