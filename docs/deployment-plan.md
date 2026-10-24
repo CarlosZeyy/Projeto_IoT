@@ -25,6 +25,8 @@ Rotas públicas em `https://<subdominio>` (`infra/Caddyfile`): `/api/*` vai para
 |---|---|---|---|---|
 | VPS pessoal do humano | `caddy`, `qc-api`, `qc-dashboard` (`infra/compose.yaml`) | Recurso pessoal **preexistente**, pago a cada 2 anos, sem custo adicional para o projeto (R-01, ADR-018). Docker e Compose v2 instalados; portas 80/443 livres. Versões, RAM, CPUs e disco: preencher no passo 2 da §4 (tabela "Conferência da VPS" logo abaixo) | Declaração do humano (ADR-018) | 2026-10-18 (a completar pelo humano no passo 2) |
 | Imagens base | `python:3.12.15-slim-trixie` (API e dashboard), `ghcr.io/astral-sh/uv:0.13.2` (cópia do binário `uv` no build), `caddy:2.11.7`, todas fixadas também pelo digest `@sha256:` do índice multi-arquitetura | Software livre; nenhuma conta. Atualizar: conferir a tag nova na fonte, trocar a tag e o digest (`docker buildx imagetools inspect <imagem>:<tag>`) e abrir PR | <https://hub.docker.com/_/python>, <https://docs.astral.sh/uv/guides/integration/docker/>, <https://hub.docker.com/_/caddy> | 2026-10-19 |
+| Caddy: headers da resposta | `infra/Caddyfile` (SPEC-032 §4.3): `Strict-Transport-Security`, `X-Content-Type-Options`, `Referrer-Policy "no-referrer"`, `Content-Security-Policy "frame-ancestors 'self'"`, `-Server` e `-Via` | "Prefix with `-` to delete the field"; apagar um campo ativa o `defer`, que "defers the execution of header operations until the response is being sent to the client", ou seja, depois do `reverse_proxy`. Conferido também na prática com a imagem `caddy:2.11.7` fixada: atrás de um `reverse_proxy` cuja origem responde `Server: uvicorn`, a resposta sai sem `Server` e sem `Via` e com os 4 headers | <https://caddyserver.com/docs/caddyfile/directives/header> | 2026-10-24 |
+| Docker Compose: `pids_limit`, `read_only` e `tmpfs` | `infra/compose.yaml` (SPEC-032 §4.4) | `pids_limit` "tunes a container's PIDs limit" (conta processos **e threads**); `read_only` cria o contêiner com sistema de arquivos só de leitura; `tmpfs` na forma curta `<path>:<options>`. A opção `size` da forma curta não aparece na referência, mas foi conferida com `docker compose run` no Compose 5.6.1 e no Docker Engine 29.9.2: `/tmp` montado com `size=65536k` e com `nosuid,nodev,noexec` (os padrões do Docker) | <https://docs.docker.com/reference/compose-file/services/> | 2026-10-24 |
 | Supabase Free | Postgres | 500 MB de banco por projeto, 2 projetos ativos, **pausa com pouca atividade num período de 7 dias** ("a few user requests to the database each day over the previous week is enough"), 5 GB de egress | <https://supabase.com/pricing>, <https://supabase.com/docs/guides/platform/free-project-pausing> | 2026-10-19 |
 | Let's Encrypt (via Caddy) | Certificado TLS de `<subdominio>` | 5 certificados por conjunto exato de nomes a cada 7 dias; todo certificado emitido vai para os logs de CT | <https://letsencrypt.org/docs/rate-limits/>, <https://letsencrypt.org/docs/ct-logs/> | 2026-10-19 |
 | GitHub (repo **público** + Actions) | Código, CI (`ci` e `docker`), keep-alive, Releases para o `model.onnx` | "GitHub Actions usage is free for ... public repositories that use standard GitHub-hosted runners"; workflows agendados são desligados após 60 dias sem atividade no repositório e podem atrasar em horários de pico | <https://docs.github.com/en/billing/concepts/product-billing/github-actions>, <https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows> | 2026-10-19 |
@@ -46,9 +48,22 @@ Rotas públicas em `https://<subdominio>` (`infra/Caddyfile`): `/api/*` vai para
 | RAM (total e disponível) | `free -h` | a preencher | a preencher |
 | CPUs | `nproc` | a preencher | a preencher |
 | Disco livre | `df -h /` | a preencher | a preencher |
-| Limites escolhidos no `infra/.env` | — | a preencher (padrões: API `512m`/`1.0`, dashboard `1g`/`1.0`, Caddy `256m`/`0.5`) | a preencher |
+| Limites escolhidos no `infra/.env` | — | a preencher (padrões: API `512m`/`1.0`, dashboard `1g`/`1.0`, Caddy `256m`/`0.5`; `pids_limit` `256` nos três) | a preencher |
 
 Regra dos limites (SPEC-015 §4.12): a soma dos três `mem_limit` fica abaixo da RAM disponível, cada `cpus` fica ≤ `nproc`, e a API não fica abaixo de `512m` sem uma decisão registrada aqui. A imagem do dashboard tem cerca de 670 MB e a da API cerca de 205 MB (medido no build local de 2026-10-19, depois da correção do RV-01 da r1, que tirou das camadas o cache do `uv`; antes eram 1,1 GB e 240 MB). O cache do `uv` fica no cache de build do BuildKit da VPS, fora das imagens, e acelera as atualizações; o disco precisa de folga para duas gerações de cada imagem durante uma atualização.
+
+**Endurecimento dos contêineres (SPEC-032 §4.4).** Os três serviços rodam com `read_only: true` e com um único `tmpfs`, em `/tmp` (`size=64m`); os volumes `caddy_data` e `caddy_config` continuam graváveis. Nenhum `tmpfs` em `/home/app`: com `docker diff` num contêiner gravável, depois de abrir as 4 páginas do painel (gráficos, tabelas e o botão de download) e de chamar as rotas da API, nenhum arquivo foi criado nem alterado na API e no dashboard; o Caddy só escreve em `/data` e `/config` (medido em 2026-10-24). O limite de processos e threads (`pids_limit`) é `256` por serviço, ajustável no `infra/.env` (`API_PIDS_LIMIT`, `DASHBOARD_PIDS_LIMIT`, `CADDY_PIDS_LIMIT`). Medido localmente em 2026-10-24, pelo `pids.current` do cgroup de cada contêiner:
+
+| Serviço | Em repouso | Com carga | Carga usada |
+|---|---|---|---|
+| `dashboard` | 5 | 15 | 5 sessões simultâneas pelo WebSocket, 3 execuções cada, nas 4 páginas, com uma API falsa respondendo |
+| `api` | 6 | 51 | 200 requisições, 100 simultâneas, sem banco (o pool de threads do AnyIO para em 40) |
+| `caddy` | 9 | 11 | 2.000 requisições, 100 simultâneas |
+
+`256` é pelo menos 5 vezes o pico medido. Na VPS, o CA-09 da SPEC-032 confere a coluna `PIDS` do `docker stats --no-stream` com 3 abas do painel abertas: no máximo metade do `pids_limit`.
+
+- **Se um contêiner bater no `pids_limit`:** o Python registra `can't start new thread` (`RuntimeError`) e o Caddy (Go) sai com `failed to create new OS thread` e é reiniciado pelo `restart: unless-stopped`. Subir o valor da variável do serviço no `infra/.env` (por exemplo, `DASHBOARD_PIDS_LIMIT=512`) e rodar `docker compose -f infra/compose.yaml up -d`, que recria só o serviço alterado.
+- **Se um serviço quebrar por causa do `read_only`** depois de uma atualização (uma dependência nova que escreve em disco): o log mostra `Read-only file system` (ou `EROFS`, ou `PermissionError` num caminho fora de `/tmp`), em `docker compose -f infra/compose.yaml logs --tail 200 <serviço>`. Fazer o rollback da §6 e abrir uma SPEC (ou uma manutenção) que meça e acrescente o `tmpfs` necessário, com no máximo `64m`. Nunca tirar o `read_only` direto na VPS.
 
 ## 3. Segredos e variáveis
 
@@ -56,7 +71,7 @@ Nenhum valor real vai para o Git (R-03). Os nomes ficam em `.env.example`. Os ar
 
 | Variável | Onde é definida | Quem lê |
 |---|---|---|
-| `PUBLIC_HOST` (`<subdominio>`, sem esquema nem barra) e os limites `API_MEM_LIMIT`, `API_CPUS`, `DASHBOARD_MEM_LIMIT`, `DASHBOARD_CPUS`, `CADDY_MEM_LIMIT`, `CADDY_CPUS` | `infra/.env` na VPS | Compose (interpolação) e Caddy |
+| `PUBLIC_HOST` (`<subdominio>`, sem esquema nem barra) e os limites `API_MEM_LIMIT`, `API_CPUS`, `DASHBOARD_MEM_LIMIT`, `DASHBOARD_CPUS`, `CADDY_MEM_LIMIT`, `CADDY_CPUS`, `API_PIDS_LIMIT`, `DASHBOARD_PIDS_LIMIT`, `CADDY_PIDS_LIMIT` | `infra/.env` na VPS | Compose (interpolação) e Caddy |
 | `DATABASE_URL` (pooler do Supabase, modo transaction, porta 6543) | `infra/.env.api` na VPS (e o painel do Render, se a reserva for ativada) | `qc-api` |
 | `DATABASE_URL` (pooler em modo session, porta 5432) | `.env.migrate` local do humano, nunca no Git, na VPS nem no Actions | `infra/migrate.py` e o registro de dispositivos |
 | `READ_API_KEY` | `infra/.env.api` **e** `infra/.env.dashboard` na VPS (o mesmo valor) | `qc-api` (valida) e `qc-dashboard` (envia) |
@@ -143,7 +158,7 @@ Ordem da SPEC-015 §4.6. Todos os passos são humanos. Os comandos com `docker c
 
 1. Gerar a `READ_API_KEY` na VPS com `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. Nunca reaproveitar uma chave de dispositivo.
 2. Criar, **com um editor** (por exemplo, `nano`), os três arquivos abaixo. Nunca com `echo ... >`, que deixa o valor no histórico do shell.
-   - `infra/.env`: uma linha com o nome `PUBLIC_HOST` e o subdomínio real como valor (sem `https://` e sem barra) e, se preciso, os limites `API_MEM_LIMIT`, `API_CPUS`, `DASHBOARD_MEM_LIMIT`, `DASHBOARD_CPUS`, `CADDY_MEM_LIMIT` e `CADDY_CPUS` (modelo no bloco `infra/.env` do `.env.example`).
+   - `infra/.env`: uma linha com o nome `PUBLIC_HOST` e o subdomínio real como valor (sem `https://` e sem barra) e, se preciso, os limites `API_MEM_LIMIT`, `API_CPUS`, `DASHBOARD_MEM_LIMIT`, `DASHBOARD_CPUS`, `CADDY_MEM_LIMIT`, `CADDY_CPUS`, `API_PIDS_LIMIT`, `DASHBOARD_PIDS_LIMIT` e `CADDY_PIDS_LIMIT` (modelo no bloco `infra/.env` do `.env.example`).
    - `infra/.env.api`: `DATABASE_URL` (pooler em modo transaction, porta 6543) e `READ_API_KEY`; opcionais `MAX_BODY_BYTES` e `LOG_LEVEL`.
    - `infra/.env.dashboard`: `READ_API_KEY` (o mesmo valor) e `MODEL_METRICS_PATH` vazio. **Sem** `API_BASE_URL`, que vem do compose, e sem `DATABASE_URL` ou chaves de dispositivo.
 3. Todo valor com `$` vai entre aspas simples, por exemplo `DATABASE_URL='postgresql://...'`. Sem aspas (ou com aspas duplas), o Compose interpola o `$` e trunca a senha sem aviso (<https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/>, 2026-10-19).
@@ -298,6 +313,7 @@ Cada linha tem a fonte e a data da verificação. Os riscos são do MVP (projeto
 5. **VPS como ponto único de falha, compartilhada com outros projetos.** Mitigação: outbox na borda (RNF-10), limites de memória e CPU por serviço e a reserva fria no Render (§6). O Caddy sobe mesmo com o Supabase pausado (sem `condition: service_healthy`), e um contêiner `unhealthy` não é reiniciado.
 6. **Limite de emissão de certificados.** "Up to 5 certificates can be issued per exact same set of identifiers every 7 days" (<https://letsencrypt.org/docs/rate-limits/>, conferido em 2026-10-19). Perder o volume `partqc_caddy_data` força uma emissão nova. Nunca usar `docker compose down -v`.
 7. **HTTP/3 sem `NET_ADMIN`.** O Caddy pode avisar no log sobre o tamanho do buffer UDP; a capacidade `NET_ADMIN` não é concedida (SPEC-015 §7), e o HTTP/2 por TCP continua (<https://hub.docker.com/_/caddy>, conferido em 2026-10-19).
+8. **Contêiner só de leitura e com limite de processos (SPEC-032 §4.4).** Uma atualização de dependência que passe a escrever em disco fora de `/tmp`, ou que crie muito mais threads, pode derrubar o serviço depois do `up -d --build`. Mitigação: as medições da §2 (pico de 15, 51 e 11 PIDs para um limite de 256), o smoke da atualização (§4, "Atualização", item 4), o diagnóstico pelo log (`Read-only file system`, `can't start new thread`) e o rollback da §6. Os headers do Caddy (`-Server`, `-Via`, `Referrer-Policy`, `frame-ancestors`) não mudam esse risco; uma política CSP completa ficou fora (SPEC-032 §3.2).
 
 ## 8. Operação do banco e das chaves (SPEC-015 §4.9)
 
@@ -437,3 +453,18 @@ Esperado: nenhuma linha nos dois `git grep` (código de saída 1) e nenhum aviso
 | CA-40 | Rede e coexistência na VPS (§4, "Firewall") | pendente | — |
 | CA-42 | Na VPS, o comando do CA-42 acima: nenhuma linha com o subdomínio nem com o IPv4 público | pendente | — |
 | CA-43 | `.env*` fora das imagens (passo 7, item 4); ciclo de atualização, rollback e volta à `main` com health 200; `partqc_caddy_data` presente e sem nova emissão de certificado | pendente | — |
+
+### CA manual da SPEC-032 (headers e endurecimento)
+
+Depois da atualização da §4 ("Atualização") com a SPEC-032 na `main`, na VPS e no navegador. Antes de colar, troque o subdomínio por `<subdominio>` (a saída do `curl -sI` não tem o host, mas a barra de endereço do navegador e as ferramentas de desenvolvedor têm).
+
+1. `docker compose -f infra/compose.yaml ps`: os 3 serviços `running`, `api` e `dashboard` `healthy`.
+2. `curl -sI https://<subdominio>/api/v1/health`: tem `referrer-policy: no-referrer` e `content-security-policy: frame-ancestors 'self'` (além de `strict-transport-security` e `x-content-type-options`), e **não** tem `server:` nem `via:`.
+3. Repetir os passos 1 a 3 do CA-17 da SPEC-015: painel no desktop e no celular, `wss://<subdominio>/_stcore/stream` com 101 aberto por 5 min, filtro atualizando os gráficos. Se algum componente do painel quebrar por causa do `frame-ancestors`, parar e registrar `SPEC_ISSUE`.
+4. Com 3 abas do painel abertas, `docker stats --no-stream`: a coluna `PIDS` de cada serviço fica em no máximo metade do `pids_limit` (128, com o padrão).
+5. Complementar (não faz parte do texto do CA-09): `docker compose -f infra/compose.yaml logs --tail 200 api dashboard caddy | grep -ciE 'read-only file system|erofs'` → `0`.
+6. Registrar as saídas na tabela abaixo e no dev-report, com o subdomínio trocado por `<subdominio>` (SEC-15-01).
+
+| CA | O que | Resultado | Data |
+|---|---|---|---|
+| SPEC-032 CA-09 | Serviços de pé com `read_only` e `pids_limit`; headers novos e sem `server`/`via`; painel de ponta a ponta (CA-17, passos 1 a 3, da SPEC-015); `PIDS` ≤ metade do limite; nenhum `Read-only file system` no log | pendente | — |

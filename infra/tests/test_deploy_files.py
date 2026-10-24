@@ -300,6 +300,13 @@ LIMITS = {
     "dashboard": ("${DASHBOARD_MEM_LIMIT:-1g}", "${DASHBOARD_CPUS:-1.0}"),
     "caddy": ("${CADDY_MEM_LIMIT:-256m}", "${CADDY_CPUS:-0.5}"),
 }
+# SPEC-032 section 4.4, item 1: written literally, like the memory and CPU limits.
+PIDS_LIMITS = {
+    "api": "${API_PIDS_LIMIT:-256}",
+    "dashboard": "${DASHBOARD_PIDS_LIMIT:-256}",
+    "caddy": "${CADDY_PIDS_LIMIT:-256}",
+}
+TMPFS_SIZE = re.compile(r"(?:^|,)size=(\d+)([kmg]?)(?:,|$)")
 
 
 def test_compose_structure() -> None:
@@ -347,6 +354,37 @@ def test_compose_structure() -> None:
     assert caddy["cap_add"] == ["NET_BIND_SERVICE"]
     assert caddy["depends_on"] == ["api", "dashboard"]
     assert compose["networks"]["partqc"].get("internal") is not True
+
+
+def _tmpfs_size_bytes(item: str) -> int | None:
+    _, _, options = item.partition(":")
+    match = TMPFS_SIZE.search(options)
+    if match is None:
+        return None
+    return int(match.group(1)) * {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[match.group(2)]
+
+
+def test_compose_hardening_spec_032() -> None:
+    """SPEC-032 section 4.4: read_only, pids_limit and /tmp tmpfs of at most 64m."""
+    services = _yaml(INFRA / "compose.yaml")["services"]
+    for name, service in services.items():
+        assert service["read_only"] is True, name
+        assert service["pids_limit"] == PIDS_LIMITS[name], name
+        tmpfs = service["tmpfs"]
+        assert isinstance(tmpfs, list), name
+        assert [item for item in tmpfs if item.split(":", 1)[0] == "/tmp"], name
+        for item in tmpfs:
+            size = _tmpfs_size_bytes(item)
+            assert size is not None and 0 < size <= 64 * 1024**2, (name, item)
+            path = item.split(":", 1)[0]
+            assert path == "/tmp" or (name != "caddy" and path.startswith("/home/app")), item
+    # Measured (dev-report r1): neither process writes under /home/app, so only /tmp.
+    assert {name: s["tmpfs"] for name, s in services.items()} == {
+        name: ["/tmp:size=64m"] for name in services
+    }
+    caddy = services["caddy"]
+    assert {"caddy_data:/data", "caddy_config:/config"} <= set(caddy["volumes"])
+    assert not [v for v in caddy["volumes"] if v.startswith("caddy_") and v.endswith(":ro")]
 
 
 def test_compose_caddy_version_matches_nothing_floating() -> None:
@@ -446,10 +484,17 @@ def test_env_example_vps_block() -> None:
         "DASHBOARD_CPUS=1.0",
         "CADDY_MEM_LIMIT=256m",
         "CADDY_CPUS=0.5",
+        "API_PIDS_LIMIT=256",
+        "DASHBOARD_PIDS_LIMIT=256",
+        "CADDY_PIDS_LIMIT=256",
         "CLOUD_API_URL=https://<subdominio>",
         "# ---------- Segredos fora do .env (GitHub Secrets) ----------",
     ):
         assert line in lines, line
+    start = lines.index("# ---------- infra/.env (VPS, infra/compose.yaml) ----------")
+    end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("# ----------"))
+    for name in ("API_PIDS_LIMIT", "DASHBOARD_PIDS_LIMIT", "CADDY_PIDS_LIMIT"):
+        assert start < lines.index(f"{name}=256") < end, name  # SPEC-032 section 4.4
     text = "\n".join(lines)
     assert "onrender.com" not in text
     assert "Streamlit Community Cloud" not in text
@@ -463,6 +508,9 @@ def test_env_example_compose_values_match_the_compose_defaults() -> None:
         for expr in (mem, cpus):
             name, default = re.fullmatch(r"\$\{(\w+):-([^}]+)\}", expr).groups()
             assert values[name] == default
+    for expr in PIDS_LIMITS.values():
+        name, default = re.fullmatch(r"\$\{(\w+):-([^}]+)\}", expr).groups()
+        assert values[name] == default == "256"
 
 
 @pytest.mark.parametrize(
