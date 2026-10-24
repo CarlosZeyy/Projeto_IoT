@@ -8,6 +8,10 @@ orange (rust) fraction that grows with the grade. No real photo is ever used (R-
 SPEC-035 section 4.7: optional contributor items (``S-501``...) and external images
 (``XS-0001``...), with ``root/sources.csv`` and the registry ``root/external_sources.csv``.
 
+SPEC-016 section 4.9: optional hand tools (``T-001``... and external ``XT-0001``...), drawn as
+simple metal silhouettes (pliers, adjustable wrench, Allen key, flat and Phillips screwdrivers)
+with the same rust fraction per grade.
+
 No torch here.
 """
 
@@ -34,6 +38,7 @@ from qc_ml.data import (
     RAW_DIR,
     SOURCE_COLUMNS,
     SOURCES_FILE,
+    TOOL_OBJECT_TYPES,
 )
 
 IMAGE_SIZE = 256
@@ -45,6 +50,7 @@ BASE_TIME = datetime(2026, 10, 22, 14, 0, 0, tzinfo=UTC)
 LABELER = "a"
 CAPTURE_DEVICE = "synthetic"
 ITEM_PREFIXES: dict[str, str] = {"screw": "S", "nut": "N", "other": "O"}
+TOOL_PREFIX = "T"  # every hand tool (SPEC-016 section 4.6)
 MAX_ITEMS_PER_TYPE = 999
 CONTRIBUTOR_FIRST_NUMBER = 501  # docs/dataset-protocol.md section 10.3 (recommendation)
 MAX_EXTERNAL_ITEMS_PER_TYPE = 9999
@@ -89,13 +95,65 @@ def _rectangle(cx: float, cy: float, w: float, h: float, angle: float) -> list[t
     return [(cx + x * cos - y * sin, cy + x * sin + y * cos) for x, y in corners]
 
 
+# Hand tools (SPEC-016): polygons in a local frame (x right, y down, the tool along y), each
+# ``(fill, points)``; ``fill = 0`` cuts a hole. Turned by the angle of the image and scaled.
+_SCREWDRIVER_BODY: tuple[tuple[int, tuple[tuple[float, float], ...]], ...] = (
+    (255, ((-20, 5), (20, 5), (20, 95), (-20, 95))),  # handle
+    (255, ((-5, -85), (5, -85), (5, 5), (-5, 5))),  # shaft
+)
+TOOL_POLYGONS: dict[str, tuple[tuple[int, tuple[tuple[float, float], ...]], ...]] = {
+    "pliers": (
+        (255, ((-10, 0), (-2, 0), (-22, 95), (-34, 92))),  # left handle
+        (255, ((2, 0), (10, 0), (34, 92), (22, 95))),  # right handle
+        (255, ((-12, 0), (12, 0), (5, -60), (-5, -60))),  # jaws
+    ),
+    "adjustable_wrench": (
+        (255, ((-11, -45), (11, -45), (11, 105), (-11, 105))),  # handle
+        (255, tuple((32 * np.cos(a), -62 + 32 * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 24))),
+        (0, ((-10, -98), (10, -98), (10, -66), (-10, -66))),  # opening of the jaw
+    ),
+    "allen_key": (
+        (255, ((-7, -65), (7, -65), (7, 85), (-7, 85))),  # long arm
+        (255, ((-7, -65), (55, -65), (55, -51), (-7, -51))),  # short arm
+    ),
+    "flat_screwdriver": (
+        *_SCREWDRIVER_BODY,
+        (255, ((-9, -93), (9, -93), (9, -85), (-9, -85))),  # flat tip
+    ),
+    "phillips_screwdriver": (
+        *_SCREWDRIVER_BODY,
+        (255, ((-7, -85), (7, -85), (0, -102))),  # pointed tip
+    ),
+}
+
+
+def _tool_polygons(
+    object_type: str, cx: float, cy: float, angle: float, scale: float
+) -> list[tuple[int, list[tuple[float, float]]]]:
+    cos, sin = np.cos(angle), np.sin(angle)
+    return [
+        (
+            fill,
+            [
+                (cx + scale * (x * cos - y * sin), cy + scale * (x * sin + y * cos))
+                for x, y in points
+            ],
+        )
+        for fill, points in TOOL_POLYGONS[object_type]
+    ]
+
+
 def _shape_mask(object_type: str, rng: np.random.Generator) -> np.ndarray:
     mask = Image.new("L", (IMAGE_SIZE, IMAGE_SIZE), 0)
     draw = ImageDraw.Draw(mask)
     cx = IMAGE_SIZE / 2 + float(rng.uniform(-15, 15))
     cy = IMAGE_SIZE / 2 + float(rng.uniform(-15, 15))
     angle = float(rng.uniform(-np.pi / 6, np.pi / 6))
-    if object_type == "screw":
+    if object_type in TOOL_POLYGONS:
+        scale = float(rng.uniform(0.9, 1.1))
+        for fill, points in _tool_polygons(object_type, cx, cy, angle, scale):
+            draw.polygon(points, fill=fill)
+    elif object_type == "screw":
         w, h = float(rng.uniform(50, 70)), float(rng.uniform(150, 190))
         draw.polygon(_rectangle(cx, cy, w, h, angle), fill=255)
     elif object_type == "nut":
@@ -213,6 +271,8 @@ def make_synthetic_dataset(
     seed: int = 0,
     external_items_per_stratum: int = 0,
     contributor_items_per_stratum: int = 0,
+    tool_items_per_stratum: int = 0,
+    external_tool_items_per_type: int = 0,
 ) -> Path:
     """Create a synthetic dataset in ``root`` and return ``root``.
 
@@ -234,14 +294,26 @@ def make_synthetic_dataset(
       ``synthetic``, ``source_ref`` ``synthetic/<item_id>.png``); ``root/external_sources.csv``
       gets the single source ``synthetic`` (``CC0-1.0``).
 
-    ``input_sha256`` is the SHA-256 of the file written. With ``c = k = 0`` (the default) the
-    files are byte for byte the ones of SPEC-011, and neither ``sources.csv`` nor
-    ``external_sources.csv`` is created. The own items come first, so their images do not depend
-    on ``c`` and ``k``.
+    SPEC-016 section 4.9 (hand tools, in the order of ``TOOL_OBJECT_TYPES``):
+
+    - ``tool_items_per_stratum = t``: for each tool x grade (tool first, then the grades in
+      order), ``t`` items ``T-NNN`` numbered from ``T-001`` in one sequence over every tool
+      stratum, each with ``images_per_item`` images (origin ``capture``, no ``sources.csv`` line);
+    - ``external_tool_items_per_type = e``: for each tool, ``e`` items ``XT-NNNN`` from
+      ``XT-0001`` (one sequence over the tools), each with 1 image (angle 0), the grades in round
+      robin within each tool (``perfect``, ``good``...), one ``external`` line per image with the
+      source ``synthetic`` (and the registry, as above).
+
+    ``input_sha256`` is the SHA-256 of the file written. With ``c = k = t = e = 0`` (the default)
+    the files are byte for byte the ones of SPEC-011, and neither ``sources.csv`` nor
+    ``external_sources.csv`` is created. The own items come first, then the contributor and
+    external items, then the tools, so the images of each group do not depend on the groups
+    after it.
 
     Raises:
         FileExistsError: ``root/manifest.csv`` already exists.
-        ValueError: non-positive counts, negative ``c``/``k``, too many items of a type, or
+        ValueError: non-positive counts, negative ``c``/``k``/``t``/``e``, too many items of a
+            type (``T-`` items share one sequence: at most 999 over the 25 tool strata), or
             ``c > 0`` with an own item numbered 501 or more (it would collide with a contributor
             item, SPEC-037 section 4.5).
     """
@@ -251,6 +323,12 @@ def make_synthetic_dataset(
         raise ValueError(
             "external_items_per_stratum and contributor_items_per_stratum must be >= 0"
         )
+    if tool_items_per_stratum < 0 or external_tool_items_per_type < 0:
+        raise ValueError("tool_items_per_stratum and external_tool_items_per_type must be >= 0")
+    if tool_items_per_stratum * len(TOOL_OBJECT_TYPES) * len(GRADES) > MAX_ITEMS_PER_TYPE:
+        raise ValueError(f"at most {MAX_ITEMS_PER_TYPE} T- items over every tool stratum")
+    if external_tool_items_per_type * len(TOOL_OBJECT_TYPES) > MAX_EXTERNAL_ITEMS_PER_TYPE:
+        raise ValueError(f"at most {MAX_EXTERNAL_ITEMS_PER_TYPE} XT- items over every tool")
     if items_per_stratum * len(GRADES) > MAX_ITEMS_PER_TYPE:
         raise ValueError(f"at most {MAX_ITEMS_PER_TYPE} items per type")
     last_contributor = CONTRIBUTOR_FIRST_NUMBER - 1 + contributor_items_per_stratum * len(GRADES)
@@ -304,6 +382,19 @@ def make_synthetic_dataset(
             external_next[prefix] = number + 1
             item_id = f"{EXTERNAL_PREFIX}{prefix}-{number:04d}"
             plan.append((item_id, object_type, grade, 1, "external"))
+    tool_number = 0
+    for tool in TOOL_OBJECT_TYPES:
+        for grade in GRADES:
+            for _ in range(tool_items_per_stratum):
+                tool_number += 1
+                item_id = f"{TOOL_PREFIX}-{tool_number:03d}"
+                plan.append((item_id, tool, grade, images_per_item, "tool"))
+    external_tool_number = 0
+    for tool in TOOL_OBJECT_TYPES:
+        for k in range(external_tool_items_per_type):
+            external_tool_number += 1
+            item_id = f"{EXTERNAL_PREFIX}{TOOL_PREFIX}-{external_tool_number:04d}"
+            plan.append((item_id, tool, GRADES[k % len(GRADES)], 1, "external"))
 
     rows: list[list[str]] = []
     source_rows: list[list[str]] = []
@@ -315,7 +406,7 @@ def make_synthetic_dataset(
         item_rows = _write_images(root, item_id, object_type, grade, n_images, start, rng)
         offset += n_images
         rows += item_rows
-        if origin == "capture":
+        if origin in ("capture", "tool"):  # own items: no line in sources.csv
             continue
         for row in item_rows:
             digest = hashlib.sha256((root / row[0]).read_bytes()).hexdigest()
@@ -328,7 +419,7 @@ def make_synthetic_dataset(
     _write_csv(manifest, MANIFEST_COLUMNS, rows)
     if source_rows:
         _write_csv(root / SOURCES_FILE, SOURCE_COLUMNS, source_rows)
-    if external_items_per_stratum:
+    if external_items_per_stratum or external_tool_items_per_type:
         _write_csv(root / EXTERNAL_SOURCES_FILE, EXTERNAL_SOURCE_COLUMNS, [list(SYNTHETIC_SOURCE)])
     return root
 

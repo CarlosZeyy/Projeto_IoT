@@ -7,6 +7,10 @@ by splitting lines (SEC-10-03): rows written before SPEC-025 may contain U+2028,
 in ``notes`` or ``capture_device``, which ``str.splitlines()`` would count as line breaks. The
 pipeline does not take the edge's ``manifest.csv.lock`` (SEC-10-06): it reads the manifest once.
 
+Hand tools (SPEC-016 section 4.6, ADR-021): five more object types with the item prefix ``T``
+(``XT`` for external images), a required grade like ``screw``/``nut`` and a per-type criterion of
+data volume (``tool_grade_coverage``) that says whether a model grades the tool.
+
 Origin of the images (SPEC-035, ADR-020): ``DATASET_DIR/sources.csv`` says which images were
 imported (``contributor`` or ``external``) and the registry ``ml/external_sources.csv`` lists the
 external sources with their licence. Whether an image is external is decided **only** by its
@@ -44,7 +48,7 @@ from typing import Any
 import pandas as pd
 
 import qc_ml
-from qc_contracts import GRADE_ORDER
+from qc_contracts import GRADE_OPTIONAL_OBJECT_TYPES, GRADE_ORDER, ObjectType
 from qc_ml.errors import ManifestError, ManifestProblem, SplitError
 from qc_preprocess import InvalidImageError, load_image
 
@@ -125,8 +129,16 @@ ATTRIBUTION_MAX = 500
 # Unicode categories refused in the free texts (control, surrogate, format, line/paragraph sep.).
 FORBIDDEN_CATEGORIES: frozenset[str] = frozenset({"Cc", "Cs", "Cf", "Zl", "Zp"})
 
-KNOWN_OBJECT_TYPES: tuple[str, ...] = ("screw", "nut", "other")
+# SPEC-016 section 4.6: the hand tools, in the order of ``ObjectType`` (values of the contract).
+TOOL_OBJECT_TYPES: tuple[str, ...] = tuple(
+    member.value for member in ObjectType if member in GRADE_OPTIONAL_OBJECT_TYPES
+)
+# Types of the dataset (and order of the type head): screw, nut, other, then the tools.
+KNOWN_OBJECT_TYPES: tuple[str, ...] = ("screw", "nut", "other", *TOOL_OBJECT_TYPES)
+# The MVP types whose grade metrics, targets and grade thresholds are measured (ADR-022, 6).
 GRADED_OBJECT_TYPES: tuple[str, ...] = ("screw", "nut")
+# Types whose manifest rows must have a grade (SPEC-016 section 4.6); ``other`` never has one.
+GRADE_REQUIRED_DATASET_TYPES: tuple[str, ...] = (*GRADED_OBJECT_TYPES, *TOOL_OBJECT_TYPES)
 GRADES: tuple[str, ...] = tuple(g.value for g in GRADE_ORDER)
 NO_GRADE = "none"
 SPLIT_NAMES: tuple[str, ...] = ("train", "val", "test")
@@ -135,8 +147,19 @@ SPLIT_NAMES: tuple[str, ...] = ("train", "val", "test")
 # qc_ml (SPEC-031 section 4.6): own items ``S-012`` and external images ``XS-0001`` (SPEC-035).
 ITEM_ID_PATTERN = re.compile(r"[SNOT]-[0-9]{3}|X[SNOT]-[0-9]{4}")
 ANGLE_PATTERN = re.compile(r"[0-4]")
-ITEM_PREFIX_TYPES: dict[str, str] = {"S": "screw", "N": "nut", "O": "other"}
+# Type letter of the item_id -> the object types it allows (``T``: any hand tool, SPEC-016).
+ITEM_PREFIX_TYPES: dict[str, frozenset[str]] = {
+    "S": frozenset({"screw"}),
+    "N": frozenset({"nut"}),
+    "O": frozenset({"other"}),
+    "T": frozenset(TOOL_OBJECT_TYPES),
+}
 EXTERNAL_PREFIX = "X"
+
+# SPEC-016 section 4.6: a tool is graded when each of the 5 grades has at least this many
+# non-external, non-excluded images, from at least this many distinct items.
+TOOL_GRADE_MIN_IMAGES = 60
+TOOL_GRADE_MIN_ITEMS = 5
 
 # SPEC-024 section 4.1 guarantees this text in the message of the scan-limit error.
 JPEG_SCANS_TEXT = "JPEG scans"
@@ -156,6 +179,11 @@ def item_type_letter(item_id: str) -> str:
     return item_id[1] if item_id.startswith(EXTERNAL_PREFIX) else item_id[0]
 
 
+def item_prefix_matches(item_id: str, object_type: str) -> bool:
+    """``True`` when the type letter of ``item_id`` allows ``object_type`` (ITEM_PREFIX_TYPES)."""
+    return object_type in ITEM_PREFIX_TYPES.get(item_type_letter(item_id), frozenset())
+
+
 def is_external_item(item_id: str) -> bool:
     """``True`` if, and only if, ``item_id`` matches ``ITEM_ID_PATTERN`` and starts with ``X``.
 
@@ -168,12 +196,26 @@ def is_external_item(item_id: str) -> bool:
     )
 
 
+# The type head of a model without tools (SPEC-012): the ``labels.json`` of the MVP.
+MVP_OBJECT_TYPES: tuple[str, ...] = ("screw", "nut", "other")
+
+
 @dataclass(frozen=True)
 class ModelLabels:
-    """Class order of the model heads (``labels.json``, docs/architecture.md section 7)."""
+    """Class order of the model heads (``labels.json``, docs/architecture.md section 7).
 
-    object_types: tuple[str, ...] = KNOWN_OBJECT_TYPES
+    ``ungraded_object_types`` (SPEC-016 section 4.8, ADR-021) lists the types of the model that
+    it does not grade; their grade target is masked in training and their decision has no grade.
+    Lists are turned into tuples.
+    """
+
+    object_types: tuple[str, ...] = MVP_OBJECT_TYPES
     grades: tuple[str, ...] = GRADES
+    ungraded_object_types: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("object_types", "grades", "ungraded_object_types"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
 
 
 DEFAULT_LABELS = ModelLabels()
@@ -833,16 +875,13 @@ def _row_problems(
             "invalid_item_id",
             f"item_id must match ^[SNOT]-\\d{{3}}$ or ^X[SNOT]-\\d{{4}}$, got {item_id!r}",
         )
-    elif (
-        object_type in KNOWN_OBJECT_TYPES
-        and ITEM_PREFIX_TYPES.get(item_type_letter(item_id)) != object_type
-    ):
+    elif object_type in KNOWN_OBJECT_TYPES and not item_prefix_matches(item_id, object_type):
         add("item_prefix_mismatch", f"item_id {item_id} does not match object_type {object_type}")
     if grade is not None and grade not in GRADES:
         add("invalid_grade", f"grade must be one of {', '.join(GRADES)}, got {grade!r}")
     if object_type == "other" and grade is not None:
         add("grade_on_other", f"grade must be empty for other, got {grade!r}")
-    if object_type in GRADED_OBJECT_TYPES and grade is None:
+    if object_type in GRADE_REQUIRED_DATASET_TYPES and grade is None:
         add("missing_grade", f"grade is required for {object_type}")
     if not ANGLE_PATTERN.fullmatch(angle):
         add("invalid_angle", f"angle must be an integer in 0..4, got {angle!r}")
@@ -1032,6 +1071,79 @@ def dominant_grade(grades: Iterable[str | None]) -> str:
 
 
 # ---------------------------------------------------------------------------------------------
+# Hand tools: grade criterion, model labels and the grade target (SPEC-016 sections 4.6, 4.8)
+# ---------------------------------------------------------------------------------------------
+
+
+def tool_grade_coverage(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """The grade criterion of each hand tool (SPEC-016 section 4.6), over ``df`` itself.
+
+    ``df`` is the result of ``load_manifest`` (excluded images already left out). Only the
+    non-external images count (``is_external_item``); the split is not used. Returns, always
+    with the 5 tools and the 5 grades (zeros without images)::
+
+        {tool: {"graded": bool, "by_grade": {grade: {"n_images": int, "n_items": int}}}}
+
+    A tool is graded when every grade has at least ``TOOL_GRADE_MIN_IMAGES`` images from at
+    least ``TOOL_GRADE_MIN_ITEMS`` distinct ``item_id`` values.
+    """
+    images: dict[str, dict[str, int]] = {t: dict.fromkeys(GRADES, 0) for t in TOOL_OBJECT_TYPES}
+    items: dict[str, dict[str, set[str]]] = {t: {g: set() for g in GRADES} for t in images}
+    for object_type, grade, item_id in df[["object_type", "grade", "item_id"]].itertuples(
+        index=False, name=None
+    ):
+        if object_type not in images or not _present(grade) or str(grade) not in GRADES:
+            continue
+        if is_external_item(str(item_id)):
+            continue
+        images[object_type][str(grade)] += 1
+        items[object_type][str(grade)].add(str(item_id))
+    coverage: dict[str, dict[str, Any]] = {}
+    for tool in TOOL_OBJECT_TYPES:
+        by_grade = {
+            grade: {"n_images": images[tool][grade], "n_items": len(items[tool][grade])}
+            for grade in GRADES
+        }
+        graded = all(
+            cell["n_images"] >= TOOL_GRADE_MIN_IMAGES and cell["n_items"] >= TOOL_GRADE_MIN_ITEMS
+            for cell in by_grade.values()
+        )
+        coverage[tool] = {"graded": graded, "by_grade": by_grade}
+    return coverage
+
+
+def derive_model_labels(df: pd.DataFrame, train_rows: pd.DataFrame) -> ModelLabels:
+    """Types and ungraded types of the model to train (SPEC-016 section 4.8); a pure function.
+
+    ``object_types``: the ``KNOWN_OBJECT_TYPES`` with at least one image in ``train_rows``, in
+    the order ``screw``, ``nut``, ``other`` and then the tools in the order of ``ObjectType``.
+    ``ungraded_object_types``: the tools of the model that are not graded by the criterion of
+    ``tool_grade_coverage(df)`` (``df`` = the whole ``load_manifest`` result), in the same order.
+    For the MVP data the result equals ``DEFAULT_LABELS``.
+    """
+    present = {str(t) for t in train_rows["object_type"]}
+    object_types = tuple(t for t in KNOWN_OBJECT_TYPES if t in present)
+    coverage = tool_grade_coverage(df)
+    ungraded = tuple(
+        t for t in object_types if t in TOOL_OBJECT_TYPES and not coverage[t]["graded"]
+    )
+    return ModelLabels(object_types=object_types, grades=GRADES, ungraded_object_types=ungraded)
+
+
+def grade_target(object_type: str, grade: Any, labels: ModelLabels) -> int | None:
+    """Index of ``grade`` in ``labels.grades``, or ``None`` when the grade loss ignores the row.
+
+    ``None`` for ``other``, for the types of ``labels.ungraded_object_types`` and for a row
+    without grade (SPEC-016 section 4.8; skill ml-pipeline section 4).
+    """
+    if object_type == "other" or object_type in labels.ungraded_object_types:
+        return None
+    if not _present(grade):
+        return None
+    return list(labels.grades).index(str(grade))
+
+
+# ---------------------------------------------------------------------------------------------
 # Data report (SPEC-011 section 4.2)
 # ---------------------------------------------------------------------------------------------
 
@@ -1059,6 +1171,8 @@ def build_data_report(df: pd.DataFrame, split_df: pd.DataFrame | None = None) ->
     ``split_file`` and ``split_sha256`` from ``split_df.attrs`` (set by ``qc_ml.split.load_split``).
     The report has no pixels and no absolute paths, and never the contributor codes.
 
+    SPEC-016 section 4.6: ``tool_grade_coverage`` has the grade criterion of each hand tool.
+
     SPEC-035 section 4.5: ``items_per_grade``, ``images_per_item``, ``below_target`` and
     ``below_minimum`` count only the non-external images (the volume targets are of physical
     items); ``n_images``, ``n_items`` and ``counts`` count every image.
@@ -1080,7 +1194,7 @@ def build_data_report(df: pd.DataFrame, split_df: pd.DataFrame | None = None) ->
     items: dict[str, dict[str, set[str]]] = {}
     own_images: dict[str, dict[str, int]] = {}  # non-external images by type and grade
     for object_type in object_types:
-        grade_keys = GRADES if object_type in GRADED_OBJECT_TYPES else (NO_GRADE,)
+        grade_keys = GRADES if object_type in GRADE_REQUIRED_DATASET_TYPES else (NO_GRADE,)
         counts[object_type] = {g: dict.fromkeys(split_keys, 0) for g in grade_keys}
         items[object_type] = {g: set() for g in grade_keys}
         own_images[object_type] = dict.fromkeys(grade_keys, 0)
@@ -1180,6 +1294,7 @@ def build_data_report(df: pd.DataFrame, split_df: pd.DataFrame | None = None) ->
         "external_fraction_train": (
             n_external_train / n_train if split_df is not None and n_train else None
         ),
+        "tool_grade_coverage": tool_grade_coverage(df),
     }
 
 
