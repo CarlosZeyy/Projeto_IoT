@@ -4,6 +4,10 @@
 (``SplitIntegrityError``). Every threshold is a value of a fixed grid with 2 decimals; the rates
 are compared with exact integer arithmetic, never with rounded floats.
 
+SPEC-016 section 4.8: ``FU(t)`` counts the validation images of every type except ``other``
+(screw, nut and the tools of the model); ``unusable_threshold`` and ``grade_review_threshold``
+are computed on the ``screw``/``nut`` images only, so the tools never move them (ADR-022).
+
 No torch, no sklearn here (CA-27).
 
 CLI::
@@ -65,18 +69,24 @@ def _rate(count: int, total: int) -> float | None:
     return count / total if total else None
 
 
+def _screw_nut_mask(val: Predictions, labels: ModelLabels) -> np.ndarray:
+    """``True`` for the validation images whose true type is ``screw`` or ``nut``."""
+    types = list(labels.object_types)
+    indices = [types.index(t) for t in GRADED_OBJECT_TYPES if t in types]
+    return np.isin(val.true_type_idx, indices)
+
+
 def _choose_type(val: Predictions, labels: ModelLabels) -> tuple[int, dict[str, Any], list[str]]:
     other = labels.object_types.index("other")
-    graded_types = [labels.object_types.index(t) for t in GRADED_OBJECT_TYPES]
-    screw_nut = np.isin(val.true_type_idx, graded_types)
-    n = int(screw_nut.sum())
+    known = val.true_type_idx != other  # SPEC-016 4.8: every type except other
+    n = int(known.sum())
     type_idx = np.argmax(val.type_probs, axis=1) if len(val) else np.zeros(0, dtype=np.int64)
     type_conf = val.type_probs.max(axis=1) if len(val) else np.zeros(0)
     curve = []
     passing: list[int] = []
     for k in TYPE_GRID:
         unknown = (type_idx == other) | (type_conf < hundredths(k))
-        count = int((unknown & screw_nut).sum())
+        count = int((unknown & known).sum())
         curve.append(
             {"threshold": hundredths(k), "n_unknown": count, "false_unknown_rate": _rate(count, n)}
         )
@@ -94,7 +104,8 @@ def _choose_type(val: Predictions, labels: ModelLabels) -> tuple[int, dict[str, 
     point = next(p for p in curve if p["threshold"] == hundredths(chosen))
     section = {
         "value": hundredths(chosen),
-        "rule": "largest t in [0.50, 0.85] with false_unknown_rate <= 0.05 on val screw/nut",
+        "rule": "largest t in [0.50, 0.85] with false_unknown_rate <= 0.05 on the val images of "
+        "every type except other",
         "n_images": n,
         "false_unknown_rate": point["false_unknown_rate"],
         "curve": curve,
@@ -106,7 +117,7 @@ def _choose_unusable(
     val: Predictions, labels: ModelLabels
 ) -> tuple[int, dict[str, Any], list[str]]:
     unusable = labels.grades.index("unusable")
-    graded = val.true_grade_idx >= 0
+    graded = _screw_nut_mask(val, labels) & (val.true_grade_idx >= 0)
     truth = val.true_grade_idx[graded]
     probs = val.grade_probs[graded]
     is_unusable = truth == unusable
@@ -142,7 +153,7 @@ def _choose_unusable(
     point = next(p for p in curve if p["threshold"] == hundredths(chosen))
     section = {
         "value": hundredths(chosen),
-        "rule": "largest u with unusable_recall >= 0.90 on val images with grade",
+        "rule": "largest u with unusable_recall >= 0.90 on val screw/nut images with grade",
         "n_images": int(graded.sum()),
         "n_unusable": n,
         "unusable_recall": point["unusable_recall"],
@@ -152,19 +163,23 @@ def _choose_unusable(
     return chosen, section, notes
 
 
-def _review_count(val: Predictions, labels: ModelLabels, t: int, u: int, r: int) -> int:
+def _review_count(
+    val: Predictions, labels: ModelLabels, scope: np.ndarray, t: int, u: int, r: int
+) -> int:
     thresholds = Thresholds(hundredths(t), hundredths(u), hundredths(r))
     decisions = apply_decision(val.type_probs, val.grade_probs, labels, thresholds)
-    return int(decisions.needs_review.sum())
+    return int((decisions.needs_review & scope).sum())
 
 
 def _choose_review(
     val: Predictions, labels: ModelLabels, t: int, u: int
 ) -> tuple[int, dict[str, Any], list[str]]:
-    n = len(val)
-    count_default = _review_count(val, labels, t, u, DEFAULT_REVIEW)
+    scope = _screw_nut_mask(val, labels)  # SPEC-016 4.8: screw/nut only
+    n = int(scope.sum())
+    count_default = _review_count(val, labels, scope, t, u, DEFAULT_REVIEW)
     section: dict[str, Any] = {
-        "rule": "0.60 if needs_review is in [5%, 15%] of val; else the r closest to 10%",
+        "rule": "0.60 if needs_review is in [5%, 15%] of the val screw/nut images; else the r "
+        "closest to 10%",
         "n_images": n,
         "needs_review_rate_at_default": _rate(count_default, n),
     }
@@ -176,7 +191,7 @@ def _choose_review(
     best: tuple[int, int, int] | None = None
     chosen = DEFAULT_REVIEW
     for k in REVIEW_GRID:
-        count = _review_count(val, labels, t, u, k)
+        count = _review_count(val, labels, scope, t, u, k)
         curve.append({"threshold": hundredths(k), "needs_review_rate": _rate(count, n)})
         # |count/n - 0.10| ~ |10 count - n|; tie -> closest to 0.60; then the larger r (more
         # review is the safer side).
