@@ -93,3 +93,102 @@ Nenhum. A decisão 1 usa uma forma equivalente (no domínio que o `check` de `ob
 - [x] `.env.example` atualizado (se houver variável nova): nenhuma variável nova
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] Nada em `ml/` alterado (Parte B do ml-engineer)
+
+## Parte B (ml-engineer)
+
+| Campo | Valor |
+|---|---|
+| Autor | ml-engineer |
+| Commits | `ba35ae3` (dados e gerador), `e25c928` (split), `60f7bc1` (modelo, limiares, avaliação, export, CHANGELOG e fixture), `0e412ef` (README) e o commit desta seção |
+
+### Resumo
+
+- **Dados (§4.6):** `KNOWN_OBJECT_TYPES` = `screw`, `nut`, `other` e as 5 ferramentas; `TOOL_OBJECT_TYPES` vem do contrato (`GRADE_OPTIONAL_OBJECT_TYPES`, na ordem do `ObjectType`). O prefixo `T` (e `XT`) exige uma ferramenta (`item_prefix_matches`); o grau é obrigatório para as ferramentas. `tool_grade_coverage(df)` aplica o critério (≥ 60 imagens de ≥ 5 peças em cada grau, só não externas e não excluídas) e o relatório de dados ganha a chave `tool_grade_coverage`.
+- **Split (§4.7, ADR-022):** `--extend-test-types` e `--defer-types`; `type_decision_problems` faz as checagens (tipo novo sem decisão, tipo listado que não é novo, tipo nas duas listas, valor desconhecido, menos de 3 peças não externas) e a CLI imprime uma linha por problema e sai com 2 sem gravar nada. A extensão usa o procedimento do `split_v1`; o adiamento tira as imagens do CSV. `split_v<N>.json` ganha `test_extended_types` e `deferred_types`. `assign_splits`/`rows_for` ignoram as imagens de um tipo sem linha no split, com o aviso `deferred type images: <tipo>: <n>` no log.
+- **Modelo (§4.8):** `derive_model_labels(df, train_rows)` e `grade_target(object_type, grade, labels)` (funções puras em `qc_ml.data`, sem torch). `ModelLabels` ganha `ungraded_object_types`; o `labels.json` do export e o `training_config.json` passam a tê-lo. `FU(t)` conta todos os tipos menos `other`; `unusable_threshold` e `grade_review_threshold` só `screw`/`nut`. `metrics.json` ganha `tool_grade_metrics` e os avisos `few test items for <tipo>: <n>`. O CHANGELOG ganha a linha "Tipos do modelo" e a observação sobre a `type_accuracy`.
+- **Gerador (§4.9):** `tool_items_per_stratum` e `external_tool_items_per_type`, com silhuetas sintéticas das 5 ferramentas; com os dois em 0, os arquivos são os mesmos, byte a byte.
+- **Fixture e README (§4.10):** `ml/tests/fixtures/tiny_model_tools/` (8 tipos, `allen_key` sem grau, 853.052 bytes), gerada por `ml/scripts/make_tiny_fixture.py --with-tools`; seção "Ferramentas (Fase 2)" no `ml/README.md`.
+
+### Rastreabilidade (critério de aceite → implementação)
+
+| Critério | Arquivo(s) | Teste unitário do autor |
+|---|---|---|
+| CA-13 | `ml/src/qc_ml/data.py` (`TOOL_OBJECT_TYPES`, `KNOWN_OBJECT_TYPES`, `ITEM_PREFIX_TYPES`, `item_prefix_matches`, `GRADE_REQUIRED_DATASET_TYPES`, `_row_problems`) | `ml/tests/test_tools_data.py::test_ca13_tools_load_without_error`, `::test_ca13_t_item_with_screw_is_a_prefix_mismatch`, `::test_ca13_tool_without_grade_is_missing_grade`, `::test_t_prefix_with_a_mvp_type_is_refused`, `::test_tool_with_s_prefix_is_refused`, `::test_two_tool_types_for_one_item_conflict`, `::test_item_prefix_matches`, `::test_tool_types_are_the_grade_optional_types_of_the_contract` |
+| CA-14 | `ml/src/qc_ml/data.py` (`TOOL_GRADE_MIN_IMAGES`, `TOOL_GRADE_MIN_ITEMS`, `tool_grade_coverage`, `build_data_report`) | `ml/tests/test_tools_data.py::test_ca14_tool_grade_criterion`, `::test_criterion_without_tools_has_the_5_tools_with_zeros`, `::test_criterion_ignores_excluded_images`, `::test_data_report_has_the_tool_coverage`, `::test_build_data_report_lists_every_known_type`; `ml/tests/test_data.py::test_report` |
+| CA-15 | `ml/src/qc_ml/split.py` (`line_type_resolver`, `split_object_types`, `new_object_types`, `type_decision_problems`, `make_split`, `write_split`, `recorded_deferred_types`, `_type_list`, `main`) | `ml/tests/test_tools_split.py::test_ca15a_new_types_need_a_decision`, `::test_ca15_defer_extend_and_freeze` ((b), (c), (d)), `::test_ca15e_too_few_items_to_extend`, `::test_extension_is_the_split_v1_procedure_per_type`, `::test_invalid_type_lists_exit_2`, `::test_unknown_type_exits_2_even_for_split_v1`, `::test_split_v1_ignores_the_lists`, `::test_new_object_types_and_decisions`, `::test_make_split_checks_the_extension` |
+| CA-15 (leitura do split, §4.7 último item) | `ml/src/qc_ml/split.py` (`deferred_type_counts`, `assign_splits`, `rows_for`) | `ml/tests/test_tools_split.py::test_readers_ignore_a_deferred_type`, `::test_present_type_with_new_images_is_still_outdated` |
+| CA-16 | `ml/src/qc_ml/data.py` (`ModelLabels`, `derive_model_labels`, `grade_target`), `ml/src/qc_ml/train.py` (`model_labels_for`, `graded_training_counts`), `ml/src/qc_ml/dataset.py` (`PartsDataset.grade_index`) | `ml/tests/test_tools_model.py::test_ca16_model_labels_with_tools`, `::test_ca16_model_labels_of_the_mvp`, `::test_model_labels_use_only_the_train_rows_for_the_types`, `::test_ca16_grade_target`, `::test_graded_training_counts_leave_out_the_masked_rows`, `::test_model_labels_need_other_in_train`; com torch: `ml/tests/test_tools_torch.py::test_parts_dataset_masks_the_ungraded_tools` |
+| CA-17 | `ml/src/qc_ml/thresholds.py` (`_choose_type`, `_screw_nut_mask`, `_choose_unusable`, `_choose_review`) | `ml/tests/test_tools_model.py::test_ca17_false_unknown_counts_every_type_but_other`, `::test_unusable_and_review_thresholds_ignore_the_tools`, `::test_thresholds_of_the_mvp_labels_are_unchanged` |
+| CA-18 | `ml/src/qc_ml/evaluate.py` (`METRIC_KEYS`, `TOOL_GRADE_METRIC_KEYS`, `tool_grade_metrics`, `compute_metrics`, `split_counts`), `ml/src/qc_ml/artifacts.py` (`labels_to_dict`, `head_labels_to_dict`, `as_labels`, `check_labels`), `ml/src/qc_ml/decision.py` (`apply_decision`), `ml/src/qc_ml/export.py` (`training_labels`, `run`), `ml/src/qc_ml/train.py` (`training_config.json`, `best.pt`), `ml/src/qc_ml/pipeline.py`, `ml/src/qc_ml/plots.py`, `ml/tests/fixtures/tiny_model_tools/`, `ml/scripts/make_tiny_fixture.py` | `ml/tests/test_tools_model.py::test_ca18_evaluate_with_tools`, `::test_few_test_items_warning_per_model_type`, `::test_tool_grade_metrics_values`, `::test_tool_grade_metrics_without_test_images_are_null`, `::test_fixture_labels_json_has_the_ungraded_types`, `::test_labels_dict_has_the_ungraded_types`, `::test_invalid_ungraded_types_are_refused`, `::test_ungraded_type_outside_the_model_is_refused`, `::test_ungraded_types_must_be_a_list_of_strings`, `::test_unknown_labels_key_is_still_refused`, `::test_ungraded_tool_has_no_grade_and_only_the_type_margin`, `::test_same_result_as_the_edge_decision_with_ungraded_types`; `ml/tests/test_evaluate.py::test_ca22_metrics_file`; com torch: `ml/tests/test_tools_torch.py::test_pipeline_with_tools_records_the_model_types`, `::test_standalone_export_reads_the_labels_of_the_checkpoint`, `::test_training_labels_sources`; `ml/tests/test_pipeline_slow.py::test_ca08_training_config` |
+| CHANGELOG (§4.8) | `ml/src/qc_ml/report.py` (`model_types_lines`, `TYPE_ACCURACY_NOTE`, `changelog_entry`) | `ml/tests/test_tools_model.py::test_changelog_lists_the_model_types_before_the_table`, `::test_changelog_without_tools_has_no_types_line`, `::test_changelog_refuses_invalid_labels` |
+| CA-19 | `ml/src/qc_ml/synthetic.py` (`make_synthetic_dataset`, `TOOL_POLYGONS`, `_shape_mask`) | `ml/tests/test_tools_data.py::test_ca19_defaults_are_byte_for_byte_the_same`, `::test_tools_come_after_the_own_items`, `::test_tool_numbering_and_layout`, `::test_generator_refuses_invalid_tool_counts`, `::test_add_synthetic_item_draws_a_tool` |
+| CA-20 | `ml/src/qc_ml/split.py` (externas sempre no treino, também `XT-`) | `ml/tests/test_tools_split.py::test_ca15_defer_extend_and_freeze` (split (c) com `external_tool_items_per_type=2`: nenhuma peça em dois splits, nenhuma `XT-` fora do treino) |
+| CA-21 (manual) | `ml/README.md` (seção "Ferramentas (Fase 2)", passo a passo) | — (trabalho da dupla) |
+
+### Como rodar e verificar
+
+```bash
+uv sync --all-packages --locked
+uv run ruff check . && uv run ruff format --check .
+uv run pytest -q ml/tests --ignore=ml/tests/acceptance          # testes do autor, sem torch
+CI=true TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q
+# com torch (local): uv sync --all-packages --extra train && uv run pytest -q ml/tests
+# depois, voltar ao estado do CI: uv sync --all-packages --locked
+```
+
+Resultados (2026-10-24):
+
+- Suíte completa, ambiente do CI (sem o extra `train`) e `partqc_test`: **18 failed, 6906 passed, 57 skipped**. As 18 falhas são as 15 de aceite antigos da Parte A (tabela acima) e as 3 de `ml/` da tabela abaixo. Nenhum teste do autor falha.
+- `ml/tests` com o extra `train` instalado (inclui os testes *slow* e os aceites com torch): **5 failed, 917 passed, 2 skipped**; as 5 falhas são todas a asserção do conjunto exato de chaves de topo do `metrics.json` (tabela abaixo). O ambiente voltou ao estado do CI (`uv sync --all-packages --locked`; `torch` não instalado).
+- Testes novos do autor: 85 (`test_tools_data.py` 33, `test_tools_split.py` 14, `test_tools_model.py` 34, `test_tools_torch.py` 4, este com `pytest.importorskip("torch")`).
+
+### Testes de aceite antigos de `ml/` que passam a falhar por causa da Parte B (quem ajusta é o tester)
+
+| Arquivo | Teste | O que falha | Requisito da SPEC-016 | Na §3.1? |
+|---|---|---|---|---|
+| `ml/tests/acceptance/test_spec_012.py` | `test_ca22_metrics_json_contents` | `set(metrics) == METRIC_KEYS`: chave a mais `tool_grade_metrics` | §4.8 (chave de topo nova) | sim |
+| `ml/tests/acceptance/test_spec_012.py` | `test_extra_test_split_without_unusable_reports_null` | a mesma asserção (`_check_metrics`) | §4.8 | sim (mesma asserção do CA-22) |
+| `ml/tests/acceptance/test_spec_035.py` | `test_ca12_metrics_counts_by_origin` | `set(metrics) == METRIC_KEYS` | §4.8 | sim |
+| `ml/tests/acceptance/test_spec_012.py` (só com torch) | `test_extra_smoke_metrics_json_is_complete`, `test_extra_corn_smoke_pipeline_exports_probabilities` | `set(metrics) == METRIC_KEYS` no `metrics.json` do pipeline de fumaça | §4.8 | sim (mesma asserção) |
+
+Os casos de `T-`/`XT-` listados na §3.1 para `test_spec_011.py` e `test_spec_035.py` **não** falham: os testes existentes usam `T-001` com `screw` e `XT-0001` com `screw`, que continuam recusados (`item_prefix_mismatch`). O `test_ca08_training_config_contents` da SPEC-012 (com torch) passa, porque `training_config.json["labels"]` mantém o formato da SPEC-012 (decisão 2).
+
+### Decisões tomadas dentro do escopo da SPEC
+
+1. **`ModelLabels` e `DEFAULT_LABELS`.** `KNOWN_OBJECT_TYPES` passa a ter 8 tipos, mas `DEFAULT_LABELS` continua com `screw`, `nut` e `other` (`MVP_OBJECT_TYPES`), como pede o CA-16. `GRADED_OBJECT_TYPES` continua `screw`/`nut` (metas do protocolo, métricas `grade_*` e limiares de grau); a obrigatoriedade do grau no manifest usa a nova `GRADE_REQUIRED_DATASET_TYPES` (`screw`, `nut` e as ferramentas).
+2. **Onde fica `ungraded_object_types`.** No `labels.json` do export, sempre (`[]` sem ferramenta sem grau); a leitura aceita o arquivo sem a chave, então a fixture `tiny_model` da SPEC-012 continua igual e válida. No `training_config.json`, como chave de topo própria: o `labels` de lá mantém o formato da SPEC-012 (`object_types`, `grades`), que o CA-08 da SPEC-012 compara por igualdade. No `metrics.json`, dentro de `labels` (o CA-18 lê `labels.ungraded_object_types`). Também no `best.pt`, para que o `python -m qc_ml.export` sozinho reconstrua a cabeça de tipo certa (fonte seguinte: `training_config.json`; um checkpoint sem rótulos é do MVP).
+3. **Validação do `labels.json` no `qc_ml`** (`check_labels`): a mesma regra da borda (lista de textos, sem repetição, dentro de `object_types`, só tipos de grau opcional ou proibido do contrato); as mensagens citam a regra, sem valores.
+4. **Decisão do `qc_ml` igual à da borda.** `apply_decision` passou a tratar `ungraded_object_types` como a `qc_edge.decision.decide` da Parte A (sem grau; `needs_review` só pela margem de tipo). A §4.8 não cita o `qc_ml.decision`, mas ele é a cópia vetorizada da regra da borda (SPEC-012, teste cruzado), e os limiares e o `needs_review_rate` dependem dela. O teste cruzado novo compara as duas em 1.000 vetores com 8 tipos e `allen_key` sem grau.
+5. **`grade_review_threshold` só em `screw`/`nut`** (texto da §4.8); ver o SPEC_ISSUE-1. `unusable_threshold` passou a filtrar explicitamente as imagens de `screw`/`nut` com grau (antes, "imagens com grau", o mesmo conjunto no MVP).
+6. **Nota `no_screw_nut_in_val`** do `type_threshold`: o código da nota não mudou (compatibilidade do `thresholds_report.json`), mas agora significa "nenhuma imagem de validação de tipo diferente de `other`".
+7. **Tipo de uma linha de split anterior** (`line_type_resolver`): pela linha do `df`; senão, pelo `item_id` resolvido (mesmas fontes do `item_id_resolver` da SPEC-011) e pelo tipo dessa peça no `df`, ou pela letra quando ela só admite um tipo (`S`, `N`, `O`).
+8. **Extensão: um sorteio por tipo.** Cada tipo estendido usa um gerador novo `np.random.default_rng(seed)`, com os estratos do tipo em ordem lexicográfica, como o `split_v1` faria só com eles. Assim, estender `allen_key` sozinho ou junto com os outros dá a mesma divisão dele (teste `test_extension_is_the_split_v1_procedure_per_type`), e o sorteio das peças novas dos tipos antigos (treino/validação) não muda. Estratos com menos de 3 peças dentro de um tipo estendido seguem a regra do `split_v1` (tudo no treino), com `small_stratum` marcado `"scope": "test_extension"`.
+9. **Versão gravada quando só a decisão muda.** O CA-15 (b) pede o `split_v2.json` com `deferred_types` mesmo quando o CSV é igual ao `split_v1`. A CLI grava uma versão nova quando o CSV muda **ou** quando `deferred_types` difere do registrado no `split_v<M>.json` anterior (ausente = `[]`, para os JSONs anteriores à SPEC-016); repetir a mesma decisão dá `split unchanged`. As listas são gravadas na ordem de `KNOWN_OBJECT_TYPES`.
+10. **Mensagens da CLI.** Cada problema sai sozinho numa linha da saída de erro, sem prefixo (`new object type without decision: <tipo>`, `too few items to extend the test: <tipo>`), para os CAs compararem a linha inteira. Além das duas mensagens da SPEC: `object type is not new: <tipo>`, `object type in both --extend-test-types and --defer-types: <tipo>` e `unknown object type: <tipo>`. No `split_v1`, um valor desconhecido também dá saída 2 ("cada valor tem de estar em `KNOWN_OBJECT_TYPES`"); valores válidos são ignorados, com um aviso no log, e o JSON registra listas vazias.
+11. **Leitura do split.** `assign_splits` devolve `None` para as linhas de tipo adiado (em vez de recusar), e o `rows_for` nunca as devolve; o relatório de dados as conta em `total`, sem split.
+12. **Treino.** `derive_model_labels` fica em `qc_ml.data` (sem torch, testável no CI). O treino confere os rótulos derivados com `check_labels` e falha com `TrainError` se não houver `other` no treino (a regra de decisão depende dele). Os pesos de classe do grau contam só as imagens que entram na loss (`graded_training_counts`), e o QWK de validação do early stopping usa as mesmas linhas mascaradas (inclui ferramentas graduadas; igual ao de hoje no MVP).
+13. **Avaliação.** `false_unknown_rate` do `metrics.json` continua em `screw`/`nut` (a §4.8 só muda o `FU(t)` dos limiares). `counts.<split>.by_class` passa a ter `by_grade` também para as ferramentas. O aviso `few test items for <tipo>: <n>` vale para todos os tipos do modelo, inclusive os do MVP: no dataset sintético pequeno, `other` com 1 peça de teste já gera o aviso.
+14. **CHANGELOG.** A linha usa os valores crus de `labels` (`- Tipos do modelo: screw, nut, other, pliers, ...; sem grau: allen_key.`, ou `nenhum`). Um valor fora de `KNOWN_OBJECT_TYPES` em `labels` faz o `report changelog` sair com 2 sem ecoar o valor (mesma cautela da SPEC-037 com as contagens).
+15. **Gerador.** As ferramentas vêm depois de todas as outras peças (inclusive as de conhecido e as externas), então um dataset gerado com ferramentas tem as mesmas linhas e imagens do dataset sem elas, mais as das ferramentas (é o que o CA-15 usa). As peças `T-` são de origem `capture` (sem linha no `sources.csv`); os graus das `XT-` seguem o rodízio dentro de cada ferramenta; a sequência `T-` é única e tem teto de 999 (no máximo 39 peças por estrato).
+16. **Rótulos PT-BR nas matrizes de confusão** (`plots.TYPE_LABELS_PT`): as ferramentas usam o `OBJECT_TYPE_LABELS_PT` do contrato.
+17. **Fixture.** `model.onnx` da `tiny_model_tools` não é ignorado pelo `.gitignore` (conferido com `git check-ignore`), então nenhuma regra nova é necessária. O teste de fumaça com ferramentas (`test_tools_torch.py`) usa 3+2 épocas e `lr_a = 0.01`: com 8 tipos e 1+1 épocas, a rede de fumaça ficava perto da distribuição a priori (parafuso e porca com a mesma contagem) e nenhuma entrada sintética tinha diferença ≥ 1e-3 entre as duas maiores probabilidades, que o export exige para a paridade. É só configuração do teste.
+
+### SPEC_ISSUE
+
+- **SPEC_ISSUE-1 (baixa; contradição de texto na §4.8, Limiares).** A frase "`unusable_threshold` e `grade_review_threshold` **continuam** calculados só em `screw`/`nut`" não corresponde à regra vigente da SPEC-012 §4.6 para o `grade_review_threshold`, que usa "a fração de val com `needs_review`", ou seja, todas as imagens de validação, inclusive as de `other`. Implementei o texto normativo da §4.8: a fração de revisão conta só as imagens de validação de `screw`/`nut` (numerador e denominador). Efeito no MVP: as imagens de `other` deixam de contar nessa fração, então o `grade_review_threshold` de um modelo do MVP pode mudar em relação à regra da SPEC-012. Nenhum teste de aceite antigo falha com isso. Se o architect preferir manter a regra da SPEC-012 (todas as imagens menos as ferramentas, por exemplo), a mudança é de uma linha em `qc_ml.thresholds._choose_review` (`scope`) e no teste `test_unusable_and_review_thresholds_ignore_the_tools`. Peço que o architect confirme a leitura ou corrija o texto da §4.8.
+
+### Observações para o architect (fora do escopo da Parte B, não bloqueiam os CAs)
+
+- **Piloto de concordância das ferramentas (§3.3).** `python -m qc_ml.agreement` só forma pares de `screw`/`nut` (`GRADED_OBJECT_TYPES`, SPEC-011 §4.3). O piloto de grau das ferramentas pedido na §3.3 (20 fotos, QWK ≥ 0,6) daria `no pairs to compare` se o arquivo só tiver ferramentas. A Parte B não lista o `agreement.py`; não o alterei. Se algum tipo cumprir o critério de grau, será preciso uma SPEC curta (ou um ajuste desta) para incluir as ferramentas no `agreement`.
+- **Contagem de imagens por estrato da extensão.** Com a meta de 6 peças por ferramenta, cada estrato (ferramenta, grau dominante) terá em geral 1 ou 2 peças, e a regra do `split_v1` manda estratos com menos de 3 peças inteiros para o treino. Na prática, uma ferramenta com 6 peças espalhadas pelos 5 graus pode ficar **sem teste** mesmo estendida (aviso `small_stratum` com `scope: test_extension`). O comportamento segue a §4.7 ("procedimento do `split_v1`"); registro aqui porque o CA-21 depende disso e a dupla deve olhar os avisos do `split_v<N>.json` antes de treinar.
+
+### Checagens do autor
+
+- [x] `uv run ruff check .` e `uv run ruff format --check .` limpos
+- [x] Testes do autor passando (sem torch e com torch); suíte completa com banco: só as falhas de aceite listadas nas duas tabelas
+- [x] Seeds fixas: split (`seed` do CLI; extensão com `default_rng(seed)` por tipo), gerador (`seed`), bootstrap e treino sem mudança
+- [x] Nenhuma métrica reportada: não houve treino real (CA-21 é manual)
+- [x] Nenhuma imagem real, nenhum `.onnx` de modelo real, nada de `~/partqc-entrada/`; a fixture usa só entradas sintéticas
+- [x] `.env.example` sem mudança (nenhuma variável nova); nenhuma dependência nova; `uv.lock` sem mudança
+- [x] Nenhum arquivo fora de `ml/` alterado (salvo esta seção do relatório) e nenhum em `tests/acceptance/`
+- [x] Ambiente devolvido ao estado do CI (`uv sync --all-packages --locked`)
