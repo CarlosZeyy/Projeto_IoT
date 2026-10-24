@@ -13,7 +13,12 @@ import httpx
 import pytest
 import streamlit as st
 
-from qc_contracts import Source
+from qc_contracts import (
+    GRADE_OPTIONAL_OBJECT_TYPES,
+    GRADE_REQUIRED_OBJECT_TYPES,
+    ObjectType,
+    Source,
+)
 from qc_dashboard import data, filters
 from qc_dashboard.api import ApiUnavailable, Filters
 
@@ -177,3 +182,23 @@ def test_full_cache_drops_the_oldest_entry(mock_api) -> None:
     data.fetch_summary(Filters(lot_id=lots[0]))
     assert len(mock_api.requests) == 258
     assert mock_api.requests[-1].url.params["lot_id"] == "L-000"
+
+
+def test_spc_object_types_are_the_graded_groups_of_the_contract() -> None:
+    """The members of the API's ``SpcObjectType`` (SPEC-016 section 4.3; ADR-021, decision 3)."""
+    graded = GRADE_REQUIRED_OBJECT_TYPES | GRADE_OPTIONAL_OBJECT_TYPES
+    assert tuple(t for t in ObjectType if t in graded) == filters.SPC_OBJECT_TYPES
+    assert [t.value for t in filters.SPC_OBJECT_TYPES] == [
+        "screw",
+        "nut",
+        "pliers",
+        "adjustable_wrench",
+        "allen_key",
+        "flat_screwdriver",
+        "phillips_screwdriver",
+    ]
+
+
+def test_sidebar_type_filter_has_every_type() -> None:
+    assert len(filters.TYPE_OPTIONS) == 1 + len(ObjectType)
+    assert filters.TYPE_BY_OPTION["chave Phillips"] is ObjectType.PHILLIPS_SCREWDRIVER
