@@ -52,7 +52,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [013](specs/SPEC-013-dashboard.md) | Dashboard Streamlit | developer | security | 005, 006, 026 (e 002, 012) | S4 | Done (CA-26 manual confirmado pelo humano) |
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
 | [015](specs/SPEC-015-deploy.md) | Deploy na VPS pessoal (Docker Compose + Caddy), banco no Supabase e keep-alive | security-devops | deploy, security, infra | 004, 013, 026, 027, 028 (e 003, 005, 006, 014) | S4 | In Security (r2; portões PASS, aguardando os CAs manuais na VPS) |
-| [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais (contrato 0.4.0, tipos sem grau e teste estendido; ADR-021/022 `Proposto`) | developer + ml-engineer | contrato, security | 034, 035, 036, 037, 026, 028 (e 008, 010, 011, 012, 013) | S5–S6 | Ready |
+| [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais (contrato 0.4.0, tipos sem grau e teste estendido; ADR-021/022 `Proposto`) | developer + ml-engineer | contrato, security | 034, 035, 036, 037, 026, 028 (e 008, 010, 011, 012, 013) | S5–S6 | In Dev (r1; merge depois da 036) |
 | [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006, 015, 016, 026 (e 003, 004, 014) | S6 | Ready |
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos (contrato 0.5.0) | developer | contrato, security | 034, 016, 030 (e 004, 009, 013, 028) | S6 | Ready |
 | [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030 (e 007, 009, 024) | S8 | Ready |
@@ -70,7 +70,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [031](specs/SPEC-031-manutencao-ml.md) | Manutenção do ML (`NaN` na paridade e nas predições, export TorchScript, `ITEM_ID_PATTERN` único, fluxo do Colab) | ml-engineer (+ developer, §4.8) | — | 012 (e 011) | S3 | Done |
 | [032](specs/SPEC-032-manutencao-deploy.md) | Manutenção do deploy (smoke sem abreviação, `.gitignore` sem diferenciar maiúsculas; candidatos: headers do Caddy, `pids_limit` e `read_only`) | security-devops | deploy, security, infra | 015 | S4–S5 | Ready |
 | [033](specs/SPEC-033-hook-worktree.md) | Manutenção do setup: hook de guarda de caminhos em git worktree | developer | infra | 022 (e 001) | S2 | Done (CA-08 aceito pelo humano na variante do orquestrador) |
-| [034](specs/SPEC-034-reenvio-dead-outbox.md) | Reenvio de itens `dead` do outbox | developer | security | 009, 030 | S5 | In Security (r1) |
+| [034](specs/SPEC-034-reenvio-dead-outbox.md) | Reenvio de itens `dead` do outbox | developer | security | 009, 030 | S5 | Done |
 | [035](specs/SPEC-035-ml-origem-das-imagens.md) | ML: origem das imagens (conhecidos e externas), externas só no treino e atribuições | ml-engineer | — | 031, 011, 012 | S3 | Done |
 | [036](specs/SPEC-036-importacao-de-fotos.md) | Importação para o dataset de fotos que não vêm da página `/capture` | developer | security | 035, 030, 025, 010 | S3 | In Security (r1) |
 | [037](specs/SPEC-037-manutencao-ml-origem.md) | Manutenção do ML (contagens do `metrics.json` nas notas do Release e no CHANGELOG, teto com underflow, cabeçalho exato, gerador sintético e avisos do export) | ml-engineer | — | 035 (e 031) | S3–S4 | Done |

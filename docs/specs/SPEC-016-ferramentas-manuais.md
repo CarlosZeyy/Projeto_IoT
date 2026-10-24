@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: contrato, banco, API, borda e dashboard) e depois ml-engineer (Parte B: `qc-ml`), na mesma rodada (§6) |
 | Tags | contrato, security |
 | Depende de | SPEC-034 (`Done` antes de esta entrar em `In Dev`: primeira mudança de contrato com a borda em operação), SPEC-035, SPEC-036, SPEC-037, SPEC-026, SPEC-028 (e SPEC-008, SPEC-010, SPEC-011, SPEC-012, SPEC-013) |
@@ -262,3 +262,4 @@ Contexto comum: banco de teste do marcador `db` (`TEST_DATABASE_URL`) nos CAs de
 | 2026-10-20 | §4: imagens públicas passam de "treino e validação" para **só treino**, com `item_id` `XT-NNNN`, importação pela SPEC-036 e registro de fontes da SPEC-035; o critério de grau conta só as imagens não externas. §6, pergunta 3: resolvida pelo ADR-020. ADRs relevantes: o ADR-020 entra junto com os demais. A SPEC continua `Draft`. | Decisão do humano de 2026-10-19 (ADR-020) | Orquestrador, a pedido do humano |
 | 2026-10-24 | SPEC reescrita para a aprovação. Perguntas do rascunho resolvidas: (1) invariante → ADR-021 (`Proposto`; grau opcional para as ferramentas, `ungraded_object_types` no `labels.json`, SPC e taxa de defeito por `grade is not null`, contrato 0.4.0 minor); (2) teste congelado → ADR-022 (`Proposto`; extensão única por tipo com `--extend-test-types` e adiamento com `--defer-types`); (3) já resolvida; (4) correção de tipo fora (exclusão e nova foto); (5) mapeamento de classes públicas é trabalho humano com a rubrica; (6) piloto de concordância só se algum tipo for graduado; (7) SPC pelo filtro `object_type`, sem carta separada por padrão. Novos: Parte A (developer) e Parte B (ml-engineer) na mesma rodada; tag `security` (entrada da API, banco, coleta e importação); dependência da SPEC-034 (prazo dela), 035, 036, 037, 026 e 028; trabalho humano e metas por ferramenta (§3.3); rubrica e captura das ferramentas (§4.11); lista de ajustes de aceite antigos; CAs testáveis CA-01 a CA-20 e o CA-21 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3, os ADRs 021 e 022 e a ordem `034 → 016 → 018 → 017 → portão da Fase 3 → 020 → 019 → 021`. Ferramentas: a dupla ainda não sabe quantas unidades tem; segue a regra de no mínimo 3 peças físicas por tipo (meta de 6), e os tipos abaixo disso ficam no contrato e fora do modelo, sem SPEC nova. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
+| 2026-10-24 | Entra em `In Dev` antes de a SPEC-036 estar `Done` (só falta o CA-17 manual dela), por decisão do humano; a branch nasce da `spec/SPEC-036-importacao-de-fotos` e o merge desta SPEC só acontece depois do merge da 036. | Resposta do humano de 2026-10-24 | Orquestrador, a pedido do humano |
