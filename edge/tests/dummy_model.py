@@ -110,6 +110,7 @@ def write_model_dir(
     sha256: str | None = None,
     labels: Mapping[str, Any] | None = None,
     object_types: Sequence[str] = OBJECT_TYPES,
+    ungraded_object_types: Sequence[str] | None = None,
     preprocessing: Mapping[str, Any] | None = None,
     decision: Mapping[str, Any] | None = None,
     omit: Sequence[str] = (),
@@ -121,19 +122,19 @@ def write_model_dir(
     the CAs (0.5 / 0.4 / 0.6). ``model`` replaces the ONNX (a ``ModelProto`` or raw bytes);
     ``sha256`` replaces the content of ``model.sha256`` (default: the real hash and the file
     name, as ``sha256sum`` writes it); ``labels``, ``preprocessing`` and ``decision`` replace the
-    JSON objects; ``omit`` lists files that are not written.
+    JSON objects; ``omit`` lists files that are not written. ``ungraded_object_types`` adds that
+    key to the default ``labels.json`` (SPEC-016; absent when ``None``).
     """
     directory = Path(root) / name
     directory.mkdir(parents=True, exist_ok=True)
     if model is None:
         model = build_model(type_probs, grade_probs)
     data = model if isinstance(model, bytes) else model.SerializeToString()
+    default_labels: dict[str, Any] = {"object_types": list(object_types), "grades": list(GRADES)}
+    if ungraded_object_types is not None:
+        default_labels["ungraded_object_types"] = list(ungraded_object_types)
     files: dict[str, Any] = {
-        "labels.json": (
-            dict(labels)
-            if labels is not None
-            else {"object_types": list(object_types), "grades": list(GRADES)}
-        ),
+        "labels.json": dict(labels) if labels is not None else default_labels,
         "preprocessing.json": dict(preprocessing) if preprocessing is not None else PREPROCESSING,
         "decision.json": dict(decision) if decision is not None else DECISION,
     }

@@ -460,6 +460,65 @@ def test_other_without_grade_goes_to_the_underscore_directory(env: Env) -> None:
     assert env.manifest()[0]["grade"] == ""
 
 
+TOOLS = ("pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver")
+
+
+def test_tools_are_imported_with_t_and_xt(env: Env, capsys: pytest.CaptureFixture[str]) -> None:
+    """SPEC-016 section 4.4: ``T-`` (contributor) and ``XT-`` (external), each with its grade."""
+    env.add_file("chave.jpg", plain_jpeg(color=(10, 20, 30)))
+    env.add_file("ext/alicate.png", encode(Image.new("RGB", (900, 700), (40, 50, 60)), "PNG"))
+    env.write_plan(
+        [
+            contributor_row(
+                "chave.jpg", item_id="T-501", object_type="flat_screwdriver", grade="good"
+            ),
+            external_row("ext/alicate.png", item_id="XT-0001", object_type="pliers", grade="fair"),
+        ]
+    )
+    assert env.run() == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "imported 2, skipped 0, failed 0"
+    assert [(r["item_id"], r["object_type"], r["grade"]) for r in env.manifest()] == [
+        ("T-501", "flat_screwdriver", "good"),
+        ("XT-0001", "pliers", "fair"),
+    ]
+    assert [r["image_path"] for r in env.manifest()] == [
+        "raw/flat_screwdriver/good/T-501__2__20261022T141503Z.jpg",
+        "raw/pliers/fair/XT-0001__0__20261022T141503Z.jpg",
+    ]
+    assert [(r["origin"], r["source_id"]) for r in env.sources()] == [
+        ("contributor", ""),
+        ("external", "fonte-teste"),
+    ]
+    for row in env.manifest():
+        assert (env.dataset / row["image_path"]).is_file()
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_every_tool_is_accepted_with_t(env: Env, tool: str) -> None:
+    env.add_file("t.jpg", plain_jpeg())
+    env.write_plan([contributor_row("t.jpg", item_id="T-502", object_type=tool, grade="poor")])
+    assert env.run() == 0
+    assert env.manifest()[0]["object_type"] == tool
+
+
+def test_xt_with_screw_is_refused_and_nothing_is_written(
+    seeded: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CA-11 of SPEC-016: the third line (``XT-0002`` ``screw``) has the prefix problem."""
+    seeded.add_file("a.jpg", plain_jpeg(color=(1, 2, 3)))
+    seeded.add_file("b.jpg", plain_jpeg(color=(4, 5, 6)))
+    seeded.write_plan(
+        [
+            contributor_row(
+                "ok.jpg", item_id="T-501", object_type="flat_screwdriver", grade="good"
+            ),
+            external_row("a.jpg", item_id="XT-0001", object_type="pliers", grade="fair"),
+            external_row("b.jpg", item_id="XT-0002", object_type="screw", grade="good"),
+        ]
+    )
+    _expect_plan_problem(seeded, capsys, 4, "item_prefix_mismatch", "object_type")
+
+
 def test_rerun_skips_and_excluded_image_is_imported_again(
     env: Env, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -828,8 +887,21 @@ ROW_CASES: list[tuple[str, dict[str, str], str, str]] = [
     ("missing", {"file": "nao-existe.jpg"}, "file_not_found", "file"),
     ("short-id", {"item_id": "S-50"}, "invalid_item_id", "item_id"),
     ("ext-3-digits", {"item_id": "XS-001", "origin": "external"}, "invalid_item_id", "item_id"),
-    ("tools", {"item_id": "T-001"}, "tools_not_supported", "item_id"),
-    ("ext-tools", {"item_id": "XT-0001"}, "tools_not_supported", "item_id"),
+    ("tool-prefix-screw", {"item_id": "T-001"}, "item_prefix_mismatch", "object_type"),
+    (
+        "tool-prefix-other",
+        {"item_id": "T-001", "object_type": "other", "grade": ""},
+        "item_prefix_mismatch",
+        "object_type",
+    ),
+    ("screw-prefix-tool", {"object_type": "pliers"}, "item_prefix_mismatch", "object_type"),
+    (
+        "tool-no-grade",
+        {"item_id": "T-501", "object_type": "allen_key", "grade": ""},
+        "missing_grade",
+        "grade",
+    ),
+    ("ext-tools", {"item_id": "XT-0001"}, "origin_item_mismatch", "item_id"),
     ("prefix", {"item_id": "N-501"}, "item_prefix_mismatch", "object_type"),
     ("conflict-manifest", {"item_id": "S-500"}, "item_type_conflict", "item_id"),
     ("contrib-ext-id", {"item_id": "XS-0001"}, "origin_item_mismatch", "item_id"),
@@ -880,6 +952,19 @@ EXTERNAL_CASES: list[tuple[str, dict[str, str], str, str]] = [
     ("long-ref", {"source_ref": "r" * 201}, "invalid_source_ref", "source_ref"),
     ("bidi-ref", {"source_ref": "x‮"}, "invalid_source_ref", "source_ref"),
     ("ext-prefix", {"item_id": "XN-0001"}, "item_prefix_mismatch", "object_type"),
+    ("ext-tool-screw", {"item_id": "XT-0002"}, "item_prefix_mismatch", "object_type"),
+    (
+        "ext-tool-no-grade",
+        {"item_id": "XT-0003", "object_type": "pliers", "grade": ""},
+        "missing_grade",
+        "grade",
+    ),
+    (
+        "ext-tool-short",
+        {"item_id": "XT-001", "object_type": "pliers"},
+        "invalid_item_id",
+        "item_id",
+    ),
 ]
 
 

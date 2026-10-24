@@ -122,7 +122,7 @@ def test_model_dir_loads_the_onnx_model(
             },
             "decision.json: type_threshold must be a number in [0, 1]",
         ),
-        ({"object_types": ("screw", "pliers", "other")}, "labels.json"),
+        ({"object_types": ("screw", "hammer", "other")}, "labels.json"),
         ({"name": "Not_Valid"}, "MODEL_DIR"),
     ],
 )

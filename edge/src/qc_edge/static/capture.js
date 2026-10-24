@@ -9,7 +9,8 @@
   var COLLECT = ["item_id", "object_type", "grade", "labeler", "angle", "notes"];
   var SAVED = ["lot_id", "mode"].concat(COLLECT);
   var ITEM_ID_RE = /^[SNOT]-[0-9]{3}$/;  // same rule as the server (re.fullmatch)
-  var PREFIX_TYPES = { S: "screw", N: "nut", O: "other" };  // T (tools) is refused until SPEC-016
+  var PREFIX_TYPES = { S: ["screw"], N: ["nut"], O: ["other"],  // T: hand tools (SPEC-016)
+    T: ["pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver"] };
 
   function el(id) { return document.getElementById(id); }
   var token = new URLSearchParams(window.location.search).get("t") || "";
@@ -27,7 +28,8 @@
     415: "Imagem inválida ou formato não suportado.",
     422: "Dados inválidos: o lote aceita só letras, números, - e _ (até 40).",
     collect422: "Dados da coleta inválidos: confira peça, tipo, grau, ângulo e observações.",
-    itemId: "Peça inválida: use S-000 (parafuso), N-000 (porca) ou O-000 (outro), conforme o tipo.",
+    itemId: "Peça inválida: use S-000 (parafuso), N-000 (porca), T-000 (ferramenta) ou O-000 "
+      + "(outro), conforme o tipo.",
     noGrade: "Escolha o grau da peça.",
     other: "Erro na borda. Tente de novo.",
   };
@@ -73,7 +75,8 @@
 
   function collectProblem() {
     var itemId = value("item_id"), type = value("object_type");
-    if (!ITEM_ID_RE.test(itemId) || PREFIX_TYPES[itemId[0]] !== type) return MESSAGES.itemId;
+    var types = ITEM_ID_RE.test(itemId) ? PREFIX_TYPES[itemId[0]] : [];
+    if (types.indexOf(type) < 0) return MESSAGES.itemId;
     if (type !== "other" && !value("grade")) return MESSAGES.noGrade;
     return "";
   }
