@@ -636,14 +636,23 @@ def _same_split(frame: pd.DataFrame, previous: pd.DataFrame) -> bool:
 
 
 def _fraction_argument(text: str) -> float:
-    """A decimal number in ``(0, 1]`` (``argparse`` type of ``--max-external-fraction``)."""
+    """A decimal number in ``(0, 1]`` (``argparse`` type of ``--max-external-fraction``).
+
+    The ceiling used is ``float(Decimal(text))``, checked again after the conversion (SPEC-037
+    section 4.2): a text that underflows to ``0.0`` (e.g. ``1e-400``) is refused like any other
+    value outside ``(0, 1]``. A text with more precision than a ``float`` is used rounded (e.g.
+    ``0.30000000000000000001`` -> ``0.3``), and that rounded value goes to ``split_v<N>.json``.
+    """
     try:
         value = Decimal(text.strip())
     except InvalidOperation:
         raise argparse.ArgumentTypeError(f"not a decimal number: {text!r}") from None
     if not value.is_finite() or not 0 < value <= 1:
         raise argparse.ArgumentTypeError(f"must be in (0, 1], got {text!r}")
-    return float(value)
+    ceiling = float(value)
+    if not 0 < ceiling <= 1:
+        raise argparse.ArgumentTypeError(f"must be in (0, 1] as a float, got {text!r}")
+    return ceiling
 
 
 def _parser() -> argparse.ArgumentParser:
