@@ -1,8 +1,8 @@
 # qc-ml — dados, split, treino e avaliação
 
-Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste. A SPEC-035 acrescenta a **origem das imagens** (fotos de conhecidos e imagens externas, seção [Origem das imagens](#origem-das-imagens-spec-035)).
+Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste. A SPEC-035 acrescenta a **origem das imagens** (fotos de conhecidos e imagens externas, seção [Origem das imagens](#origem-das-imagens-spec-035)). A SPEC-016 acrescenta as **ferramentas manuais** (seção [Ferramentas (Fase 2)](#ferramentas-fase-2)).
 
-Referências: `docs/dataset-protocol.md`, `docs/architecture.md` §7, skill `ml-pipeline`, ADR-004, ADR-005, ADR-014 e ADR-020.
+Referências: `docs/dataset-protocol.md`, `docs/architecture.md` §7, skill `ml-pipeline`, ADR-004, ADR-005, ADR-014, ADR-020, ADR-021 e ADR-022.
 
 ## Instalação
 
@@ -110,6 +110,8 @@ Vão para o Git: os JSONs, o `parity_fixture.npz`, o `model.sha256`, os PNGs de 
 uv run --package qc-ml python ml/scripts/make_tiny_fixture.py
 ```
 
+`ml/tests/fixtures/tiny_model_tools/` (SPEC-016) tem a mesma estrutura, com a cabeça de tipo de 8 classes (`screw`, `nut`, `other` e as 5 ferramentas) e `labels.json` com `ungraded_object_types = ["allen_key"]`. Para recriá-la: `uv run --package qc-ml python ml/scripts/make_tiny_fixture.py --with-tools`.
+
 ## Origem das imagens (SPEC-035)
 
 Desde o ADR-020, o dataset tem três origens. Em todas, o `item_id` e o grau são decididos pela dupla, com a rubrica (`docs/dataset-protocol.md` §10).
@@ -120,7 +122,7 @@ Desde o ADR-020, o dataset tem três origens. Em todas, o `item_id` e o grau sã
 | `contributor` | foto de um conhecido, importada | `S-501`… (faixa 500–999, recomendação) | treino, validação e teste |
 | `external` | imagem de dataset público ou da internet, importada | `XS-0001`, `XN-0001`, `XO-0001` (4 dígitos, obrigatório) | **só treino**, sempre |
 
-- **O prefixo `X` decide sozinho** que a imagem é externa e vai para o treino (`qc_ml.data.is_external_item`). `XT-` e `T-` continuam recusados até a SPEC-016.
+- **O prefixo `X` decide sozinho** que a imagem é externa e vai para o treino (`qc_ml.data.is_external_item`). `T-` e `XT-` são das ferramentas manuais (seção [Ferramentas (Fase 2)](#ferramentas-fase-2)).
 - **`DATASET_DIR/sources.csv`** (`image_path,origin,contributor,source_id,source_ref,input_sha256`) diz a origem de cada imagem importada. É gravado **só** pela importação da borda (`python -m qc_edge.importer`, SPEC-036), nunca à mão, e não deve ser aberto em planilha. O `contributor` é um código (`c01`), nunca um nome ou telefone. O `validate` acusa, entre outros, `missing_source` (imagem `X…` sem linha: siga o `docs/dataset-protocol.md` §10.7), `unknown_source_id` (fonte fora do registro) e `duplicate_input` (o mesmo arquivo importado duas vezes).
 - **Registro `ml/external_sources.csv`** (`source_id,title,url,license,license_url,attribution,retrieved_at`), no Git: uma linha por fonte, acrescentada pela dupla por PR depois de conferir a licença na página oficial. Uma fonte nunca sai do registro. Licenças aceitas (ADR-020): `CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0` e `BSD-3-Clause`; NonCommercial, ShareAlike e NoDerivatives são recusadas (`invalid_license`). As CLIs `data validate`, `data report`, `split`, `report changelog` e `report release-notes` aceitam `--external-sources <arquivo>`; nos passos do modelo, o campo `external_sources` do `TrainConfig` (padrão: este arquivo). Registro ausente = registro vazio.
 - **Cabeçalho exato:** `sources.csv` e `ml/external_sources.csv` têm de ter o cabeçalho exato mostrado acima, na mesma ordem e sem coluna a mais (nem repetida, nem vazia). Outro cabeçalho é recusado com `unexpected_header` (as linhas do arquivo não são lidas); se faltar uma coluna, o código continua `missing_column` (SPEC-037).
@@ -142,9 +144,53 @@ GH_TOKEN="$(gh auth token --user CarlosZeyy)" gh release create model-<v> ml/mod
 - As contagens do `metrics.json` que aparecem nas notas e na seção `### Dados` do CHANGELOG têm de ser inteiros não negativos. Senão, os dois comandos saem com 2, com uma linha `invalid count in metrics.json: <campo>` por campo, e não gravam nada (SPEC-037).
 - O `release-notes.md` pode ir para o Git junto com o `model.sha256`.
 
+## Ferramentas (Fase 2)
+
+As 5 ferramentas manuais do contrato 0.4.0 (`pliers`, `adjustable_wrench`, `allen_key`, `flat_screwdriver` e `phillips_screwdriver`, nessa ordem) são tipos do dataset e, quando há dados, do modelo (ADR-021).
+
+### Prefixos e grau
+
+| Peça | `item_id` | Tipo | Grau |
+|---|---|---|---|
+| própria (modo coleta) | `T-001`… | uma das 5 ferramentas | obrigatório (rubrica da SPEC-016 §4.11) |
+| de conhecido (importação) | `T-501`… | idem | obrigatório |
+| externa (importação, só treino) | `XT-0001`… | idem | obrigatório |
+
+- `T-`/`XT-` com `screw`, `nut` ou `other`, e uma ferramenta com `S-`, `N-` ou `O-`, dão `item_prefix_mismatch`; ferramenta sem grau dá `missing_grade` (`python -m qc_ml.data validate`).
+- **Critério de grau** (`qc_ml.data.tool_grade_coverage`): uma ferramenta é **graduada** se cada um dos 5 graus tem pelo menos 60 imagens de pelo menos 5 peças (`TOOL_GRADE_MIN_IMAGES`, `TOOL_GRADE_MIN_ITEMS`), contando só as imagens não externas e não excluídas. O critério conta volume de dados, não usa o split nem o resultado do modelo. O `data report` traz a chave `tool_grade_coverage` (as 5 ferramentas com os 5 graus, mesmo sem imagens).
+- **Modelo:** a cabeça de tipo tem os tipos com imagens no treino (`screw`, `nut`, `other` e depois as ferramentas, na ordem acima; `derive_model_labels`). As ferramentas que não cumprem o critério vão para `ungraded_object_types` no `labels.json` e no `training_config.json`: a loss de grau as ignora (`grade_target`) e, na borda, saem sem grau. Para os dados do MVP, nada muda (`ungraded_object_types = []`).
+- **Limiares:** `type_threshold` conta a taxa de falso desconhecido em todos os tipos menos `other`; `unusable_threshold` e `grade_review_threshold` usam só as imagens de validação de `screw`/`nut`.
+- **Avaliação:** `type_confusion` com todos os tipos do modelo; as métricas `grade_*` continuam só em `screw`/`nut`, nas mesmas peças de teste (ADR-022); `tool_grade_metrics` traz, para cada ferramenta graduada, `grade_qwk`, `grade_mae`, `grade_off_by_one_accuracy`, `n_images_test` e `n_items_test` (`{}` sem ferramenta graduada); `warnings` acusa `few test items for <tipo>: <n>` para cada tipo do modelo com menos de 2 peças no teste.
+- **CHANGELOG:** com ferramentas no modelo, a entrada ganha a linha `- Tipos do modelo: <lista>; sem grau: <lista ou nenhum>.` antes da tabela e a observação de que a `type_accuracy` não é comparável com a de um modelo sem esses tipos (compare pela `type_confusion`).
+
+### Extensão e adiamento do teste (ADR-022)
+
+O teste é congelado no `split_v1` (ADR-014). Um **tipo novo** (com imagens no dataset e nenhuma linha em nenhuma versão anterior do split) precisa de uma decisão explícita a cada split, depois do `split_v1`:
+
+```bash
+# coleta ainda em andamento: as fotos das ferramentas ficam fora do split
+uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42     --defer-types pliers,adjustable_wrench,allen_key,flat_screwdriver,phillips_screwdriver
+# coleta completa: o tipo ganha teste, uma única vez
+uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42     --extend-test-types pliers,allen_key --defer-types adjustable_wrench,flat_screwdriver,phillips_screwdriver
+```
+
+- Sem decisão, a CLI sai com 2, com uma linha `new object type without decision: <tipo>` por tipo, e não grava nada. Um tipo listado que não é novo (`object type is not new: <tipo>`), nas duas listas ao mesmo tempo, ou fora dos tipos conhecidos (`unknown object type: <tipo>`) também dá saída 2.
+- **Extensão:** as peças não externas do tipo são divididas 70/15/15 como no `split_v1` (estrato = tipo e grau dominante, mesma seed, um sorteio próprio por tipo), sem mudar nenhuma atribuição anterior. As externas (`XT-`) vão para o treino. Menos de 3 peças não externas: saída 2 com `too few items to extend the test: <tipo>`. Depois da extensão, o tipo volta à regra do ADR-014: peças novas só em treino e validação.
+- **Adiamento:** as imagens do tipo ficam fora do `split_v<N>.csv` e não são usadas em treino, validação nem teste. O tipo continua novo na versão seguinte. Uma versão é gravada quando a lista de adiados muda, mesmo que o CSV seja igual ao anterior; repetir a mesma decisão dá `split unchanged`.
+- O `split_v<N>.json` registra `test_extended_types` e `deferred_types`. No `split_v1`, as listas não são usadas (todos os tipos presentes entram na divisão normal).
+- **Leitura do split:** as imagens de um tipo sem nenhuma linha no split vigente (adiado) são ignoradas pelo `rows_for` e pela checagem de split desatualizado, com o aviso `deferred type images: <tipo>: <n>` no log. Para os tipos presentes no split, a checagem não muda.
+
+### Passo a passo da dupla (SPEC-016 §3.3)
+
+1. Depois do merge da SPEC-016: fotografar as ferramentas pelo modo coleta (`T-001`…), com a rubrica e o protocolo de captura da SPEC-016 §4.11 (fundo liso, ferramenta ocupando 40–70% da foto, de 3 a 5 ângulos, sem mãos nem pessoas); importar fotos de conhecidos (`T-501`…) e imagens públicas (`XT-0001`…) pela importação da SPEC-036, depois de registrar a fonte em `ml/external_sources.csv`. Metas por ferramenta: 6 peças físicas e 90 imagens (mínimo de 3 peças; abaixo disso, o tipo fica fora do modelo). As externas não contam para as metas nem para o critério de grau.
+2. Enquanto a coleta não termina, todo split novo leva `--defer-types` com as ferramentas.
+3. `python -m qc_ml.data report` para conferir `tool_grade_coverage`. Se algum tipo cumprir o critério de grau, fazer antes o piloto de concordância do grau dessa ferramenta (20 fotos, QWK ≥ 0,6).
+4. Coleta completa: gerar o split com `--extend-test-types` para os tipos com 3 peças ou mais e `--defer-types` para os outros, e levar o split para a `main` por PR.
+5. Treinar no Colab ([Do Colab ao Release](#do-colab-ao-release-ca-28-tarefa-da-dupla)), conferir o `type_confusion` com todos os tipos do modelo e gerar a entrada do CHANGELOG (com a linha "Tipos do modelo"). Registrar o CA-21 no test-report, com 5 ferramentas fotografadas pela página.
+
 ## Dataset sintético (testes)
 
-`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0)` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. Com `contributor_items_per_stratum` e `external_items_per_stratum`, acrescenta peças de conhecido (`S-501`…) e imagens externas (`XS-0001`…, 1 imagem cada) por estrato, com `sources.csv` e o registro `root/external_sources.csv` (fonte `synthetic`, `CC0-1.0`). Com peças de conhecido, `items_per_stratum` tem de manter as peças próprias abaixo de `S-501`/`N-501`/`O-501` (até 100), senão levanta `ValueError`. `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente. Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
+`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0, tool_items_per_stratum=0, external_tool_items_per_type=0)` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. Com `contributor_items_per_stratum` e `external_items_per_stratum`, acrescenta peças de conhecido (`S-501`…) e imagens externas (`XS-0001`…, 1 imagem cada) por estrato, com `sources.csv` e o registro `root/external_sources.csv` (fonte `synthetic`, `CC0-1.0`). Com peças de conhecido, `items_per_stratum` tem de manter as peças próprias abaixo de `S-501`/`N-501`/`O-501` (até 100), senão levanta `ValueError`. Com `tool_items_per_stratum = t` (SPEC-016), acrescenta `t` peças `T-NNN` por ferramenta × grau, numeradas a partir de `T-001` numa sequência única; com `external_tool_items_per_type = e`, `e` imagens externas `XT-NNNN` por ferramenta (1 imagem cada, graus em rodízio dentro de cada ferramenta). As ferramentas vêm depois de todas as outras peças, então as imagens sem ferramentas não mudam; com os dois em 0 (padrão), os arquivos são os mesmos, byte a byte. `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente (ferramentas inclusive). Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
 
 ## Testes
 
@@ -152,4 +198,4 @@ GH_TOKEN="$(gh auth token --user CarlosZeyy)" gh release create model-<v> ml/mod
 uv run pytest -q ml/tests
 ```
 
-Os testes que precisam de torch (`test_dataset.py`, `test_model.py` e os *slow* de `test_pipeline_slow.py`) usam `pytest.importorskip("torch")` e são pulados no CI. Para rodá-los localmente: `uv sync --all-packages --extra train` e `uv run pytest -q ml/tests`. Depois, volte ao ambiente do CI com `uv sync --all-packages --locked`.
+Os testes que precisam de torch (`test_dataset.py`, `test_model.py`, `test_tools_torch.py` e os *slow* de `test_pipeline_slow.py`) usam `pytest.importorskip("torch")` e são pulados no CI. Para rodá-los localmente: `uv sync --all-packages --extra train` e `uv run pytest -q ml/tests`. Depois, volte ao ambiente do CI com `uv sync --all-packages --locked`.
