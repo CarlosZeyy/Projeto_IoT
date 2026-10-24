@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | ml-engineer |
 | Tags | — |
@@ -187,3 +187,4 @@ O registro `<reg>` é o registro sintético da SPEC-035 §4.7 (o `external_sourc
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-24 | SPEC criada (`Draft`). Decisões do architect: (a) as contagens exibidas do `metrics.json` aceitam só `int` não negativo, sem `bool`; no `changelog`, os campos da seção `### Dados` passam a ser exigidos quando a seção é gerada, para não mostrar como 0 algo que não foi medido (§4.1); (b) `_fraction_argument` confere o `float` depois da conversão, sem mudar o `make_split` (§4.2); (c) `<invalid source_id>` do CHANGELOG fixado como comportamento (§4.3); (d) cabeçalho exato com `unexpected_header` nos dois arquivos da SPEC-035, em vez de "colunas obrigatórias" (§4.4); (e) `ValueError` no gerador quando peças de conhecido colidiriam com próprias (§4.5); (f) `_log_export_warnings` no `finally`, com a exceção original saindo sem conversão (§4.6); (g) RV-02 da SPEC-031 sem ação (§3.2). As §4.1, §4.3 e §4.4 complementam a SPEC-035 sem alterar o arquivo dela. | RV-01 (= T-01) a RV-05 de `reviews/SPEC-035/r1-review-report.md` e `reviews/SPEC-035/r1-test-report.md`; RV-01 e RV-02 de `reviews/SPEC-031/r1-review-report.md` | Orquestrador, a pedido do humano |
+| 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com as recomendações do §9: cabeçalho exato com `unexpected_header` (RV-04), sem ação no RV-02 da SPEC-031 e posição no loop logo depois da 036. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |

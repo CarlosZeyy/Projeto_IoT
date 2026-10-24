@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Proposto |
+| Status | Aceito (aprovado pelo humano em 2026-10-24) |
 | Data | 2026-10-24 |
 | Decisores | Dupla (redigido pelo agente architect, a pedido do humano, que liberou as Fases 2 e 3 em 2026-10-24) |
 | Relacionados | ADR-001, ADR-005, ADR-013 (complementado, não substituído), ADR-014, ADR-020, ADR-022, SPEC-002, SPEC-003, SPEC-005, SPEC-006, SPEC-008, SPEC-013, SPEC-016, SPEC-017, SPEC-021, SPEC-026, R-04, R-06, R-11 |

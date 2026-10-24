@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | contrato, security |
@@ -153,3 +153,4 @@ Nada é mockado além das fronteiras: banco de teste real na API; `httpx.MockTra
 |---|---|---|---|
 | 2026-10-18 | §6, pergunta 3: nota do Render superada, porque a API fica sempre ligada na VPS. A SPEC continua `Draft`. | ADR-018 (hospedagem na VPS pessoal) | Orquestrador, a pedido do humano |
 | 2026-10-24 | SPEC reescrita para a aprovação. Decisões do architect: contrato 0.5.0 minor (sem ADR obrigatório), com limites inteiros e `model_version`/`model_sha256` nulos juntos; `last_heartbeat_at` e `online` pela hora do servidor; `last_source` em `DeviceStatus` para mostrar dispositivos simulados (pergunta 4: o simulador não envia heartbeat); envio pelo `HttpPublisher` (único módulo com `httpx`), com os limites da SPEC-030 e parada em 401/403; `HEARTBEAT_INTERVAL_S` de 10 a 3.600 ou 0; dependência das SPECs 034 (prazo dela), 016 (versão do contrato) e 030; CAs CA-01 a CA-12 testáveis e CA-13 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
+| 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |

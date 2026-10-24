@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | security |
@@ -151,3 +151,4 @@ Contexto comum: resultados de decisão montados pelo teste (`DecisionResult` da 
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-24 | SPEC revista para a aprovação, com a regra de escopo mantida (Fase 3 só se a Fase 2 fechar no prazo). Decisões do architect: HTTPS opcional por `EDGE_TLS_CERT`/`EDGE_TLS_KEY`, com a chave em `0600` fora do Git; máquina de estados com janela, maioria, confiança e remoção definidas, emitindo o quadro mais recente do par; sessões por identificador da página, com teto e expiração; limites próprios da rota (1 MiB, 1 M pixels) e a ordem de erros da `/api/capture`, com o limitador compartilhado; "mesa vazia" = `unknown` (sem classe `empty`); teste humano da CA nos dois celulares antes de `In Dev` (o README do mkcert, consultado em 2026-10-24, não confirma o Chrome do Android); dependências das SPECs 025 e 030; CAs CA-01 a CA-11 testáveis e CA-12 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
+| 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta; a regra de escopo da Fase 3 continua (só depois do portão da Fase 2, 22/11). | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
