@@ -391,6 +391,28 @@ def test_caddyfile_routes_and_headers() -> None:
     assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", text)
 
 
+CADDY_HEADER_LINES = [
+    'Strict-Transport-Security "max-age=31536000"',
+    'X-Content-Type-Options "nosniff"',
+    'Referrer-Policy "no-referrer"',
+    "Content-Security-Policy \"frame-ancestors 'self'\"",
+    "-Server",
+    "-Via",
+]
+
+
+def test_caddyfile_header_block_spec_032() -> None:
+    """SPEC-032 section 4.3 (SEC-15-04): exactly these 6 lines in the site header block."""
+    code = _caddy_code()
+    start = code.index("\theader {")
+    end = code.index("\t}", start)
+    assert [line.strip() for line in code[start + 1 : end]] == CADDY_HEADER_LINES
+    text = "\n".join(code)
+    assert text.count("header {") == 1
+    # Only the frame-ancestors directive: no full policy (SPEC-032 section 3.2).
+    assert "script-src" not in text and "default-src" not in text
+
+
 # ---------------------------------------------------------------- R-13: no IPv4 literal (4.12)
 
 R13_FILES = [

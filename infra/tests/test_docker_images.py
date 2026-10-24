@@ -259,3 +259,70 @@ def test_caddy_adapts_the_caddyfile() -> None:
         h["response"]["set"].get("Strict-Transport-Security") == ["max-age=31536000"]
         for h in headers
     )
+    # SPEC-032 section 4.3: one deferred handler deletes Server and Via and sets the 4 headers.
+    (response,) = [h["response"] for h in headers]
+    assert response["deferred"] is True
+    assert sorted(response["delete"]) == ["Server", "Via"]
+    assert response["set"] == {
+        "Strict-Transport-Security": ["max-age=31536000"],
+        "X-Content-Type-Options": ["nosniff"],
+        "Referrer-Policy": ["no-referrer"],
+        "Content-Security-Policy": ["frame-ancestors 'self'"],
+    }
+
+
+def _caddy_image() -> str:
+    compose = yaml.safe_load((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"))
+    return compose["services"]["caddy"]["image"]
+
+
+def _site_header_block() -> str:
+    text = (ROOT / "infra" / "Caddyfile").read_text(encoding="utf-8")
+    start = text.index("\theader {")
+    return text[start : text.index("\n\t}\n", start) + len("\n\t}\n")]
+
+
+def test_caddy_header_block_strips_server_and_via_behind_the_proxy(tmp_path: Path) -> None:
+    """The real header block of infra/Caddyfile, behind a reverse_proxy whose upstream answers
+    with ``Server: uvicorn`` (SPEC-032 section 4.3): no Server, no Via, and the 4 headers."""
+    caddyfile = tmp_path / "Caddyfile"
+    caddyfile.write_text(
+        "{\n\tauto_https off\n\tadmin off\n}\n\n"
+        ":8080 {\n" + _site_header_block() + "\treverse_proxy 127.0.0.1:9000\n}\n\n"
+        ':9000 {\n\theader Server uvicorn\n\trespond "ok"\n}\n',
+        encoding="utf-8",
+    )
+    script = (
+        "caddy start --config /etc/caddy/Caddyfile >/dev/null 2>&1; "
+        "for i in 1 2 3 4 5 6 7 8 9 10; do "
+        "wget -S -O /dev/null http://127.0.0.1:8080/ 2>/tmp/h && break; sleep 0.5; done; "
+        "cat /tmp/h"
+    )
+    result = _run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "-v",
+            f"{caddyfile}:/etc/caddy/Caddyfile:ro",
+            "--entrypoint",
+            "sh",
+            _caddy_image(),
+            "-c",
+            script,
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    headers = {
+        line.strip().split(":", 1)[0].lower(): line.strip().split(":", 1)[1].strip()
+        for line in result.stdout.splitlines()
+        if ":" in line and not line.strip().startswith(("Connecting", "HTTP/"))
+    }
+    assert "200 OK" in result.stdout
+    assert "server" not in headers and "via" not in headers
+    assert headers["referrer-policy"] == "no-referrer"
+    assert headers["content-security-policy"] == "frame-ancestors 'self'"
+    assert headers["strict-transport-security"] == "max-age=31536000"
+    assert headers["x-content-type-options"] == "nosniff"
