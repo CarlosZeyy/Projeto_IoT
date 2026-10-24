@@ -24,15 +24,19 @@ Como gerar as peças, fotografar, rotular e organizar os dados. Vale para a dupl
 3. Se ficar abaixo de 0,6, discutam os casos divergentes, ajustem os textos e limiares desta tabela e repitam o processo.
 4. Registre o resultado em `ml/reports/agreement.json` e no histórico de alterações abaixo.
 
-### 1.1 Rubrica para ferramentas manuais (Fase 2, rascunho)
+### 1.1 Rubrica para ferramentas manuais (Fase 2, SPEC-016)
 
-Mesma escala e mesma precedência. Exemplos de dano funcional:
-- ponta de chave de fenda ou Phillips gasta ou arredondada;
-- mordente do alicate quebrado ou desalinhado;
-- rosca sem-fim da chave inglesa travada ou espanada;
-- chave Allen com ponta arredondada.
+Vale a partir do merge da SPEC-016 (Parte A), quando o modo coleta passa a aceitar as ferramentas (`T-…`). Texto da SPEC-016 §4.11, que é a fonte.
 
-A SPEC-016 finaliza esta parte.
+| Grau | Critério para ferramentas manuais |
+|---|---|
+| `perfect` | sem oxidação nem desgaste visível |
+| `good` | oxidação em pontos isolados (< 5% da área) ou marcas leves de uso; tudo funciona |
+| `fair` | oxidação superficial em 5–25% da área, sem crosta; tudo funciona |
+| `poor` | oxidação em > 25% da área, crosta ou pitting; ainda funciona |
+| `unusable` | dano funcional: ponta de chave de fenda ou Phillips gasta ou arredondada; mordente do alicate quebrado ou desalinhado; rosca sem-fim da chave inglesa travada ou espanada; chave Allen com ponta arredondada |
+
+Mesma precedência do §1 (dano funcional primeiro). O protocolo de captura das ferramentas está no §3.
 
 ## 2. Geração das peças (corrosão controlada)
 
@@ -72,6 +76,7 @@ A SPEC-016 finaliza esta parte.
 - **Privacidade:** sem rostos nem pessoas no quadro (R-14).
 - **Classe `other` (negativos):** objetos variados (moeda, tampinha, caneta, chave de casa, pregos, arruela, a mesa vazia) e, opcionalmente, imagens públicas com licença da lista da §10.4, importadas por ela: só no treino e com a fonte registrada. Mínimo de 150 imagens de pelo menos 30 objetos diferentes, **sem contar as externas**.
 - **Fotos que não passam pela página** (de conhecidos ou de datasets públicos): só pela importação da §10, nunca copiadas para `raw/`.
+- **Ferramentas manuais (Fase 2, SPEC-016 §4.11; vale a partir do merge da SPEC-016, Parte A):** fundo liso maior que a ferramenta (cartolina ou A3), a ferramenta ocupando 40–70% da foto (cerca de 30 a 50 cm), de 3 a 5 ângulos, sem mãos nem pessoas no quadro (R-14). O grau segue a rubrica do §1.1.
 
 ## 4. Metas de volume
 
@@ -250,3 +255,4 @@ Cada imagem externa é, em geral, uma "peça" própria (`XS-0001`, `XS-0002`…)
 | 2026-10-19 | §8, passo 1: até o merge da SPEC-030, conferir o código de saída da varredura e o `find ml/data/raw -type f ! -name '*.jpg'` antes de cada backup | SEC-25-01 e SEC-25-02 de `reviews/SPEC-025/r2-security-report.md` (R-14): a varredura imprime o nome cru e não confere `.JPG`/`.jpeg` |
 | 2026-10-20 | §10 nova: fotos de conhecidos e imagens externas (origens, guia e consentimento, numeração com o prefixo `X` para as externas, licenças, registro de fontes, privacidade automática e humana, passo a passo da importação, retirada). §3: `other` com imagens públicas só pela importação; §4: externas não contam para as metas; §5: `item_id` externo, `captured_at` e `capture_device` das importadas e `sources.csv`; §7: externas sempre no treino e fotos de conhecidos no teste só antes do `split_v1`; §8: `sources.csv` no backup, pasta de entrada nunca; §9: o dataset cresce também pela importação | Decisão do humano de 2026-10-19; ADR-020 (`Proposto`), SPECs 035 e 036 (`Draft`). Vale a partir do merge das duas SPECs |
 | 2026-10-23 | §10.4: lista de licenças sem NonCommercial nem ShareAlike (`CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0`, `BSD-3-Clause`); "Escolha" sem o MVTec AD (o `unusable` fica sem fonte externa permitida). §3: classe `other` sem o MVTec AD como exemplo | Decisão do humano de 2026-10-23 (o `model.onnx` é publicado num Release público; ADR-020, decisão 3). Architect, a pedido do humano |
+| 2026-10-24 | §1.1: a rubrica das ferramentas manuais deixa de ser rascunho e passa a ser o texto da SPEC-016 §4.11 (tabela por grau, mesma precedência do §1). §3: protocolo de captura das ferramentas manuais (SPEC-016 §4.11). Vale a partir do merge da SPEC-016 (Parte A). As ferramentas elétricas (SPEC-021, Fase 3) não entram aqui agora: a SPEC-021 não manda copiar a captura delas na aprovação, e a Fase 3 só roda depois do portão da Fase 2. Limpeza de consistência pós-aprovação, sem mudança de requisito | SPEC-016 `Ready` desde o PR #45 (2026-10-24); a §4.11 dela manda copiar o texto para cá quando ela virasse `Ready`. Architect, a pedido do orquestrador |
