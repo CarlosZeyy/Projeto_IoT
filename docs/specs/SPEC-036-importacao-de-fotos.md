@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-035 (formatos de `sources.csv` e do registro), SPEC-030 (`printable_path` e a varredura de privacidade), SPEC-025, SPEC-010 |
