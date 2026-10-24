@@ -69,9 +69,9 @@ def test_item_id_pattern_is_defined_once() -> None:
     assert split_mod.ITEM_ID_PATTERN is data_mod.ITEM_ID_PATTERN
     for call in _calls(ML / "src" / "qc_ml" / "split.py", "compile"):
         assert "[SNOT]" not in ast.unparse(call), ast.unparse(call)
-    # The file-name pattern of the collect mode still matches exactly as before.
+    # The file-name pattern is built from ITEM_ID_PATTERN (SPEC-035 section 4.1).
     assert split_mod.IMAGE_FILE_PATTERN.pattern == (
-        r"([SNOT]-[0-9]{3})__[0-4]__[0-9]{8}T[0-9]{6}Z\.jpg"
+        "(" + data_mod.ITEM_ID_PATTERN.pattern + r")__[0-4]__[0-9]{8}T[0-9]{6}Z\.jpg"
     )
     match = split_mod.IMAGE_FILE_PATTERN.fullmatch("S-012__3__20261020T101112Z.jpg")
     assert match and match.group(1) == "S-012"

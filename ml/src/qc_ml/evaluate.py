@@ -42,7 +42,14 @@ from qc_ml.artifacts import (
     write_json,
 )
 from qc_ml.config import TrainConfig, load_config
-from qc_ml.data import GRADED_OBJECT_TYPES, ModelLabels, configure_logging, load_manifest
+from qc_ml.data import (
+    GRADED_OBJECT_TYPES,
+    ORIGINS,
+    ModelLabels,
+    configure_logging,
+    image_origins,
+    load_manifest,
+)
 from qc_ml.decision import Thresholds, apply_decision, decided_grade_idx, load_decision
 from qc_ml.errors import EvaluationError
 from qc_ml.plots import confusion_png, grade_label_pt, type_label_pt
@@ -250,7 +257,9 @@ def bootstrap_ci(
 
 
 def split_counts(rows: pd.DataFrame, labels: ModelLabels) -> dict[str, Any]:
-    """``n_images``, ``n_items`` and ``by_class`` (type -> n_images, n_items, by_grade)."""
+    """``n_images``, ``n_items``, ``by_class`` (type -> n_images, n_items, by_grade),
+    ``by_origin`` (``capture``/``contributor``/``external`` -> n_images, always the 3 keys) and
+    ``by_source`` (``source_id`` -> n_images, empty without external images; SPEC-035 4.6)."""
     by_class: dict[str, Any] = {}
     for object_type in labels.object_types:
         part = rows[rows["object_type"] == object_type]
@@ -267,10 +276,21 @@ def split_counts(rows: pd.DataFrame, labels: ModelLabels) -> dict[str, Any]:
             "n_items": int(part["item_id"].nunique()),
             "by_grade": by_grade,
         }
+    by_origin = dict.fromkeys(ORIGINS, 0)
+    for origin in image_origins(rows):
+        by_origin[origin] = by_origin.get(origin, 0) + 1
+    sources = (
+        [str(s) for s in rows["source_id"] if s is not None and not pd.isna(s)]
+        if "source_id" in rows
+        else []
+    )
+    by_source = {source: sources.count(source) for source in sorted(set(sources))}
     return {
         "n_images": len(rows),
         "n_items": int(rows["item_id"].nunique()),
         "by_class": by_class,
+        "by_origin": by_origin,
+        "by_source": by_source,
     }
 
 
@@ -427,7 +447,7 @@ def _rewrite_latency(
             "metrics.json is from another model (model_sha256 differs): run qc_ml.evaluate "
             "without --latency-only"
         )
-    df = load_manifest(config.dataset_dir)
+    df = load_manifest(config.dataset_dir, external_sources=config.external_sources)
     split_df = split.load_split(config.split_file)
     test_rows = split.rows_for(df, split_df, "test")  # images to time; nothing is chosen here
     paths = [Path(config.dataset_dir) / p for p in test_rows["image_path"]]
@@ -455,7 +475,7 @@ def run(
     if latency_only:
         return _rewrite_latency(config, model, metrics_path, machine)
 
-    df = load_manifest(config.dataset_dir)
+    df = load_manifest(config.dataset_dir, external_sources=config.external_sources)
     split_df = split.load_split(config.split_file)
 
     counts = {

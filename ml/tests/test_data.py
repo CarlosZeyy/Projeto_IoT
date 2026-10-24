@@ -475,6 +475,10 @@ def test_report(dataset: Path, tmp_path: Path, capsys) -> None:
         "images_per_item",
         "below_target",
         "below_minimum",
+        "counts_by_origin",
+        "n_contributors",
+        "by_source",
+        "external_fraction_train",
     }
     assert report["n_images"] == 88 and report["n_items"] == 44
     assert report["split_file"] == "split_v1.csv"

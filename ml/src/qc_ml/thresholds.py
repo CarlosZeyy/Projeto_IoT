@@ -229,7 +229,7 @@ def run(config: TrainConfig) -> ThresholdResult:
     ``<reports_root>/<v>/thresholds_report.json``. Only ``rows_for(..., "val")`` is requested.
     """
     model = OnnxModel(config.model_dir)
-    df = load_manifest(config.dataset_dir)
+    df = load_manifest(config.dataset_dir, external_sources=config.external_sources)
     split_df = split.load_split(config.split_file)
     val_rows = split.rows_for(df, split_df, "val")
     predictions = model.predict(val_rows, config.dataset_dir, "val")

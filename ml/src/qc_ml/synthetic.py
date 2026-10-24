@@ -5,12 +5,16 @@ Same layout as the collect mode (SPEC-010): ``root/raw/<object_type>/<grade or _
 JPEGs on a light background: screw = rectangle, nut = hexagon with a hole, other = circle, with an
 orange (rust) fraction that grows with the grade. No real photo is ever used (R-02, R-14).
 
+SPEC-035 section 4.7: optional contributor items (``S-501``...) and external images
+(``XS-0001``...), with ``root/sources.csv`` and the registry ``root/external_sources.csv``.
+
 No torch here.
 """
 
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,12 +23,17 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from qc_ml.data import (
+    EXTERNAL_PREFIX,
+    EXTERNAL_SOURCE_COLUMNS,
+    EXTERNAL_SOURCES_FILE,
     GRADED_OBJECT_TYPES,
     GRADES,
     KNOWN_OBJECT_TYPES,
     MANIFEST_COLUMNS,
     MANIFEST_FILE,
     RAW_DIR,
+    SOURCE_COLUMNS,
+    SOURCES_FILE,
 )
 
 IMAGE_SIZE = 256
@@ -37,6 +46,18 @@ LABELER = "a"
 CAPTURE_DEVICE = "synthetic"
 ITEM_PREFIXES: dict[str, str] = {"screw": "S", "nut": "N", "other": "O"}
 MAX_ITEMS_PER_TYPE = 999
+CONTRIBUTOR_FIRST_NUMBER = 501  # docs/dataset-protocol.md section 10.3 (recommendation)
+MAX_EXTERNAL_ITEMS_PER_TYPE = 9999
+SYNTHETIC_CONTRIBUTOR = "c01"
+SYNTHETIC_SOURCE = (
+    "synthetic",
+    "Synthetic dataset",
+    "https://example.org/synthetic",
+    "CC0-1.0",
+    "https://creativecommons.org/publicdomain/zero/1.0/",
+    "Synthetic test images",
+    "2026-10-20",
+)
 
 # Fraction of the part covered by rust, by grade index (perfect .. unusable).
 RUST_FRACTION: tuple[float, ...] = (0.0, 0.05, 0.15, 0.40, 0.70)
@@ -166,6 +187,23 @@ def _write_images(
     return rows
 
 
+def _strata(include_other: bool) -> list[tuple[str, str | None]]:
+    """The 10 ``screw``/``nut`` x grade strata and, with ``include_other``, ``other``."""
+    strata: list[tuple[str, str | None]] = [
+        (object_type, grade) for object_type in GRADED_OBJECT_TYPES for grade in GRADES
+    ]
+    if include_other:
+        strata.append(("other", None))
+    return strata
+
+
+def _write_csv(path: Path, header: tuple[str, ...], rows: list[list[str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, lineterminator="\n")
+        writer.writerow(header)
+        writer.writerows(rows)
+
+
 def make_synthetic_dataset(
     root: Path,
     *,
@@ -173,6 +211,8 @@ def make_synthetic_dataset(
     images_per_item: int = 2,
     include_other: bool = True,
     seed: int = 0,
+    external_items_per_stratum: int = 0,
+    contributor_items_per_stratum: int = 0,
 ) -> Path:
     """Create a synthetic dataset in ``root`` and return ``root``.
 
@@ -182,14 +222,40 @@ def make_synthetic_dataset(
     ``items_per_stratum`` items ``O-001``... without grade. Each item has ``images_per_item``
     images with ``angle = j % 5``; timestamps are unique and increase from 2026-10-22T14:00:00Z.
 
+    SPEC-035 section 4.7 ("stratum" = each ``screw``/``nut`` x grade and, with
+    ``include_other``, ``other``):
+
+    - ``contributor_items_per_stratum = c``: ``c`` contributor items per stratum, numbered from
+      501 per letter (``S-501``, ``S-502``..., continuing across the strata of the letter), each
+      with ``images_per_item`` images and one ``contributor`` line (``c01``) per image in
+      ``sources.csv``;
+    - ``external_items_per_stratum = k``: ``k`` external items per stratum, ``XS-0001``... per
+      letter, each with 1 image (angle 0) and one ``external`` line per image (``source_id``
+      ``synthetic``, ``source_ref`` ``synthetic/<item_id>.png``); ``root/external_sources.csv``
+      gets the single source ``synthetic`` (``CC0-1.0``).
+
+    ``input_sha256`` is the SHA-256 of the file written. With ``c = k = 0`` (the default) the
+    files are byte for byte the ones of SPEC-011, and neither ``sources.csv`` nor
+    ``external_sources.csv`` is created. The own items come first, so their images do not depend
+    on ``c`` and ``k``.
+
     Raises:
         FileExistsError: ``root/manifest.csv`` already exists.
-        ValueError: non-positive counts or more than 999 items of a type.
+        ValueError: non-positive counts, negative ``c``/``k`` or too many items of a type.
     """
     if items_per_stratum < 1 or images_per_item < 1:
         raise ValueError("items_per_stratum and images_per_item must be >= 1")
+    if external_items_per_stratum < 0 or contributor_items_per_stratum < 0:
+        raise ValueError(
+            "external_items_per_stratum and contributor_items_per_stratum must be >= 0"
+        )
     if items_per_stratum * len(GRADES) > MAX_ITEMS_PER_TYPE:
         raise ValueError(f"at most {MAX_ITEMS_PER_TYPE} items per type")
+    last_contributor = CONTRIBUTOR_FIRST_NUMBER - 1 + contributor_items_per_stratum * len(GRADES)
+    if last_contributor > MAX_ITEMS_PER_TYPE:
+        raise ValueError(f"contributor items go up to {MAX_ITEMS_PER_TYPE} per type")
+    if external_items_per_stratum * len(GRADES) > MAX_EXTERNAL_ITEMS_PER_TYPE:
+        raise ValueError(f"at most {MAX_EXTERNAL_ITEMS_PER_TYPE} external items per type")
     root = Path(root)
     manifest = root / MANIFEST_FILE
     if manifest.exists():
@@ -197,24 +263,60 @@ def make_synthetic_dataset(
     root.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
 
-    plan: list[tuple[str, str, str | None]] = []
+    # (item_id, object_type, grade, n_images, origin)
+    plan: list[tuple[str, str, str | None, int, str]] = []
     for object_type in GRADED_OBJECT_TYPES:
         prefix = ITEM_PREFIXES[object_type]
         for k in range(items_per_stratum * len(GRADES)):
-            plan.append((f"{prefix}-{k + 1:03d}", object_type, GRADES[k % len(GRADES)]))
+            item_id = f"{prefix}-{k + 1:03d}"
+            plan.append((item_id, object_type, GRADES[k % len(GRADES)], images_per_item, "capture"))
     if include_other:
         for k in range(items_per_stratum):
-            plan.append((f"{ITEM_PREFIXES['other']}-{k + 1:03d}", "other", None))
+            item_id = f"{ITEM_PREFIXES['other']}-{k + 1:03d}"
+            plan.append((item_id, "other", None, images_per_item, "capture"))
+    contributor_next: dict[str, int] = {}
+    external_next: dict[str, int] = {}
+    for object_type, grade in _strata(include_other):
+        prefix = ITEM_PREFIXES[object_type]
+        for _ in range(contributor_items_per_stratum):
+            number = contributor_next.get(prefix, CONTRIBUTOR_FIRST_NUMBER)
+            contributor_next[prefix] = number + 1
+            plan.append(
+                (f"{prefix}-{number:03d}", object_type, grade, images_per_item, "contributor")
+            )
+    for object_type, grade in _strata(include_other):
+        prefix = ITEM_PREFIXES[object_type]
+        for _ in range(external_items_per_stratum):
+            number = external_next.get(prefix, 1)
+            external_next[prefix] = number + 1
+            item_id = f"{EXTERNAL_PREFIX}{prefix}-{number:04d}"
+            plan.append((item_id, object_type, grade, 1, "external"))
 
     rows: list[list[str]] = []
-    for index, (item_id, object_type, grade) in enumerate(plan):
-        start = BASE_TIME + timedelta(seconds=index * images_per_item)
-        rows += _write_images(root, item_id, object_type, grade, images_per_item, start, rng)
+    source_rows: list[list[str]] = []
+    offset = 0  # seconds after BASE_TIME
+    for index, (item_id, object_type, grade, n_images, origin) in enumerate(plan):
+        if origin == "capture":
+            offset = index * images_per_item  # the timestamps of SPEC-011
+        start = BASE_TIME + timedelta(seconds=offset)
+        item_rows = _write_images(root, item_id, object_type, grade, n_images, start, rng)
+        offset += n_images
+        rows += item_rows
+        if origin == "capture":
+            continue
+        for row in item_rows:
+            digest = hashlib.sha256((root / row[0]).read_bytes()).hexdigest()
+            if origin == "contributor":
+                source_rows.append([row[0], origin, SYNTHETIC_CONTRIBUTOR, "", "", digest])
+            else:
+                ref = f"synthetic/{item_id}.png"
+                source_rows.append([row[0], origin, "", SYNTHETIC_SOURCE[0], ref, digest])
 
-    with manifest.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.writer(fh, lineterminator="\n")
-        writer.writerow(MANIFEST_COLUMNS)
-        writer.writerows(rows)
+    _write_csv(manifest, MANIFEST_COLUMNS, rows)
+    if source_rows:
+        _write_csv(root / SOURCES_FILE, SOURCE_COLUMNS, source_rows)
+    if external_items_per_stratum:
+        _write_csv(root / EXTERNAL_SOURCES_FILE, EXTERNAL_SOURCE_COLUMNS, [list(SYNTHETIC_SOURCE)])
     return root
 
 
