@@ -71,7 +71,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [032](specs/SPEC-032-manutencao-deploy.md) | Manutenção do deploy (smoke sem abreviação, `.gitignore` sem diferenciar maiúsculas; candidatos: headers do Caddy, `pids_limit` e `read_only`) | security-devops | deploy, security, infra | 015 | S4–S5 | Ready |
 | [033](specs/SPEC-033-hook-worktree.md) | Manutenção do setup: hook de guarda de caminhos em git worktree | developer | infra | 022 (e 001) | S2 | Done (CA-08 aceito pelo humano na variante do orquestrador) |
 | [034](specs/SPEC-034-reenvio-dead-outbox.md) | Reenvio de itens `dead` do outbox | developer | security | 009, 030 | S5 | Ready |
-| [035](specs/SPEC-035-ml-origem-das-imagens.md) | ML: origem das imagens (conhecidos e externas), externas só no treino e atribuições | ml-engineer | — | 031, 011, 012 | S3 | In Dev (r1) |
+| [035](specs/SPEC-035-ml-origem-das-imagens.md) | ML: origem das imagens (conhecidos e externas), externas só no treino e atribuições | ml-engineer | — | 031, 011, 012 | S3 | In Test (r1) |
 | [036](specs/SPEC-036-importacao-de-fotos.md) | Importação para o dataset de fotos que não vêm da página `/capture` | developer | security | 035, 030, 025, 010 | S3 | Ready |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
