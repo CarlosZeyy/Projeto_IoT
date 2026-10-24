@@ -553,10 +553,9 @@ def test_rows_reaching_python_are_bounded(device_keys, db: psycopg.Connection) -
     db.execute(INSERT_SINGLE_ROW_LOTS, {"prefix": "V-", "start": T0, "count": 500, "sha": SHA})
     for k in range(1, 41):
         add_lot(db, f"G-{k:03d}", T0 + timedelta(hours=1, minutes=k), 5, 1)
-    where = sql.SQL("object_type <> %(unknown)s and source = %(f_source)s")
+    where = sql.SQL("grade is not null and source = %(f_source)s")
     query = sql.SQL(repository.SELECT_LOT_SELECTION).format(where=where)
     params = {
-        "unknown": "unknown",
         "f_source": "live",
         "baseline_lots": 3,
         "min_lot_size": 5,

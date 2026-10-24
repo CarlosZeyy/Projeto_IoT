@@ -7,13 +7,16 @@
   page item, bucket or lot reaches Python.
 * Every read runs in one ``repeatable read, read only`` transaction, so a page and its
   ``total`` (or a summary and its breakdowns) come from the same snapshot.
-* ``lot_selection`` feeds the SPC (SPEC-006 section 4.2, SPEC-026 section 4.3): ``unknown``
-  objects left out, a single ``source`` (never a mix, R-06), and the cut of ADR-017 made in SQL
-  over one aggregation per request, so at most ``baseline_lots + max_points + max_excluded + 1``
-  rows reach Python, whatever the history.
-* The defect rate is ``defective / (total - unknown)`` and ``null`` when the denominator is 0
-  (``nullif``), never a division error. ``is_defective`` is the generated column that mirrors
-  ``qc_contracts.is_defective`` (ADR-013, SPEC-003).
+* ``lot_selection`` feeds the SPC (SPEC-006 section 4.2, SPEC-026 section 4.3, SPEC-016
+  section 4.3): only inspections with a grade (``grade is not null``, ADR-021), a single
+  ``source`` (never a mix, R-06), and the cut of ADR-017 made in SQL over one aggregation per
+  request, so at most ``baseline_lots + max_points + max_excluded + 1`` rows reach Python,
+  whatever the history.
+* The defect rate is ``defective / graded`` (inspections with ``grade is not null``, ADR-021)
+  and ``null`` when the denominator is 0 (``nullif``), never a division error. With the MVP
+  types this is ``total - unknown``. ``unknown_count`` still counts only ``unknown`` objects.
+  ``is_defective`` is the generated column that mirrors ``qc_contracts.is_defective``
+  (ADR-013, SPEC-003).
 """
 
 from __future__ import annotations
@@ -93,7 +96,7 @@ select
     count(*) as total,
     count(*) filter (where is_defective) as defective,
     count(*) filter (where is_defective)::float8
-        / nullif(count(*) filter (where object_type <> %(unknown)s), 0) as defect_rate,
+        / nullif(count(*) filter (where grade is not null), 0) as defect_rate,
     count(*) filter (where object_type = %(unknown)s) as unknown_count,
     count(*) filter (where needs_review) as needs_review_count,
     avg(type_confidence) as mean_type_confidence,
@@ -117,7 +120,7 @@ select
     count(*) as total,
     count(*) filter (where is_defective) as defective,
     count(*) filter (where is_defective)::float8
-        / nullif(count(*) filter (where object_type <> %(unknown)s), 0) as defect_rate
+        / nullif(count(*) filter (where grade is not null), 0) as defect_rate
 from inspections
 where {where}
 group by 1
@@ -312,7 +315,6 @@ def timeseries(
         **params,
         "bucket": bucket,
         "time_zone": BUCKET_TIME_ZONE,
-        "unknown": _UNKNOWN,
         "max_rows": MAX_BUCKETS + 1,
     }
     with _read_snapshot(pool) as cursor:
@@ -350,9 +352,10 @@ def lot_selection(
     max_points: int | None,
     max_excluded: int | None,
 ) -> LotSelection:
-    """The lots of the SPC of one ``source``, ``unknown`` objects excluded, cut in SQL.
+    """The lots of the SPC of one ``source``, only inspections with a grade, cut in SQL.
 
-    ``object_type=None`` keeps every known type; otherwise only that type. The result is the
+    ``grade is not null`` leaves out ``unknown`` objects and the tools without a grade
+    (ADR-021). ``object_type=None`` keeps every type; otherwise only that type. The result is the
     one ``qc_api.services.spc.select_lots`` gives for every lot of the query: the same parts,
     each in ascending ``(started_at, lot_id)`` order, and the counts before the cut. ``None``
     for ``max_points`` or ``max_excluded`` means no cap. Raises ``ValueError`` on invalid
@@ -362,11 +365,10 @@ def lot_selection(
         baseline_lots, min_lot_size, max_points=max_points, max_excluded=max_excluded
     )
     conditions = [
-        sql.SQL("object_type <> %(unknown)s"),
+        sql.SQL("grade is not null"),
         sql.SQL("source = %(f_source)s"),
     ]
     params: dict[str, Any] = {
-        "unknown": _UNKNOWN,
         "f_source": source.value,
         "baseline_lots": baseline_lots,
         "min_lot_size": min_lot_size,

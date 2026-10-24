@@ -118,7 +118,15 @@ def test_openapi_documents_the_spc_parameters(client: TestClient) -> None:
     assert params["min_lot_size"]["schema"]["maximum"] == 500
     assert params["min_lot_size"]["schema"]["default"] == 5
     assert params["source"]["schema"]["default"] == "live"
-    assert spec["components"]["schemas"]["SpcObjectType"]["enum"] == ["screw", "nut"]
+    assert spec["components"]["schemas"]["SpcObjectType"]["enum"] == [
+        "screw",
+        "nut",
+        "pliers",
+        "adjustable_wrench",
+        "allen_key",
+        "flat_screwdriver",
+        "phillips_screwdriver",
+    ]
     assert set(operation["responses"]) >= {"200", "401", "422", "503"}
 
 
