@@ -10,6 +10,11 @@
 #   infra/.env.dashboard READ_API_KEY
 # Valores com $ vão entre aspas simples (sem aspas, o Compose interpola).
 #
+# Endurecimento (SPEC-032 §4.4): sistema de arquivos só de leitura (read_only), com tmpfs só em
+# /tmp (64m), e limite de processos e threads (pids_limit, padrão 256, ajustável no infra/.env).
+# Os volumes caddy_data e caddy_config continuam graváveis. Um serviço que parar depois de uma
+# atualização com "Read-only file system" no log precisa de um tmpfs novo, medido (deployment-plan).
+#
 # Só o caddy publica portas. Nunca rode "docker compose down -v": apaga o volume caddy_data
 # (certificados) e pode esbarrar no limite de emissão do Let's Encrypt.
 
@@ -45,6 +50,10 @@ services:
       - "no-new-privileges:true"
     mem_limit: "${CADDY_MEM_LIMIT:-256m}"
     cpus: "${CADDY_CPUS:-0.5}"
+    pids_limit: "${CADDY_PIDS_LIMIT:-256}"
+    read_only: true
+    tmpfs:
+      - "/tmp:size=64m"
     logging:
       driver: json-file
       options:
@@ -68,6 +77,10 @@ services:
       - "no-new-privileges:true"
     mem_limit: "${API_MEM_LIMIT:-512m}"
     cpus: "${API_CPUS:-1.0}"
+    pids_limit: "${API_PIDS_LIMIT:-256}"
+    read_only: true
+    tmpfs:
+      - "/tmp:size=64m"
     logging:
       driver: json-file
       options:
@@ -94,6 +107,10 @@ services:
       - "no-new-privileges:true"
     mem_limit: "${DASHBOARD_MEM_LIMIT:-1g}"
     cpus: "${DASHBOARD_CPUS:-1.0}"
+    pids_limit: "${DASHBOARD_PIDS_LIMIT:-256}"
+    read_only: true
+    tmpfs:
+      - "/tmp:size=64m"
     logging:
       driver: json-file
       options:
