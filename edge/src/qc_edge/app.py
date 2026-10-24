@@ -654,13 +654,17 @@ def _render_capture_page() -> str:
 
 
 def _coverage_html(dataset: DatasetWriter) -> str:
-    """Coverage table of the console (SPEC-010 section 4.4)."""
+    """Coverage table of the console (SPEC-010 section 4.4) and the external images line."""
     warning = ""
     try:
         cells = dataset.coverage()
     except (OSError, UnicodeDecodeError, csv.Error) as exc:
         logger.warning("cannot read the dataset manifest (%s)", type(exc).__name__)
         cells, warning = empty_coverage(), COVERAGE_UNREADABLE_HTML
+    try:
+        external = dataset.external_images()
+    except (OSError, UnicodeDecodeError, csv.Error):
+        external = 0  # the warning above already says the manifest cannot be read
     rows = "\n".join(_coverage_row_html(cell) for cell in cells)
     total = sum(cell.images for cell in cells)
     targets = (
@@ -673,7 +677,9 @@ def _coverage_html(dataset: DatasetWriter) -> str:
         "<thead><tr><th>Tipo</th><th>Grau</th><th>Imagens/meta</th><th>Peças/meta</th></tr>"
         f"</thead>\n<tbody>\n{rows}\n</tbody>\n"
         '<tfoot><tr><th colspan="2">Total de imagens</th>'
-        f'<td colspan="2" id="coverage-total">{total}</td></tr></tfoot>\n</table>'
+        f'<td colspan="2" id="coverage-total">{total}</td></tr></tfoot>\n</table>\n'
+        # External images (ADR-020): only for training, outside the targets (SPEC-036 section 4.7).
+        f'<p id="external-images">Imagens externas (só treino): {external}</p>'
     )
 
 

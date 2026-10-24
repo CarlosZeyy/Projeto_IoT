@@ -1,4 +1,5 @@
-"""qc_edge.jpeg: structural removal of the private JPEG segments (SPEC-025 section 4.8)."""
+"""qc_edge.jpeg: structural removal of the private JPEG segments (SPEC-025 section 4.8) and the
+EXIF orientation of the import (SPEC-036 section 4.3)."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from qc_edge import jpeg as jpeg_module
 from qc_edge.jpeg import (
     PRIVATE_FINDINGS,
     JpegStructureError,
+    exif_orientation,
     has_exif_rotation,
     jpeg_private_findings,
     strip_private_segments,
@@ -333,3 +335,72 @@ def test_rotation_check_logs_nothing(
     with pytest.raises(JpegStructureError):
         has_exif_rotation(b"not a jpeg")
     assert [r for r in caplog.records if r.name.startswith("qc_edge")] == []
+
+
+# ------------------------------------------------------------ exif_orientation (SPEC-036 4.3)
+
+
+@pytest.mark.parametrize("value", range(1, 9))
+def test_exif_orientation_values_1_to_8(jpeg_tools: types.SimpleNamespace, value: int) -> None:
+    data = jpeg_tools.rotated_jpeg(value)
+    result = exif_orientation(data)
+    assert result == value and type(result) is int
+    assert has_exif_rotation(data) == (result in range(2, 9))
+
+
+def test_exif_orientation_absent(jpeg_tools: types.SimpleNamespace) -> None:
+    assert exif_orientation(jpeg_tools.pillow_jpeg()) == 1
+    assert exif_orientation(jpeg_tools.pillow_jpeg(exif=jpeg_tools.gps_exif())) == 1
+    assert exif_orientation(jpeg_tools.with_metadata()[0]) == 1
+
+
+@pytest.mark.parametrize("value", [0, 9, 255, 65535])
+def test_exif_orientation_out_of_range_is_1(jpeg_tools: types.SimpleNamespace, value: int) -> None:
+    assert exif_orientation(jpeg_tools.rotated_jpeg(value)) == 1
+
+
+@pytest.mark.parametrize(
+    ("field_type", "value", "expected"),
+    [
+        (3, struct.pack("<H", 6), 6),
+        (5, struct.pack("<II", 6, 1), 6),  # IFDRational(6, 1)
+        (11, struct.pack("<f", 6.0), 6),  # 6.0
+        (12, struct.pack("<d", 8.0), 8),
+        (5, struct.pack("<II", 13, 2), 1),  # 6.5 is never applied
+        (2, b"6\x00", 1),  # ASCII "6"
+        (1, b"\x06", 1),  # BYTE
+    ],
+)
+def test_exif_orientation_odd_types(
+    jpeg_tools: types.SimpleNamespace, field_type: int, value: bytes, expected: int
+) -> None:
+    data = jpeg_tools.pillow_jpeg(exif=jpeg_tools.tiff_orientation_exif(field_type, value))
+    result = exif_orientation(data)
+    assert result == expected and type(result) is int
+    assert has_exif_rotation(data) == (result in range(2, 9))
+
+
+@pytest.mark.parametrize(("value", "expected"), [(6, 6), (3, 3), (1, 1), (0, 1)])
+def test_exif_orientation_only_in_the_xmp(
+    jpeg_tools: types.SimpleNamespace, value: int, expected: int
+) -> None:
+    assert exif_orientation(jpeg_tools.xmp_orientation_jpeg(value)) == expected
+
+
+@pytest.mark.parametrize("data", [b"not a jpeg", b"", b"\xff\xd8\xff\xe1\x00"])
+def test_exif_orientation_pillow_errors(data: bytes) -> None:
+    with pytest.raises(JpegStructureError) as excinfo:
+        exif_orientation(data)
+    assert str(excinfo.value) == "cannot read the JPEG EXIF orientation"
+    assert excinfo.value.__cause__ is None
+
+
+def test_exif_orientation_memory_error_propagates(
+    jpeg_tools: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: object, **kwargs: object) -> None:
+        raise MemoryError
+
+    monkeypatch.setattr(jpeg_module.Image, "open", broken)
+    with pytest.raises(MemoryError):
+        exif_orientation(jpeg_tools.rotated_jpeg(6))

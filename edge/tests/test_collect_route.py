@@ -379,6 +379,41 @@ def test_console_survives_an_unreadable_manifest(edge: Edge, lan: None) -> None:
     assert 'id="coverage-total">0<' in _coverage_table(response.text)
 
 
+def test_console_shows_the_external_images(edge: Edge, lan: None) -> None:
+    edge.root.mkdir()
+    with (edge.root / "manifest.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, lineterminator="\n")
+        writer.writerow(MANIFEST_COLUMNS)
+        for i in range(3):
+            writer.writerow((f"raw/screw/perfect/S-001__{i}__x.jpg", "S-001", "screw", "perfect"))
+        for i in range(1, 6):
+            item_id = f"XS-{i:04d}"
+            writer.writerow((f"raw/screw/perfect/{item_id}__0__x.jpg", item_id, "screw", "perfect"))
+    page = TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
+    table = _coverage_table(page)
+    assert "<tr><td>parafuso</td><td>perfeito</td><td>3/120</td><td>1/12</td></tr>" in table
+    assert 'id="coverage-total">3<' in table
+    assert '</table>\n<p id="external-images">Imagens externas (só treino): 5</p>' in page
+
+
+def test_console_external_images_without_manifest(edge: Edge, lan: None) -> None:
+    page = TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
+    assert '<p id="external-images">Imagens externas (só treino): 0</p>' in page
+
+
+def test_console_external_images_with_unreadable_manifest(edge: Edge, lan: None) -> None:
+    edge.root.mkdir()
+    (edge.root / "manifest.csv").write_bytes(b"\xff\xfe\x00broken")
+    page = TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
+    assert '<p id="external-images">Imagens externas (só treino): 0</p>' in page
+
+
+def test_collect_route_refuses_an_external_item_id(edge: Edge, jpeg_bytes: bytes) -> None:
+    response = edge.post(jpeg_bytes, item_id="XS-0001")
+    assert response.status_code == 422
+    assert edge.files() == []
+
+
 # ------------------------------------------------------ SPEC-025 sections 4.8 and 4.11
 
 

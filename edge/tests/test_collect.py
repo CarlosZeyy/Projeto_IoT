@@ -35,9 +35,13 @@ from qc_edge.collect import (
     ManifestHeaderMismatchError,
     ManifestUnreadableError,
     UnsupportedJpegStructureError,
+    append_csv_row,
     capture_device_from_user_agent,
     compute_coverage,
+    count_external_images,
     empty_coverage,
+    read_csv_rows,
+    rollback_append,
 )
 from qc_edge.fsutil import fsync_dir
 from qc_edge.jpeg import JpegStructureError, jpeg_private_findings, strip_private_segments
@@ -951,3 +955,70 @@ def test_manifest_has_one_line_per_record(
     text = (root / "manifest.csv").read_text(encoding="utf-8")
     assert len(text.splitlines()) == 2
     assert _rows(root)[0]["capture_device"] == "Phone X Y Z"
+
+
+# ------------------------------------------------- external images and CSV helpers (SPEC-036)
+
+
+def test_coverage_ignores_external_images(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.csv"
+    rows = [("S-001", "screw", "perfect", str(i)) for i in range(3)]
+    rows += [(f"XS-{i:04d}", "screw", "perfect", "0") for i in range(1, 6)]
+    rows += [("XO-0001", "other", "", "0"), ("XT-0001", "pliers", "", "0")]
+    rows += [("XS-001", "screw", "perfect", "0")]  # not external: 3 digits, counted as usual
+    _write_manifest(manifest, rows)
+    perfect = _cell(compute_coverage(manifest), "screw", "perfect")
+    assert (perfect.images, perfect.items) == (4, 2)
+    assert _cell(compute_coverage(manifest), "other", None).images == 0
+    assert count_external_images(manifest) == 7
+
+
+def test_count_external_images_without_manifest(tmp_path: Path) -> None:
+    assert count_external_images(tmp_path / "nothing" / "manifest.csv") == 0
+
+
+def test_writer_external_images(make_writer: Callable[..., DatasetWriter], root: Path) -> None:
+    writer = make_writer()
+    assert writer.external_images() == 0
+    _write_manifest(root / "manifest.csv", [("XN-0001", "nut", "good", "0")])
+    assert writer.external_images() == 1
+
+
+def test_read_csv_rows(tmp_path: Path) -> None:
+    path = tmp_path / "x.csv"
+    assert read_csv_rows(path, ("a", "b")) is None
+    path.write_bytes(b"a,b\n1,2\n3\n")
+    assert read_csv_rows(path, ("a", "b")) == [["1", "2"], ["3"]]
+    for content in (b"", b"\xef\xbb\xbfa,b\n", b"b,a\n", b"\xff\n"):
+        path.write_bytes(content)
+        with pytest.raises(collect_module.CsvHeaderMismatchError):
+            read_csv_rows(path, ("a", "b"))
+    path.write_bytes(b"a,b\n\xff\n")
+    with pytest.raises(collect_module.CsvUnreadableError):
+        read_csv_rows(path, ("a", "b"))
+
+
+def test_append_and_rollback(tmp_path: Path) -> None:
+    path = tmp_path / "s.csv"
+    original = os.umask(0o077)
+    try:
+        first = append_csv_row(path, ("a", "b"), ("1", "2"), root=tmp_path)
+    finally:
+        os.umask(original)
+    assert first.created and first.previous_size == 0
+    assert path.read_bytes() == b"a,b\n1,2\n"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    second = append_csv_row(path, ("a", "b"), ("3", "x,y"), root=tmp_path)
+    assert not second.created and second.previous_size == len(b"a,b\n1,2\n")
+    assert path.read_bytes() == b'a,b\n1,2\n3,"x,y"\n'
+    rollback_append(second, root=tmp_path)
+    assert path.read_bytes() == b"a,b\n1,2\n"
+    rollback_append(first, root=tmp_path)
+    assert not path.exists()
+
+
+def test_append_adds_a_missing_final_line_break(tmp_path: Path) -> None:
+    path = tmp_path / "s.csv"
+    path.write_bytes(b"a,b\n1,2")
+    append_csv_row(path, ("a", "b"), ("3", "4"), root=tmp_path)
+    assert path.read_bytes() == b"a,b\n1,2\n3,4\n"

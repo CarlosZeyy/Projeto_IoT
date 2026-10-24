@@ -16,6 +16,10 @@ The EXIF ``Orientation`` tag lives in the APP1, and ``qc_preprocess.load_image``
 (``ImageOps.exif_transpose``). A JPEG with an EXIF rotation (``has_exif_rotation``) is therefore
 never stripped: the collect mode refuses it and the privacy scan reports it, so that
 ``load_image`` gives the same image for the received bytes and for the stored file (ADR-004).
+
+The import of photos from outside the page (``qc_edge.importer``, SPEC-036) reads the rotation
+with ``exif_orientation`` before stripping the segments and applies it itself, re-encoding the
+image; the collect route keeps refusing it.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ _FILL = re.compile(rb"\xff+")
 # membership test below uses the same hash and equality, so ``6.0`` counts like ``6``).
 _ORIENTATION_TAG = 0x0112
 _ROTATION_VALUES = frozenset(range(2, 9))
+NO_ROTATION = 1
 
 
 class JpegStructureError(ValueError):
@@ -95,7 +100,23 @@ def has_exif_rotation(data: bytes) -> bool:
     ``Image.open(..., formats=("JPEG",)).getexif()`` is one of the values 2 to 8 that
     ``ImageOps.exif_transpose`` applies. Pillow's ``getexif`` also reads the XMP
     ``tiff:Orientation`` when the EXIF has no such tag. Only the header is read (no ``load()``),
-    and the value is never returned nor logged.
+    and the value is never returned nor logged. Same lookup as ``exif_orientation``:
+    ``has_exif_rotation(data) == (exif_orientation(data) in range(2, 9))``.
+
+    Raises:
+        JpegStructureError: any Pillow error (except ``MemoryError``), with a fixed message.
+    """
+    return exif_orientation(data) in _ROTATION_VALUES
+
+
+def exif_orientation(data: bytes) -> int:
+    """The EXIF ``Orientation`` of ``data`` that ``ImageOps.exif_transpose`` would apply (SPEC-036
+    section 4.3): 2 to 8, or 1 when the tag is absent, equal to 1, out of range or of a type that
+    is never applied.
+
+    The lookup is the one of ``has_exif_rotation`` (header only, EXIF or XMP
+    ``tiff:Orientation``); a value equal to an integer from 2 to 8 counts, including ``6.0`` and
+    ``IFDRational(6, 1)``, and is returned as that ``int``. The value is never logged.
 
     Raises:
         JpegStructureError: any Pillow error (except ``MemoryError``), with a fixed message.
@@ -108,9 +129,13 @@ def has_exif_rotation(data: bytes) -> bool:
     except Exception:
         raise JpegStructureError("cannot read the JPEG EXIF orientation") from None
     try:
-        return orientation in _ROTATION_VALUES
+        applied = orientation in _ROTATION_VALUES
     except TypeError:  # an unhashable value is never applied (exif_transpose would fail)
-        return False
+        return NO_ROTATION
+    if not applied:
+        return NO_ROTATION
+    # The set lookup matched one element with ``==``: return that element as a plain ``int``.
+    return next(value for value in sorted(_ROTATION_VALUES) if value == orientation)
 
 
 def _walk(data: bytes, *, keep_output: bool) -> tuple[bytearray, set[str]]:
