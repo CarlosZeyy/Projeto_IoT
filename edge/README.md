@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025, SPEC-030)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025, SPEC-030, SPEC-034)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -186,7 +186,30 @@ O outbox nunca apaga linhas (o volume da demo é pequeno) e sobrevive a uma qued
 sqlite3 edge/data/outbox.sqlite3 "select inspection_id, attempts, last_error from outbox where status = 'dead'"
 ```
 
-(troque o caminho pelo seu `OUTBOX_PATH`). Reenviar uma `dead` à mão fica para uma SPEC futura.
+(troque o caminho pelo seu `OUTBOX_PATH`). Para listá-las e reenviá-las, use o comando da seção seguinte.
+
+### Reenviar itens `dead` (SPEC-034)
+
+Um item `dead` é uma inspeção que a nuvem recusou com 422 ou 413 e que o laço isolou por bissecção: fica no outbox com o motivo em `last_error` e o laço nunca mais a envia sozinho. O caso típico é uma recusa geral numa divergência de versão do contrato (todos os itens de um ciclo viram `dead`). O console só mostra a contagem (**Com falha definitiva**); o reenvio é um passo consciente do operador, no terminal, e nunca é automático.
+
+Depois de uma atualização da API ou da borda que corrija a recusa:
+
+```bash
+# 1. conferir (só lê; não altera nada)
+uv run --package qc-edge python -m qc_edge.requeue --outbox-path edge/data/outbox.sqlite3
+
+# 2. reenviar (devolve os itens a pending)
+uv run --package qc-edge python -m qc_edge.requeue --outbox-path edge/data/outbox.sqlite3 --yes
+```
+
+(troque o caminho pelo seu `OUTBOX_PATH`).
+
+- Sem `--yes`, o comando imprime uma linha por item `dead`, `<inspection_id> <created_at UTC> attempts=<n> <last_error ou ->`, e no fim `<k> dead item(s); run again with --yes to requeue`. Com `--yes`, imprime `requeued <k> item(s)` (código 0, inclusive com `k = 0`).
+- `--id <inspection_id>` (repetível) restringe a listagem e o reenvio a esses itens. Ids que não existem ou que não estão `dead` são ignorados; um item `sent` nunca volta.
+- Cada item reenviado volta a `pending` com `attempts=0` (o backoff recomeça) e sem `last_error`; o `payload` não muda. O laço o envia no próximo ciclo, revalidado pelo contrato vigente. Se a nuvem ainda o recusar, ele volta a `dead` com o motivo novo em `last_error`.
+- A idempotência por `inspection_id` da API impede duplicatas na nuvem, mesmo que parte dos itens já tenha chegado lá (R-05).
+- Pode rodar com o `qc-edge` ligado (o outbox está em WAL; o comando espera até 5 s por um lock). O arquivo nunca é criado: caminho inexistente, que não é arquivo regular ou que não é um outbox sai com código 2; uma falha do SQLite durante a leitura ou a alteração (por exemplo, o lock não liberado em 5 s) sai com código 1.
+- A saída nunca mostra o `payload` (lote, dispositivo, confianças) nem o `DEVICE_API_KEY`, e o comando não faz nenhuma requisição de rede: só altera o arquivo. Argumento desconhecido ou `--id` que não é UUID sai com código 2, e o log mostra só os nomes das opções, nunca os valores.
 
 ### Demo offline (CA-17 da SPEC-009, manual)
 
