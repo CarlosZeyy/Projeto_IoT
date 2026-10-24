@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025, SPEC-030)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025, SPEC-030, SPEC-036)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -149,9 +149,43 @@ Respostas além das da tabela de rotas:
 
 As gravações passam por um lock de processo e por um `flock` em `DATASET_DIR/manifest.csv.lock` (só POSIX). Cada diretório novo e a imagem renomeada recebem `fsync` do diretório antes da linha do manifest, para que uma queda de energia não deixe uma linha sem imagem (se o sistema de arquivos não aceitar, o log mostra um `WARNING` e a coleta segue). Tudo o que a coleta **cria** sob `DATASET_DIR` (o próprio `DATASET_DIR`, quando é ela que o cria, `raw/`, as pastas de tipo e grau) fica com `0700`, e as imagens, o `manifest.csv` e o `manifest.csv.lock` com `0600`, seja qual for o `umask`. O que já existia não é alterado. Se o `chmod` falhar, o log mostra um `WARNING` com o caminho e a coleta segue.
 
-O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada.
+O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada. As imagens externas importadas (`XS-0001`, `XN-…`, `XO-…`, seção abaixo) não contam na tabela: logo abaixo dela, o console mostra só o total, em "Imagens externas (só treino): <n>".
 
 O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backup é o do `docs/dataset-protocol.md` §8 (Drive pessoal, compactado por data). Correções de rótulo e dupla rotulagem são da SPEC-011 (`labels_overrides.csv`), nunca editando a linha original.
+
+## Importar fotos de fora da página (SPEC-036)
+
+Serve para colocar no dataset as fotos que **não** passam pela página `/capture` (ADR-020): fotos de conhecidos, tiradas em outros celulares e recebidas como arquivo (origem `contributor`), e imagens de datasets públicos com licença aceita (origem `external`, só treino). É o único caminho de entrada desses arquivos: nunca os copie para `raw/` (`docs/dataset-protocol.md` §8). O passo a passo completo, com o guia para quem fotografa, o consentimento, a numeração e as licenças, está em `docs/dataset-protocol.md` §10.
+
+1. **Pasta de entrada fora do `DATASET_DIR`** (ex.: `~/partqc-entrada/`). A CLI recusa com `inbox must be outside the dataset` uma pasta igual ao dataset, dentro dele ou que o contenha: os arquivos recebidos têm EXIF e não podem ir para o backup.
+2. **Olhe cada foto** no tamanho real: sem pessoa, rosto, mão identificável, documento, tela ou endereço (`docs/dataset-protocol.md` §10.5). A opção `--privacy-checked` é a confirmação de que isso foi feito; sem ela, a CLI sai com `2` sem ler nada.
+3. **Plano CSV** (UTF-8 sem BOM, até 5.000 linhas), com o cabeçalho exato abaixo. `file` é o caminho relativo à pasta de entrada (com `/`, sem `..`, nunca um link simbólico, até 40 MiB). Uma linha `contributor` usa `S-`/`N-`/`O-` com 3 dígitos (sugestão: a partir de 500) e o código do conhecido (`c01`), com `source_id` e `source_ref` vazios. Uma linha `external` usa `XS-`/`XN-`/`XO-` com 4 dígitos, `contributor` vazio, a fonte registrada em `ml/external_sources.csv` (licença da lista do ADR-020) e o arquivo dentro da fonte em `source_ref`. Ferramentas (`T-`, `XT-`) são recusadas até a SPEC-016.
+
+   ```csv
+   file,item_id,object_type,grade,labeler,angle,origin,contributor,source_id,source_ref,notes
+   IMG_20261022_101500.jpg,S-501,screw,fair,a,2,contributor,c01,,,dúvida fair/poor
+   sdnet/0001.png,XS-0001,screw,perfect,b,0,external,,fonte-teste,dataset/train/0001.png,
+   ```
+
+   Se montar o plano numa planilha, exporte como CSV UTF-8 e confira as células de `notes` e `source_ref` que começam com `=`, `+`, `-` ou `@`, que a planilha pode ter transformado em fórmula.
+4. **Rode primeiro com `--dry-run`**, que valida tudo e normaliza cada imagem sem criar nem alterar nada no dataset, e confira as linhas `failed`:
+
+   ```bash
+   uv run --package qc-edge python -m qc_edge.importer --dataset-dir ml/data \
+       --inbox ~/partqc-entrada --plan ~/partqc-entrada/plano.csv --privacy-checked --dry-run
+   ```
+
+   Depois, o mesmo comando sem `--dry-run`. `--external-sources <arquivo>` troca o registro (padrão: `ml/external_sources.csv` do repositório; só é lido se o plano tiver linha `external`).
+
+O que acontece:
+
+- **Validação do plano inteiro antes de gravar.** Qualquer problema sai com `2`, nada é gravado e a saída de erro tem uma linha `plan line <n>: <código> (<coluna>)` por problema, sem repetir o valor da célula. O mesmo `item_id` com outro tipo (no plano ou no manifest), o mesmo arquivo duas vezes e dois arquivos iguais também são problemas.
+- **Normalização, como a página faz:** a rotação EXIF é aplicada, o EXIF (GPS, aparelho, data), o XMP, o IPTC, os comentários e o vídeo da "foto com movimento" são descartados, o lado maior fica com no máximo 1280 px e a imagem é reencodada em JPEG q = 90, sem metadados (o perfil de cor também sai). O resultado é conferido antes de gravar. HEIC, WebP e outros formatos são recusados (`unsupported image`), assim como imagens cujo lado menor ficaria abaixo de 256 px (`image too small`).
+- **Gravação como a da coleta:** mesmo nome e mesma pasta (`raw/<tipo>/<grau ou _>/<item_id>__<ângulo>__<AAAAMMDDTHHMMSSZ>.jpg`), mesmo lock, `0700`/`0600`. O `manifest.csv` ganha a linha com `captured_at` igual ao instante da importação e `capture_device = qc-edge-import`, e o `DATASET_DIR/sources.csv` (`image_path,origin,contributor,source_id,source_ref,input_sha256`) ganha a origem, com o SHA-256 do arquivo recebido. Os arquivos da pasta de entrada nunca são alterados nem apagados.
+- **Saída:** uma linha por linha do plano (`imported <arquivo> -> <image_path>`, `skipped <arquivo>: already imported`, `failed <arquivo>: <motivo>` ou, no `--dry-run`, `would import <arquivo>`) e o total `imported <n>, skipped <k>, failed <f>`. Código `0` sem falha, `1` com alguma linha `failed` (uma imagem recusada não para as outras; uma falha de disco para na hora, sem deixar imagem sem linha) e `2` para argumentos, plano, registro ou cabeçalho.
+- **Retomada:** rodar o mesmo plano de novo pula (`skipped`) o que já entrou, pelo SHA-256 do arquivo recebido. Uma foto excluída por engano (registrada em `exclusions.csv`) pode ser importada de novo.
+
+Depois de importar, rode `uv run --package qc-edge python -m qc_edge.privacy --dataset-dir ml/data` (deve terminar com `0 with private data`) e `uv run --package qc-ml python -m qc_ml.data validate --dataset-dir ml/data` (sem problemas), e só então apague os arquivos da pasta de entrada (`docs/dataset-protocol.md` §10.6).
 
 ## Envio para a nuvem (SPEC-009)
 
