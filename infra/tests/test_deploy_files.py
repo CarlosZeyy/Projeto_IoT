@@ -464,6 +464,204 @@ def test_gitignore_covers_the_vps_env_files(path: str, ignored: bool) -> None:
     assert (result.returncode == 0) is ignored
 
 
+# ---------------------------------------------------------------- .gitignore in any case (SPEC-032)
+
+# Every line of the .gitignore before SPEC-032, in order: none may leave or change.
+GITIGNORE_BEFORE_SPEC_032 = """\
+# --- Python / uv ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# --- Segredos (R-03) ---
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.pem
+*.key
+
+# --- Dados e imagens (R-02, R-14) ---
+ml/data/
+edge/data/
+data/
+*.jpg
+*.jpeg
+*.png
+!docs/**/*.png
+!ml/reports/**/*.png
+
+# --- Modelos (pesos vão em GitHub Releases) ---
+ml/models/**/*.onnx
+ml/models/**/*.pt
+ml/models/**/*.pth
+ml/checkpoints/
+
+# --- Borda ---
+*.sqlite
+*.sqlite3
+*.db
+
+# --- Notebooks / IDE / SO ---
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
+
+# --- Claude Code (local) ---
+.claude/settings.local.json
+.claude/worktrees/
+""".splitlines()
+
+CASE_VARIANTS = {
+    ".env": ".[eE][nN][vV]",
+    ".env.*": ".[eE][nN][vV].*",
+    "*.pem": "*.[pP][eE][mM]",
+    "*.key": "*.[kK][eE][yY]",
+    "*.jpg": "*.[jJ][pP][gG]",
+    "*.jpeg": "*.[jJ][pP][eE][gG]",
+    "*.png": "*.[pP][nN][gG]",
+    "ml/models/**/*.onnx": "ml/models/**/*.[oO][nN][nN][xX]",
+    "ml/models/**/*.pt": "ml/models/**/*.[pP][tT]",
+    "ml/models/**/*.pth": "ml/models/**/*.[pP][tT][hH]",
+    "*.sqlite": "*.[sS][qQ][lL][iI][tT][eE]",
+    "*.sqlite3": "*.[sS][qQ][lL][iI][tT][eE]3",
+    "*.db": "*.[dD][bB]",
+}
+EXTRA_PHOTO_VARIANTS = ("*.[hH][eE][iI][cC]", "*.[wW][eE][bB][pP]")
+VARIANT_LINE = re.compile(r"\[[a-z][A-Z]\]")
+
+
+def _gitignore_lines() -> list[str]:
+    return (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+
+def _check_ignore(path: str) -> bool:
+    """``git check-ignore --no-index`` with case-sensitive matching (as on Linux)."""
+    cmd = ["git", "-c", "core.ignorecase=false", "-c", "core.excludesFile=/dev/null"]
+    cmd += ["check-ignore", "-q", "--no-index", path]
+    return subprocess.run(cmd, cwd=ROOT, check=False, timeout=30).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "ml/data/raw/screw/fair/IMG_0001.JPG",
+        "fotos/FOTO.JPEG",
+        "fotos/Foto.Png",
+        "fotos/IMG_0002.HEIC",
+        "fotos/a.heic",
+        "fotos/a.WEBP",
+        "fotos/b.webp",
+        "entrada/IMG_1234.JPG",
+        "entrada/a.HEIC",
+        "ml/models/v1/MODEL.ONNX",
+        "ml/models/v1/best.PT",
+        "ml/models/v1/best.Pth",
+        "edge/OUTBOX.SQLITE3",
+        "edge/x.Sqlite",
+        "x/LOCAL.DB",
+        "CERT.PEM",
+        "id.KEY",
+        ".ENV",
+        ".Env.prod",
+        "infra/.ENV.API",
+        "docs/img/foto.JPG",
+    ],
+)
+def test_gitignore_ignores_sensitive_files_in_any_case(path: str) -> None:
+    assert _check_ignore(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env.example",
+        ".streamlit/config.toml",
+        "ml/reports/v1/grade_confusion.png",
+        "ml/reports/v1/GRADE_CONFUSION.PNG",
+        "docs/img/Arquitetura.PNG",
+        "docs/img/arquitetura.png",
+        "ml/tests/fixtures/tiny_model/model.onnx",
+        "ml/tests/fixtures/tiny_model/MODEL.ONNX",
+        "scripts/smoke_test.py",
+    ],
+)
+def test_gitignore_keeps_the_exceptions_in_any_case(path: str) -> None:
+    assert not _check_ignore(path)
+
+
+def test_gitignore_keeps_every_previous_line_in_order() -> None:
+    lines = _gitignore_lines()
+    position = -1
+    for line in GITIGNORE_BEFORE_SPEC_032:
+        if not line:
+            continue
+        assert line in lines, line
+        index = lines.index(line, position + 1)
+        assert index > position, line
+        position = index
+
+
+def test_gitignore_variants_sit_next_to_their_patterns_and_before_the_exceptions() -> None:
+    lines = _gitignore_lines()
+    for literal, variant in CASE_VARIANTS.items():
+        assert lines.count(variant) == 1, variant
+        assert lines.index(literal) < lines.index(variant), variant
+    for variant in EXTRA_PHOTO_VARIANTS:
+        assert lines.count(variant) == 1, variant
+    assert lines.index(".[eE][nN][vV].*") < lines.index("!.env.example")
+    photos = [
+        lines.index(p)
+        for p in ("*.jpg", "*.jpeg", "*.png", *EXTRA_PHOTO_VARIANTS)
+        + tuple(CASE_VARIANTS[p] for p in ("*.jpg", "*.jpeg", "*.png"))
+    ]
+    exceptions = [
+        lines.index(p)
+        for p in (
+            "!docs/**/*.png",
+            "!ml/reports/**/*.png",
+            "!docs/**/*.[pP][nN][gG]",
+            "!ml/reports/**/*.[pP][nN][gG]",
+        )
+    ]
+    assert max(photos) < min(exceptions)
+    # The only variant lines are the ones of SPEC-032 (``*.py[cod]`` does not match the regex).
+    expected = set(CASE_VARIANTS.values()) | set(EXTRA_PHOTO_VARIANTS)
+    expected |= {"!docs/**/*.[pP][nN][gG]", "!ml/reports/**/*.[pP][nN][gG]"}
+    assert {line for line in lines if VARIANT_LINE.search(line)} == expected
+
+
+def test_gitignore_variants_do_not_ignore_tracked_files(tmp_path: Path) -> None:
+    """CA-03 of SPEC-032: same ``ls-files -ci`` with and without the variant lines."""
+    without = tmp_path / "gitignore-without-variants"
+    without.write_text(
+        "\n".join(line for line in _gitignore_lines() if not VARIANT_LINE.search(line)) + "\n",
+        encoding="utf-8",
+    )
+
+    def ignored_tracked(exclude_from: Path) -> str:
+        return subprocess.run(
+            ["git", "-c", "core.excludesFile=/dev/null", "ls-files", "-ci"]
+            + [f"--exclude-from={exclude_from}"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout
+
+    assert ignored_tracked(ROOT / ".gitignore") == ignored_tracked(without)
+
+
 # ---------------------------------------------------------------- R-03: secret scan (CA-05)
 
 # Built at run time, so that this file does not match the patterns itself.
