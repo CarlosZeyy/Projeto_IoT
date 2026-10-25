@@ -1,18 +1,23 @@
-# PartQC na VPS pessoal, publicado pelo Coolify (ADR-023, SPEC-039; antes, SPEC-015 §4.12):
-# Caddy (roteador interno em HTTP) + qc-api + qc-dashboard.
+# PartQC: recurso "partqc-web" do Coolify, com o Caddy (roteador interno em HTTP) e o
+# qc-dashboard (ADR-023 e emenda 1, SPEC-039; antes, SPEC-015 §4.12). A qc-api é o outro recurso,
+# "partqc-api" (infra/compose.api.yaml).
 #
 # No Coolify (recurso "Docker Compose" a partir do repositório público, docs/deployment-plan.md §4):
-#   Base Directory /infra e Docker Compose Location /compose.yaml (o context: .. dos três serviços
+#   Base Directory /infra e Docker Compose Location /compose.yaml (o context: .. dos dois serviços
 #   aponta para a raiz do repositório);
 #   domínio só no serviço caddy, na porta interna 80 (https://<subdominio>:80). O TLS e o
-#   certificado ficam no proxy do Coolify, e nenhum serviço publica portas;
-#   as variáveis ficam nas Environment Variables do recurso no painel. Os segredos (DATABASE_URL,
-#   READ_API_KEY e, se usado, TELEGRAM_BOT_TOKEN) só em runtime, Locked e Literal. As referências
-#   ${NOME:?} são obrigatórias e bloqueiam o deploy se faltarem. Nenhum arquivo de ambiente é
-#   criado à mão na VPS.
+#   certificado ficam no proxy do Coolify, e nenhum serviço publica portas. O "partqc-api" não
+#   tem domínio: o caddy chega à API pela rede externa partqc-api-link;
+#   as variáveis ficam nas Environment Variables deste recurso: só PUBLIC_HOST, READ_API_KEY (o
+#   mesmo valor do "partqc-api"; segredo: só em runtime, Locked e Literal), MODEL_METRICS_PATH e
+#   os limites do caddy e do dashboard. O Coolify entrega o .env do recurso a todos os serviços
+#   dele, então os segredos do banco e dos alertas nunca entram neste recurso (SEC-39-01). As
+#   referências ${...:?} são obrigatórias e bloqueiam o deploy se faltarem;
+#   primeiro deploy: o "partqc-api" antes deste, porque ele cria a rede partqc-api-link.
 #
 # Conferência local, a partir da raiz do checkout, com um infra/.env de valores fictícios (fora
-# do Git e do contexto de build):
+# do Git e do contexto de build), o mesmo dos dois arquivos:
+#   docker compose -f infra/compose.api.yaml config --quiet
 #   docker compose -f infra/compose.yaml config --quiet     (nunca sem --quiet: imprime segredos)
 #
 # Endurecimento (SPEC-032 §4.4): sistema de arquivos só de leitura (read_only), com tmpfs em /tmp
@@ -21,8 +26,8 @@
 # recurso). Um serviço que parar depois de uma atualização com "Read-only file system" no log
 # precisa de um tmpfs novo, medido (deployment-plan).
 #
-# Sem labels do proxy (o Coolify gera as dele), sem rede própria e sem healthcheck no Caddy: um
-# contêiner unhealthy sai da rota do proxy do Coolify, e o site inteiro cairia (ADR-023).
+# Sem labels do proxy (o Coolify gera as dele) e sem healthcheck no Caddy: um contêiner unhealthy
+# sai da rota do proxy do Coolify, e o site inteiro cairia (ADR-023).
 
 name: partqc
 
@@ -34,8 +39,11 @@ services:
     restart: unless-stopped
     expose:
       - "80"
+    networks:
+      # default: o dashboard; link: a API do "partqc-api" (api:8000).
+      - default
+      - link
     depends_on:
-      - api
       - dashboard
     cap_drop:
       - ALL
@@ -51,43 +59,6 @@ services:
       - "/tmp:size=64m"
       - "/data:size=16m"
       - "/config:size=16m"
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  api:
-    build:
-      context: ..
-      dockerfile: infra/docker/api.Dockerfile
-    environment:
-      DATABASE_URL: "${DATABASE_URL:?}"
-      READ_API_KEY: "${READ_API_KEY:?}"
-      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-262144}"
-      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
-      # Alertas da SPEC-017, opcionais e desligados por padrão (antes do merge dela, ignorados).
-      ALERTS_ENABLED: "${ALERTS_ENABLED:-false}"
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
-      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
-      ALERTS_LOT_IDLE_MINUTES: "${ALERTS_LOT_IDLE_MINUTES:-10}"
-      ALERTS_LOOKBACK_HOURS: "${ALERTS_LOOKBACK_HOURS:-24}"
-      ALERTS_CHECK_INTERVAL_S: "${ALERTS_CHECK_INTERVAL_S:-60}"
-      ALERTS_MAX_PER_HOUR: "${ALERTS_MAX_PER_HOUR:-10}"
-      ALERTS_INCLUDE_SIMULATED: "${ALERTS_INCLUDE_SIMULATED:-false}"
-    expose:
-      - "8000"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
-    mem_limit: "${API_MEM_LIMIT:-512m}"
-    cpus: "${API_CPUS:-1.0}"
-    pids_limit: "${API_PIDS_LIMIT:-256}"
-    read_only: true
-    tmpfs:
-      - "/tmp:size=64m"
     logging:
       driver: json-file
       options:
@@ -121,3 +92,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  link:
+    # Criada pelo "partqc-api" (infra/compose.api.yaml), que sobe antes.
+    name: partqc-api-link
+    external: true

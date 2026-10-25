@@ -310,15 +310,30 @@ PIDS_LIMITS = {
     "caddy": "${CADDY_PIDS_LIMIT:-256}",
 }
 TMPFS_SIZE = re.compile(r"(?:^|,)size=(\d+)([kmg]?)(?:,|$)")
+# SPEC-039 section 4.1 (ADR-023, amendment 1): two Coolify resources, two compose files.
+WEB_COMPOSE = INFRA / "compose.yaml"
+API_COMPOSE = INFRA / "compose.api.yaml"
+
+
+def _all_services() -> dict:
+    """The services of both compose files (caddy and dashboard, then api)."""
+    services = dict(_yaml(WEB_COMPOSE)["services"])
+    services.update(_yaml(API_COMPOSE)["services"])
+    return services
 
 
 def test_compose_structure() -> None:
-    """SPEC-015 section 4.12 as amended by SPEC-039 section 4.1 (Coolify, no published ports)."""
-    compose = _yaml(INFRA / "compose.yaml")
-    services = compose["services"]
-    assert compose["name"] == "partqc"
-    assert set(services) == {"caddy", "api", "dashboard"}
-    assert set(compose) == {"name", "services"}  # no top-level networks nor volumes
+    """SPEC-015 section 4.12 as amended by SPEC-039 section 4.1 (Coolify, no published ports,
+    two resources linked by the partqc-api-link network)."""
+    web, api = _yaml(WEB_COMPOSE), _yaml(API_COMPOSE)
+    assert (web["name"], api["name"]) == ("partqc", "partqc-api")
+    assert set(web["services"]) == {"caddy", "dashboard"}
+    assert set(api["services"]) == {"api"}
+    # No top-level volumes; the only network is the link between the resources.
+    assert set(web) == set(api) == {"name", "services", "networks"}
+    assert web["networks"] == {"link": {"name": "partqc-api-link", "external": True}}
+    assert api["networks"] == {"link": {"name": "partqc-api-link", "internal": True}}
+    services = _all_services()
     expose = {"caddy": ["80"], "api": ["8000"], "dashboard": ["8501"]}
     for name, service in services.items():
         for key in (
@@ -327,7 +342,6 @@ def test_compose_structure() -> None:
             "network_mode",
             "pid",
             "container_name",
-            "networks",
             "env_file",
             "labels",
         ):
@@ -351,8 +365,10 @@ def test_compose_structure() -> None:
     for key in ("environment", "volumes", "healthcheck"):
         assert key not in caddy, key
     assert caddy["cap_add"] == ["NET_BIND_SERVICE"]
-    assert caddy["depends_on"] == ["api", "dashboard"]
+    assert caddy["depends_on"] == ["dashboard"]
     assert "cap_add" not in services["api"] and "cap_add" not in services["dashboard"]
+    assert caddy["networks"] == services["api"]["networks"] == ["default", "link"]
+    assert "networks" not in services["dashboard"]
 
 
 def _tmpfs_size_bytes(item: str) -> int | None:
@@ -369,7 +385,7 @@ def test_compose_hardening_spec_032() -> None:
     SPEC-039 section 4.1, item 5: the caddy also has /data and /config (16m) in tmpfs, in place
     of the caddy_data and caddy_config volumes.
     """
-    services = _yaml(INFRA / "compose.yaml")["services"]
+    services = _all_services()
     for name, service in services.items():
         assert service["read_only"] is True, name
         assert service["pids_limit"] == PIDS_LIMITS[name], name
@@ -396,7 +412,8 @@ def test_caddy_version_is_pinned_only_in_its_dockerfile() -> None:
         if line.startswith("FROM ")
     ]
     assert re.fullmatch(r"FROM caddy:2\.\d+\.\d+@sha256:[0-9a-f]{64}", base)
-    assert "caddy:2." not in (INFRA / "compose.yaml").read_text(encoding="utf-8")
+    for path in (WEB_COMPOSE, API_COMPOSE):
+        assert "caddy:2." not in path.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------- Caddyfile (section 4.13)
@@ -462,6 +479,7 @@ def test_caddyfile_header_block_spec_032() -> None:
 
 R13_FILES = [
     INFRA / "compose.yaml",
+    INFRA / "compose.api.yaml",
     INFRA / "Caddyfile",
     INFRA / "render.yaml",
     WORKFLOWS / "docker.yml",

@@ -171,32 +171,44 @@ def coolify_env(drop: tuple[str, ...] = (), extra: bytes = b"") -> bytes:
     return "".join(lines).encode() + extra
 
 
+COMPOSE_FILES = ("compose.api.yaml", "compose.yaml")  # partqc-api, partqc-web (SPEC-039)
+
+
 def _compose_copy(tmp_path: Path, env: bytes | None) -> Path:
+    """A copy of the tracked tree with ``infra/.env``; returns the copy's ``infra`` directory."""
     extra = {} if env is None else {"infra/.env": env}
-    return support.copy_tracked_tree(tmp_path / "copy", extra) / "infra" / "compose.yaml"
+    return support.copy_tracked_tree(tmp_path / "copy", extra) / "infra"
 
 
-def _compose_config(compose: Path) -> subprocess.CompletedProcess:
-    env = {
+def _clean_env() -> dict[str, str]:
+    return {
         k: v
         for k, v in os.environ.items()
         if k not in {"PUBLIC_HOST", "DATABASE_URL", "READ_API_KEY"}
         and not k.endswith(("_MEM_LIMIT", "_CPUS", "_PIDS_LIMIT"))
     }
+
+
+def _compose_config(infra: Path, name: str, *args: str) -> subprocess.CompletedProcess:
+    cmd = ["docker", "compose", "-f", str(infra / name), "config", *(args or ("--format", "json"))]
     return subprocess.run(
-        ["docker", "compose", "-f", str(compose), "config", "--format", "json"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        check=False,
+        cmd, capture_output=True, text=True, timeout=120, env=_clean_env(), check=False
     )
 
 
+def _resolved_services(infra: Path) -> dict:
+    """The resolved services of both compose files (``config --format json``)."""
+    services: dict = {}
+    for name in COMPOSE_FILES:
+        result = _compose_config(infra, name)
+        assert result.returncode == 0, (name, result.stderr)
+        services.update(json.loads(result.stdout)["services"])
+    return services
+
+
 def test_compose_resolves_host_and_limits(tmp_path: Path) -> None:
-    result = _compose_config(_compose_copy(tmp_path, coolify_env()))
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    services = _resolved_services(_compose_copy(tmp_path, coolify_env()))
+    assert set(services) == {"api", "caddy", "dashboard"}
     assert services["dashboard"]["environment"]["API_BASE_URL"] == "https://partqc.example.org"
     assert int(services["api"]["mem_limit"]) == 512 * 1024**2
     assert int(services["dashboard"]["mem_limit"]) == 1024**3
@@ -207,45 +219,45 @@ def test_compose_resolves_host_and_limits(tmp_path: Path) -> None:
     assert services["caddy"]["tmpfs"] == ["/tmp:size=64m", "/data:size=16m", "/config:size=16m"]
 
 
-def test_compose_config_quiet_with_the_hardening(tmp_path: Path) -> None:
+@pytest.mark.parametrize("name", COMPOSE_FILES)
+def test_compose_config_quiet_with_the_hardening(tmp_path: Path, name: str) -> None:
     """CA-06 of SPEC-032: ``config --quiet`` accepts the interpolated pids_limit."""
-    compose = _compose_copy(tmp_path, coolify_env())
-    env = {k: v for k, v in os.environ.items() if not k.endswith("_PIDS_LIMIT")}
-    for name in ("PUBLIC_HOST", "DATABASE_URL", "READ_API_KEY"):
-        env.pop(name, None)
-    result = subprocess.run(
-        ["docker", "compose", "-f", str(compose), "config", "--quiet"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        check=False,
-    )
+    result = _compose_config(_compose_copy(tmp_path, coolify_env()), name, "--quiet")
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
 
 
 def test_compose_pids_limit_override(tmp_path: Path) -> None:
     env = coolify_env(extra=b"DASHBOARD_PIDS_LIMIT=512\n")
-    result = _compose_config(_compose_copy(tmp_path, env))
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    services = _resolved_services(_compose_copy(tmp_path, env))
     assert int(services["dashboard"]["pids_limit"]) == 512
     assert int(services["api"]["pids_limit"]) == 256
 
 
 def test_compose_limit_override(tmp_path: Path) -> None:
     env = coolify_env(extra=b"API_MEM_LIMIT=768m\n")
-    result = _compose_config(_compose_copy(tmp_path, env))
-    assert result.returncode == 0, result.stderr
-    assert int(json.loads(result.stdout)["services"]["api"]["mem_limit"]) == 768 * 1024**2
+    services = _resolved_services(_compose_copy(tmp_path, env))
+    assert int(services["api"]["mem_limit"]) == 768 * 1024**2
 
 
-@pytest.mark.parametrize("missing", ["PUBLIC_HOST", "DATABASE_URL", "READ_API_KEY"])
-def test_compose_requires_each_mandatory_variable(tmp_path: Path, missing: str) -> None:
-    result = _compose_config(_compose_copy(tmp_path, coolify_env(drop=(missing,))))
+@pytest.mark.parametrize(
+    ("name", "missing"),
+    [
+        ("compose.api.yaml", "DATABASE_URL"),
+        ("compose.api.yaml", "READ_API_KEY"),
+        ("compose.yaml", "PUBLIC_HOST"),
+        ("compose.yaml", "READ_API_KEY"),
+    ],
+)
+def test_compose_requires_each_mandatory_variable(tmp_path: Path, name: str, missing: str) -> None:
+    result = _compose_config(_compose_copy(tmp_path, coolify_env(drop=(missing,))), name)
     assert result.returncode != 0
     assert missing in result.stderr
+
+
+def test_web_compose_does_not_need_the_database_url(tmp_path: Path) -> None:
+    infra = _compose_copy(tmp_path, coolify_env(drop=("DATABASE_URL",)))
+    assert _compose_config(infra, "compose.yaml").returncode == 0
 
 
 # ---------------------------------------------------------------- Caddyfile (section 4.13)
@@ -370,9 +382,9 @@ RUN_TIMEOUT_S = 90
 
 
 def _service(name: str) -> dict:
-    return yaml.safe_load((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"))[
-        "services"
-    ][name]
+    """The service ``name`` from its compose file (the api is in ``compose.api.yaml``)."""
+    path = ROOT / "infra" / ("compose.api.yaml" if name == "api" else "compose.yaml")
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["services"][name]
 
 
 def _hardening_args(name: str) -> list[str]:
