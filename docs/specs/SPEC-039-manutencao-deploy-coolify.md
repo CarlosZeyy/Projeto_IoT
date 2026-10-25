@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | security-devops |
 | Tags | deploy, security, infra |
@@ -386,3 +386,4 @@ Antes de colar qualquer saída, troque o subdomínio por `<subdominio>`, o IP po
 |---|---|---|---|
 | 2026-10-25 | SPEC criada (`Draft`). Decisões do architect, com o ADR-023 (`Proposto`): (a) nenhum serviço com `ports`, nenhuma label `traefik.*`/`coolify.*`, sem a rede própria e sem o alias; (b) Caddy em `:80`, sem TLS e sem healthcheck, com `tmpfs` em `/data` e `/config` no lugar dos volumes; (c) Caddyfile embutido numa imagem própria (`caddy.Dockerfile`, contexto só com o Caddyfile), em vez de bind com "Preserve repository"; (d) segredos por `${NOME:?}` no `environment`, sem `env_file`, e os opcionais com o padrão do código; (e) Base Directory `/infra` e Docker Compose Location `/compose.yaml`, com o CA-09 simulando a invocação do Coolify; (f) o `handle_errors` continua na SPEC-038; (g) equivalência dos comandos do CA-09 da SPEC-032 (§4.7). | Fato novo do humano em 2026-10-25: a VPS é gerenciada pelo Coolify, cujo proxy ocupa 80/443 | Orquestrador, a pedido do humano |
 | 2026-10-25 | Decisões do humano sobre o PR #55: (1) opção A do ADR-023 aprovada (Caddy como roteador interno); (2) **deploy automático por webhook** a cada merge na `main`: §3.2 ajustada, §4.8 nova (webhook manual com segredo só no Coolify e no GitHub, sem Watch Paths, processo com a `main` sempre publicável e rollback por branch), CA-07 com os nomes da interface do webhook, CA-15 com o primeiro deploy pelo botão, **CA-18 novo** (manual: um merge de teste dispara o deploy, só a `main` dispara, e o log não mostra segredos); (3) as 8 variáveis de alertas da SPEC-017 (`ALERTS_*`, `TELEGRAM_*`), com os padrões dela (alertas desligados), entram já no `environment` da `api` (§4.1, item 6; CA-08); o `.env.example` as cita no comentário, e o texto do plano sobre os alertas fica para o merge da 017; (4) o `handle_errors` fica na SPEC-038, e esta SPEC entra agora, direto na `main` (Semana alvo). Fontes novas no ADR-023 (consultadas em 2026-10-25). A SPEC continua `Draft` até a aprovação formal. | Decisão do humano | Humano (Carlos) |
+| 2026-10-25 | Aprovada pelo humano (`Draft` → `Ready`) com o ADR-023: Caddy como roteador interno, deploy automático por webhook, variáveis da SPEC-017 opcionais no compose (nomes e padrões conferidos contra o código da 017), o 502 com headers fica na SPEC-038; entra agora, direto na `main`. | Resposta do humano de 2026-10-25 (PR #55) | Orquestrador, a pedido do humano |

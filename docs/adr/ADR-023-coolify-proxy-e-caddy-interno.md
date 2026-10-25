@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Proposto |
+| Status | Aceito (aprovado pelo humano em 2026-10-25: Caddy como roteador interno, deploy automático por webhook) |
 | Data | 2026-10-25 |
 | Decisores | Humano (Carlos) (redigido pelo agente architect) |
 | Relacionados | ADR-018 (substituído em parte), ADR-008 (banco e keep-alive, sem mudança), ADR-006, ADR-007, ADR-016, ADR-019, SPEC-015, SPEC-032, SPEC-038, SPEC-039, SPEC-017, SPEC-028, R-01, R-03, R-13, N-05 |
