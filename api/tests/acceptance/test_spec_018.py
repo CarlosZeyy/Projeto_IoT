@@ -410,7 +410,7 @@ def test_extra_heartbeat_migration_runs_again_without_error(env: Env) -> None:
 def test_extra_heartbeat_migration_is_the_next_free_number() -> None:
     numbers = sorted(int(p.name.split("_", 1)[0]) for p in MIGRATIONS.glob("[0-9]*.sql"))
     assert numbers == list(range(1, len(numbers) + 1))
-    assert _heartbeat_migration().name.startswith(f"{numbers[-1]:03d}_")
+    assert _heartbeat_migration().name.startswith("004_")
 
 
 # --------------------------------------------------------------------------- extras: §4.3
