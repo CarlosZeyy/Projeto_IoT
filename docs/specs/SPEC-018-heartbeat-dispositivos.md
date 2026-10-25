@@ -11,7 +11,7 @@
 | Requisitos cobertos | RF-18; PRD §4.2; R-02, R-03, R-04, R-06, R-12 |
 | ADRs relevantes | ADR-002, ADR-006, ADR-007, ADR-009, ADR-018 |
 
-> **Pronta para a aprovação humana.** Revista pelo architect em 2026-10-24 (ver o Histórico). A mudança de contrato é **minor** (schemas novos, nenhum campo existente muda), então pede a SPEC aprovada com a tag `contrato`, sem ADR obrigatório (R-04 e skill `contrato-api`).
+> **Aprovada pelo humano em 2026-10-24** (PR #45), no pacote das Fases 2 e 3, com os ADRs 021 e 022 `Aceito`. Revista pelo architect em 2026-10-24 (ver o Histórico). A mudança de contrato é **minor** (schemas novos, nenhum campo existente muda), então pede a SPEC aprovada com a tag `contrato`, sem ADR obrigatório (R-04 e skill `contrato-api`).
 
 ## 1. Contexto
 
@@ -154,3 +154,4 @@ Nada é mockado além das fronteiras: banco de teste real na API; `httpx.MockTra
 | 2026-10-18 | §6, pergunta 3: nota do Render superada, porque a API fica sempre ligada na VPS. A SPEC continua `Draft`. | ADR-018 (hospedagem na VPS pessoal) | Orquestrador, a pedido do humano |
 | 2026-10-24 | SPEC reescrita para a aprovação. Decisões do architect: contrato 0.5.0 minor (sem ADR obrigatório), com limites inteiros e `model_version`/`model_sha256` nulos juntos; `last_heartbeat_at` e `online` pela hora do servidor; `last_source` em `DeviceStatus` para mostrar dispositivos simulados (pergunta 4: o simulador não envia heartbeat); envio pelo `HttpPublisher` (único módulo com `httpx`), com os limites da SPEC-030 e parada em 401/403; `HEARTBEAT_INTERVAL_S` de 10 a 3.600 ou 0; dependência das SPECs 034 (prazo dela), 016 (versão do contrato) e 030; CAs CA-01 a CA-12 testáveis e CA-13 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
+| 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: o aviso do topo passa a registrar a aprovação. | Status `Ready` desde o PR #45; sobrava o aviso da fase de rascunho | Architect, a pedido do orquestrador |

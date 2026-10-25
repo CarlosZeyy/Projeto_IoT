@@ -12,6 +12,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -168,7 +169,7 @@ def _compose_config(compose: Path) -> subprocess.CompletedProcess:
     env = {
         k: v
         for k, v in os.environ.items()
-        if k != "PUBLIC_HOST" and not k.endswith(("_MEM_LIMIT", "_CPUS"))
+        if k != "PUBLIC_HOST" and not k.endswith(("_MEM_LIMIT", "_CPUS", "_PIDS_LIMIT"))
     }
     return subprocess.run(
         ["docker", "compose", "-f", str(compose), "config", "--format", "json"],
@@ -188,6 +189,36 @@ def test_compose_resolves_host_and_limits(tmp_path: Path) -> None:
     assert services["caddy"]["networks"]["partqc"]["aliases"] == ["partqc.example.org"]
     assert int(services["api"]["mem_limit"]) == 512 * 1024**2
     assert int(services["dashboard"]["mem_limit"]) == 1024**3
+    for service in services.values():  # SPEC-032 section 4.4
+        assert int(service["pids_limit"]) == 256
+        assert service["read_only"] is True
+        assert service["tmpfs"] == ["/tmp:size=64m"]
+
+
+def test_compose_config_quiet_with_the_hardening(tmp_path: Path) -> None:
+    """CA-06 of SPEC-032: ``config --quiet`` accepts the interpolated pids_limit."""
+    compose = _compose_copy(tmp_path, b"PUBLIC_HOST=partqc.example.org\n")
+    env = {k: v for k, v in os.environ.items() if not k.endswith("_PIDS_LIMIT")}
+    env.pop("PUBLIC_HOST", None)
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(compose), "config", "--quiet"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_compose_pids_limit_override(tmp_path: Path) -> None:
+    env = b"PUBLIC_HOST=partqc.example.org\nDASHBOARD_PIDS_LIMIT=512\n"
+    result = _compose_config(_compose_copy(tmp_path, env))
+    assert result.returncode == 0, result.stderr
+    services = json.loads(result.stdout)["services"]
+    assert int(services["dashboard"]["pids_limit"]) == 512
+    assert int(services["api"]["pids_limit"]) == 256
 
 
 def test_compose_limit_override(tmp_path: Path) -> None:
@@ -259,3 +290,228 @@ def test_caddy_adapts_the_caddyfile() -> None:
         h["response"]["set"].get("Strict-Transport-Security") == ["max-age=31536000"]
         for h in headers
     )
+    # SPEC-032 section 4.3: one deferred handler deletes Server and Via and sets the 4 headers.
+    (response,) = [h["response"] for h in headers]
+    assert response["deferred"] is True
+    assert sorted(response["delete"]) == ["Server", "Via"]
+    assert response["set"] == {
+        "Strict-Transport-Security": ["max-age=31536000"],
+        "X-Content-Type-Options": ["nosniff"],
+        "Referrer-Policy": ["no-referrer"],
+        "Content-Security-Policy": ["frame-ancestors 'self'"],
+    }
+
+
+def _caddy_image() -> str:
+    compose = yaml.safe_load((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"))
+    return compose["services"]["caddy"]["image"]
+
+
+def _site_header_block() -> str:
+    text = (ROOT / "infra" / "Caddyfile").read_text(encoding="utf-8")
+    start = text.index("\theader {")
+    return text[start : text.index("\n\t}\n", start) + len("\n\t}\n")]
+
+
+def test_caddy_header_block_strips_server_and_via_behind_the_proxy(tmp_path: Path) -> None:
+    """The real header block of infra/Caddyfile, behind a reverse_proxy whose upstream answers
+    with ``Server: uvicorn`` (SPEC-032 section 4.3): no Server, no Via, and the 4 headers."""
+    caddyfile = tmp_path / "Caddyfile"
+    caddyfile.write_text(
+        "{\n\tauto_https off\n\tadmin off\n}\n\n"
+        ":8080 {\n" + _site_header_block() + "\treverse_proxy 127.0.0.1:9000\n}\n\n"
+        ':9000 {\n\theader Server uvicorn\n\trespond "ok"\n}\n',
+        encoding="utf-8",
+    )
+    script = (
+        "caddy start --config /etc/caddy/Caddyfile >/dev/null 2>&1; "
+        "for i in 1 2 3 4 5 6 7 8 9 10; do "
+        "wget -S -O /dev/null http://127.0.0.1:8080/ 2>/tmp/h && break; sleep 0.5; done; "
+        "cat /tmp/h"
+    )
+    result = _run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "-v",
+            f"{caddyfile}:/etc/caddy/Caddyfile:ro",
+            "--entrypoint",
+            "sh",
+            _caddy_image(),
+            "-c",
+            script,
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    headers = {
+        line.strip().split(":", 1)[0].lower(): line.strip().split(":", 1)[1].strip()
+        for line in result.stdout.splitlines()
+        if ":" in line and not line.strip().startswith(("Connecting", "HTTP/"))
+    }
+    assert "200 OK" in result.stdout
+    assert "server" not in headers and "via" not in headers
+    assert headers["referrer-policy"] == "no-referrer"
+    assert headers["content-security-policy"] == "frame-ancestors 'self'"
+    assert headers["strict-transport-security"] == "max-age=31536000"
+    assert headers["x-content-type-options"] == "nosniff"
+
+
+# -------------------------------------------------------- read_only and pids_limit (SPEC-032)
+
+READ_ONLY_ERRORS = ("read-only file system", "erofs", "permissionerror")
+RUN_TIMEOUT_S = 90
+
+
+def _service(name: str) -> dict:
+    return yaml.safe_load((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"))[
+        "services"
+    ][name]
+
+
+def _hardening_args(name: str) -> list[str]:
+    """``docker run`` options equivalent to the compose security settings of ``name``."""
+    service = _service(name)
+    assert service["read_only"] is True
+    args = ["--read-only", "--pids-limit", "256", "--cap-drop", "ALL"]
+    args += ["--security-opt", "no-new-privileges"]
+    for item in service["tmpfs"]:
+        args += ["--tmpfs", item]
+    for cap in service.get("cap_add", []):
+        args += ["--cap-add", cap]
+    return args
+
+
+def _start(name: str, image: str, *args: str, env: dict[str, str] | None = None) -> str:
+    container = f"partqc-test-{name}-{secrets.token_hex(4)}"
+    cmd = ["docker", "run", "-d", "--name", container, "--network", "none"]
+    for key, value in (env or {}).items():
+        cmd += ["-e", f"{key}={value}"]
+    result = _run([*cmd, *args, image])
+    assert result.returncode == 0, result.stderr
+    return container
+
+
+def _remove(container: str) -> None:
+    _run(["docker", "rm", "-f", "-v", container], timeout=60)
+
+
+def _inspect(container: str, template: str) -> str:
+    return _run(["docker", "inspect", "-f", template, container]).stdout.strip()
+
+
+def _exec(container: str, *cmd: str) -> subprocess.CompletedProcess:
+    return _run(["docker", "exec", container, *cmd], timeout=60)
+
+
+def _logs(container: str) -> str:
+    result = _run(["docker", "logs", container], timeout=60)
+    return result.stdout + result.stderr
+
+
+def _http_get(container: str, url: str) -> subprocess.CompletedProcess:
+    script = (
+        "import sys, urllib.request as u, urllib.error as e\n"
+        "try:\n"
+        f"    r = u.urlopen({url!r}, timeout=5); print(r.status, r.read().decode().strip())\n"
+        "except e.HTTPError as x:\n"
+        "    print(x.code)\n"
+    )
+    return _exec(container, "python", "-c", script)
+
+
+def _wait(predicate, timeout: float = RUN_TIMEOUT_S) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(2)
+    return False
+
+
+def _assert_read_only_layout(container: str) -> None:
+    assert _exec(container, "touch", "/tmp/x").returncode == 0
+    assert _exec(container, "touch", "/app/x").returncode != 0
+    assert _exec(container, "cat", "/sys/fs/cgroup/pids.max").stdout.strip() == "256"
+    logs = _logs(container).lower()
+    assert not [error for error in READ_ONLY_ERRORS if error in logs], logs[-2000:]
+
+
+def test_dashboard_runs_read_only(images: dict[str, str]) -> None:
+    """CA-07 of SPEC-032 (dashboard): healthy, /_stcore/health ok, nothing written outside /tmp."""
+    container = _start(
+        "dashboard-ro",
+        images["dashboard"],
+        *_hardening_args("dashboard"),
+        "--user",
+        "10001:10001",
+        env={
+            "API_BASE_URL": "https://partqc.example.org",
+            "READ_API_KEY": secrets.token_urlsafe(32),
+        },
+    )
+    try:
+        assert _wait(lambda: _inspect(container, "{{.State.Health.Status}}") == "healthy"), _logs(
+            container
+        )[-2000:]
+        assert _http_get(container, "http://127.0.0.1:8501/_stcore/health").stdout.split() == [
+            "200",
+            "ok",
+        ]
+        _assert_read_only_layout(container)
+    finally:
+        _remove(container)
+
+
+def test_api_runs_read_only(images: dict[str, str]) -> None:
+    """CA-07 of SPEC-032 (api): /api/v1/health answers (503 without a database)."""
+    container = _start(
+        "api-ro",
+        images["api"],
+        *_hardening_args("api"),
+        "--user",
+        "10001:10001",
+        env={
+            "DATABASE_URL": "postgresql://<user>:<password>@db.example.org:6543/postgres",
+            "READ_API_KEY": secrets.token_urlsafe(32),
+        },
+    )
+    try:
+
+        def answered() -> bool:
+            out = _http_get(container, "http://127.0.0.1:8000/api/v1/health").stdout.split()
+            return bool(out) and out[0] in {"200", "503"}
+
+        assert _wait(answered), _logs(container)[-2000:]
+        assert _inspect(container, "{{.State.Status}}") == "running"
+        _assert_read_only_layout(container)
+    finally:
+        _remove(container)
+
+
+def test_caddy_runs_read_only() -> None:
+    """CA-08 of SPEC-032: Caddy with --read-only, /tmp tmpfs, temporary /data and /config."""
+    container = _start(
+        "caddy-ro",
+        _service("caddy")["image"],
+        *_hardening_args("caddy"),
+        "-v",
+        "/data",
+        "-v",
+        "/config",
+        "-v",
+        f"{ROOT / 'infra' / 'Caddyfile'}:/etc/caddy/Caddyfile:ro",
+        env={"PUBLIC_HOST": "partqc.example.org"},
+    )
+    try:
+        time.sleep(10)
+        assert _inspect(container, "{{.State.Status}}") == "running", _logs(container)[-2000:]
+        assert "read-only file system" not in _logs(container).lower()
+        assert _exec(container, "touch", "/tmp/x").returncode == 0
+        assert _exec(container, "touch", "/etc/x").returncode != 0
+        assert _exec(container, "touch", "/data/x").returncode == 0
+        assert _exec(container, "cat", "/sys/fs/cgroup/pids.max").stdout.strip() == "256"
+    finally:
+        _remove(container)

@@ -236,7 +236,7 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
    - marca como enviado ao receber `created` ou `duplicate`;
    - o timeout de 5 s vale por operação (conexão, escrita, cada leitura). A partir da SPEC-030, cada requisição tem também um prazo total de 15 s e lê no máximo 512 KiB de resposta (estourar vira retry), e um salto do relógio para trás não prende o retry nem o health check;
    - a partir da SPEC-020 (Fase 3), `EDGE_PUBLISHER=mqtt` troca o `HttpPublisher` por um `MqttPublisher` (Mosquitto só em loopback no notebook e uma ponte, `python -m qc_edge.mqtt_bridge`, que repassa à mesma rota HTTP); o item só vira enviado com a resposta da ponte, nunca pelo PUBACK;
-   - um item recusado (413/422) vira `dead` e fica no arquivo. A partir da SPEC-034, `python -m qc_edge.requeue --outbox-path <arquivo> [--yes]` lista os `dead` e os devolve a `pending`, sem mudar o `payload` (a revalidação pelo contrato e a idempotência por `inspection_id` continuam).
+   - um item recusado (413/422) vira `dead` e fica no arquivo. A partir da SPEC-034, `python -m qc_edge.requeue --outbox-path <arquivo> [--yes]` lista os `dead` e os devolve a `pending`, sem mudar o `payload` (a revalidação pelo contrato e a idempotência por `inspection_id` continuam). A partir da SPEC-038, uma linha com coluna fora do formato (editada à mão ou corrompida) vira `dead` no laço, com `last_error = invalid outbox row`, em vez de parar o envio dos outros itens, e a listagem a pula com um aviso que cita só o `rowid` e a coluna.
 
 ### 6.3 Modo coleta (montagem do dataset)
 
