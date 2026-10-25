@@ -1,4 +1,8 @@
-"""Requeue of ``dead`` outbox items (SPEC-034): ``dead_items``, ``requeue_dead`` and the CLI."""
+"""Requeue of ``dead`` outbox items (SPEC-034): ``dead_items``, ``requeue_dead`` and the CLI.
+
+Since SPEC-038: invalid rows in the listing and in the publish loop, the ``ValueError`` and
+``TypeError`` defence of the CLI and the messages of a file that cannot be opened.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ import pytest
 
 from qc_edge import requeue
 from qc_edge.outbox import (
+    INVALID_ROW_ERROR,
     DeadItem,
     NotAnOutboxError,
     SqliteOutbox,
@@ -578,5 +583,222 @@ def test_requeue_then_publish_loop_sends_once_each(
         assert set(cloud.stored) == ids
         assert len(cloud.writes) == 4
         assert {row["status"] for row in rows(path).values()} == {"sent"}
+    finally:
+        box.close()
+
+
+# -- invalid rows and open errors (SPEC-038 sections 4.1 and 4.2) ---------------------------------
+
+
+def tamper(path: Path, inspection_id: UUID, column: str, value: object) -> int:
+    """Change one column of the row of ``inspection_id`` with ``sqlite3``; returns its rowid."""
+    conn = sqlite3.connect(path)
+    try:
+        (rowid,) = conn.execute(
+            "SELECT rowid FROM outbox WHERE inspection_id = ?", (str(inspection_id),)
+        ).fetchone()
+        with conn:
+            conn.execute(f"UPDATE outbox SET {column} = ? WHERE rowid = ?", (value, rowid))
+    finally:
+        conn.close()
+    return int(rowid)
+
+
+def outbox_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "qc_edge.outbox" and r.levelno == logging.WARNING
+    ]
+
+
+@pytest.mark.parametrize(
+    ("column", "kind"),
+    [
+        ("created_at", "text"),
+        ("attempts", "text"),
+        ("inspection_id", "text"),
+        ("created_at", "blob"),
+        ("last_error", "blob"),
+    ],
+)
+def test_cli_listing_skips_an_invalid_row(
+    path: Path,
+    fake_cloud: types.ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    column: str,
+    kind: str,
+) -> None:
+    ids = dead_outbox(path, fake_cloud, 3)
+    mark = "MARK" + secrets.token_hex(8)
+    value: object = mark if kind == "text" else mark.encode()
+    if column == "created_at" and kind == "blob":
+        value = b"\x00\xff"
+    rowid = tamper(path, ids[1], column, value)
+    before = digest(path)
+    caplog.set_level(logging.DEBUG)
+
+    assert requeue.main(["--outbox-path", str(path)]) == 0
+
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert len(lines) == 3
+    assert lines[0].startswith(f"{ids[0]} ")
+    assert lines[1].startswith(f"{ids[2]} ")
+    assert lines[2] == f"2 {SUMMARY}"
+    assert outbox_warnings(caplog) == [f"invalid dead row skipped (rowid={rowid}, column={column})"]
+    everything = captured.out + captured.err + caplog.text
+    assert mark not in everything
+    assert "Traceback" not in everything
+    assert digest(path) == before
+
+
+@pytest.mark.parametrize(
+    ("method", "error", "yes"),
+    [("dead_items", ValueError, False), ("requeue_dead", TypeError, True)],
+)
+def test_cli_value_and_type_errors_exit_with_1_without_the_message(
+    path: Path,
+    fake_cloud: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    method: str,
+    error: type[Exception],
+    yes: bool,
+) -> None:
+    dead_outbox(path, fake_cloud, 1)
+    mark = "MARK" + secrets.token_hex(8)
+
+    def broken(self: SqliteOutbox, *args: Any, **kwargs: Any) -> Any:
+        raise error(mark)
+
+    monkeypatch.setattr(SqliteOutbox, method, broken)
+    caplog.set_level(logging.DEBUG)
+    argv = ["--outbox-path", str(path)] + (["--yes"] if yes else [])
+    assert requeue.main(argv) == 1
+    captured = capsys.readouterr()
+    assert f"outbox has an invalid row ({error.__name__})" in caplog.text
+    everything = captured.out + captured.err + caplog.text
+    assert mark not in everything
+    assert "Traceback" not in everything
+    assert captured.out == ""
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens files with mode 0o000")
+@pytest.mark.parametrize("yes", [False, True])
+def test_cli_unopenable_file_is_not_called_not_an_outbox(
+    path: Path,
+    fake_cloud: types.ModuleType,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    yes: bool,
+) -> None:
+    (inspection_id,) = dead_outbox(path, fake_cloud, 1)
+    caplog.set_level(logging.DEBUG)
+    os.chmod(path, 0)
+    try:
+        argv = ["--outbox-path", str(path)] + (["--yes"] if yes else [])
+        assert requeue.main(argv) == 2
+    finally:
+        os.chmod(path, 0o600)
+    assert "cannot open --outbox-path (OperationalError)" in caplog.text
+    assert "not an outbox file" not in caplog.text
+    assert capsys.readouterr().out == ""
+    assert rows(path)[str(inspection_id)]["status"] == "dead"
+
+
+@pytest.mark.parametrize("yes", [False, True])
+def test_cli_files_that_are_not_an_outbox_keep_their_message(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, yes: bool
+) -> None:
+    junk = tmp_path / "junk.sqlite3"
+    junk.write_bytes(b"x" * 4096)
+    other = tmp_path / "other.sqlite3"
+    conn = sqlite3.connect(other)
+    try:
+        conn.execute("CREATE TABLE other(x)")
+        conn.commit()
+    finally:
+        conn.close()
+    before = {junk: digest(junk), other: digest(other)}
+    caplog.set_level(logging.DEBUG)
+    extra = ["--yes"] if yes else []
+    assert requeue.main(["--outbox-path", str(junk), *extra]) == 2
+    assert "--outbox-path is not an outbox file (DatabaseError)" in caplog.text
+    caplog.clear()
+    assert requeue.main(["--outbox-path", str(other), *extra]) == 2
+    assert "--outbox-path is not an outbox file (NotAnOutboxError)" in caplog.text
+    assert {junk: digest(junk), other: digest(other)} == before
+
+
+def test_cli_other_sqlite_error_on_open(
+    path: Path,
+    fake_cloud: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    dead_outbox(path, fake_cloud, 1)
+
+    def broken(*args: Any, **kwargs: Any) -> SqliteOutbox:
+        raise sqlite3.InterfaceError("x")
+
+    monkeypatch.setattr(SqliteOutbox, "open_existing", broken)
+    caplog.set_level(logging.DEBUG)
+    assert requeue.main(["--outbox-path", str(path)]) == 2
+    assert "cannot open --outbox-path (InterfaceError)" in caplog.text
+
+
+def test_invalid_rows_never_stop_the_publish_loop(
+    path: Path,
+    fake_cloud: types.ModuleType,
+    clock: Any,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cloud = fake_cloud.FakeCloud()
+    box = SqliteOutbox(path, clock=clock)
+    publisher = HttpPublisher(fake_cloud.BASE_URL, secrets.token_hex(16), transport=cloud.transport)
+    loop = PublishLoop(box, publisher, ConnectivityState(), clock=clock, rng=random.Random(0))
+    mark = "MARK" + secrets.token_hex(8)
+    try:
+        dead = [put(box, fake_cloud) for _ in range(2)]
+        for inspection_id in dead:
+            box.mark_dead(inspection_id, "HTTP 422")
+        pending = [put(box, fake_cloud) for _ in range(2)]
+        bad_rowid = tamper(path, dead[1], "created_at", mark)
+        caplog.set_level(logging.DEBUG)
+
+        assert requeue.main(["--outbox-path", str(path), "--yes"]) == 0
+        assert capsys.readouterr().out == "requeued 2 item(s)\n"
+        for _ in range(10):
+            if box.stats().pending == 0:
+                break
+            loop.run_once()
+            clock.advance(61)
+
+        assert box.stats().pending == 0
+        table = rows(path)
+        for inspection_id in [*pending, dead[0]]:
+            assert table[str(inspection_id)]["status"] == "sent"
+        bad = table[str(dead[1])]
+        assert bad["status"] == "dead"
+        assert bad["last_error"] == INVALID_ROW_ERROR
+        assert bad["created_at"] == mark
+        assert set(cloud.stored) == {*pending, dead[0]}
+        assert len(cloud.writes) == 3
+        assert outbox_warnings(caplog) == [
+            f"invalid outbox row marked dead (rowid={bad_rowid}, column=created_at)"
+        ]
+        assert "publish cycle failed unexpectedly" not in caplog.text
+        assert mark not in caplog.text
+
+        requests_before = len(cloud.batch_requests)
+        for _ in range(5):
+            loop.run_once()
+            clock.advance(61)
+        assert len(cloud.batch_requests) == requests_before
+        assert len(outbox_warnings(caplog)) == 1
     finally:
         box.close()

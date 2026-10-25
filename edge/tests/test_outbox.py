@@ -1,8 +1,14 @@
-"""SQLite outbox (SPEC-009 section 4.1): schema, idempotency, order, retries, durability."""
+"""SQLite outbox (SPEC-009 section 4.1): schema, idempotency, order, retries, durability.
+
+Since SPEC-038 (section 4.1): rows edited by hand or corrupted (``tamper``) in ``fetch_due`` and
+``dead_items``.
+"""
 
 from __future__ import annotations
 
+import logging
 import os
+import secrets
 import signal
 import sqlite3
 import stat
@@ -20,6 +26,7 @@ import pytest
 
 from qc_contracts import InspectionCreate
 from qc_edge.outbox import (
+    INVALID_ROW_ERROR,
     MAX_LAST_ERROR,
     OutboxItem,
     SqliteOutbox,
@@ -468,3 +475,292 @@ def test_default_max_delay_matches_the_backoff_cap() -> None:
     from qc_edge.publish_loop import MAX_DELAY_S
 
     assert DEFAULT_MAX_DELAY_S == MAX_DELAY_S == 60.0
+
+
+# -- invalid rows (SPEC-038 section 4.1) ----------------------------------------------------------
+
+
+def marker() -> str:
+    """A value that is neither a UUID nor a date, generated at run time."""
+    return "MARK" + secrets.token_hex(8)
+
+
+def tamper(path: Path, rowid: int, column: str, value: object) -> None:
+    """``UPDATE outbox SET <column> = ? WHERE rowid = ?`` with its own connection."""
+    assert column in {
+        "inspection_id",
+        "created_at",
+        "attempts",
+        "next_attempt_at",
+        "last_error",
+    }
+    conn = sqlite3.connect(path)
+    try:
+        with conn:
+            conn.execute(f"UPDATE outbox SET {column} = ? WHERE rowid = ?", (value, rowid))
+    finally:
+        conn.close()
+
+
+def rowid_of(path: Path, inspection_id: UUID) -> int:
+    conn = sqlite3.connect(path)
+    try:
+        (rowid,) = conn.execute(
+            "SELECT rowid FROM outbox WHERE inspection_id = ?", (str(inspection_id),)
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(rowid)
+
+
+def row_by_rowid(path: Path, rowid: int) -> dict[str, Any]:
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return dict(conn.execute("SELECT * FROM outbox WHERE rowid = ?", (rowid,)).fetchone())
+    finally:
+        conn.close()
+
+
+def outbox_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "qc_edge.outbox" and r.levelno == logging.WARNING
+    ]
+
+
+def three_pending(outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any) -> list[UUID]:
+    ids = []
+    for _ in range(3):
+        inspection = fake_cloud.make_inspection()
+        outbox.put(inspection)
+        ids.append(inspection.inspection_id)
+        clock.advance(1)
+    return ids
+
+
+PENDING_CASES = [
+    ("inspection_id", "marker", "inspection_id"),
+    ("inspection_id", b"\x00\xff", "inspection_id"),
+    ("inspection_id", 12345, "inspection_id"),
+    ("created_at", "marker", "created_at"),
+    ("created_at", b"\x00\xff", "created_at"),
+    ("created_at", 5, "created_at"),  # TEXT affinity: stored as '5', not a date
+    ("created_at", "0001-01-01T00:00:00+05:00", "created_at"),  # overflows in UTC
+    ("attempts", "marker", "attempts"),
+    ("attempts", b"\x00\xff", "attempts"),
+    ("attempts", 1.5, "attempts"),
+    ("next_attempt_at", "marker", "next_attempt_at"),
+    ("next_attempt_at", b"\x00\xff", "next_attempt_at"),
+]
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "reported"),
+    PENDING_CASES,
+    ids=[f"{c}-{i}" for i, (c, *_) in enumerate(PENDING_CASES)],
+)
+def test_fetch_due_marks_an_invalid_pending_row_dead(
+    outbox: SqliteOutbox,
+    fake_cloud: types.ModuleType,
+    clock: Any,
+    caplog: pytest.LogCaptureFixture,
+    column: str,
+    value: object,
+    reported: str,
+) -> None:
+    ids = three_pending(outbox, fake_cloud, clock)
+    rowid = rowid_of(outbox.path, ids[1])
+    mark = marker()
+    stored = mark if value == "marker" else value
+    tamper(outbox.path, rowid, column, stored)
+    before = row_by_rowid(outbox.path, rowid)
+    caplog.set_level(logging.DEBUG)
+
+    due = outbox.fetch_due()
+
+    assert [item.inspection_id for item in due] == [ids[0], ids[2]]
+    after = row_by_rowid(outbox.path, rowid)
+    assert after["status"] == "dead"
+    assert after["last_error"] == INVALID_ROW_ERROR
+    for name in ("inspection_id", "payload", "created_at", "attempts", "next_attempt_at"):
+        assert after[name] == before[name]
+    assert after["sent_at"] is None
+    assert outbox_warnings(caplog) == [
+        f"invalid outbox row marked dead (rowid={rowid}, column={reported})"
+    ]
+    assert mark not in caplog.text
+    assert outbox.stats().dead == 1
+    caplog.clear()
+    assert [item.inspection_id for item in outbox.fetch_due()] == [ids[0], ids[2]]
+    assert outbox_warnings(caplog) == []
+
+
+def test_fetch_due_reports_the_first_invalid_column(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    ids = three_pending(outbox, fake_cloud, clock)
+    rowid = rowid_of(outbox.path, ids[0])
+    tamper(outbox.path, rowid, "next_attempt_at", marker())
+    tamper(outbox.path, rowid, "attempts", marker())
+    caplog.set_level(logging.WARNING)
+    assert [item.inspection_id for item in outbox.fetch_due()] == ids[1:]
+    assert outbox_warnings(caplog) == [
+        f"invalid outbox row marked dead (rowid={rowid}, column=attempts)"
+    ]
+
+
+def test_fetch_due_accepts_what_sqlite_converts(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """INTEGER affinity turns the text ``'7'`` into 7; that row stays valid and pending."""
+    (first, *_) = three_pending(outbox, fake_cloud, clock)
+    tamper(outbox.path, rowid_of(outbox.path, first), "attempts", "7")
+    caplog.set_level(logging.WARNING)
+    due = outbox.fetch_due()
+    assert due[0].inspection_id == first
+    assert due[0].attempts == 7
+    assert outbox_warnings(caplog) == []
+
+
+def test_fetch_due_with_invalid_rows_inside_the_limit(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, caplog: pytest.LogCaptureFixture
+) -> None:
+    ids = []
+    for _ in range(100):
+        inspection = fake_cloud.make_inspection()
+        outbox.put(inspection)
+        ids.append(inspection.inspection_id)
+    bad = [ids[0], ids[50], ids[99]]
+    for inspection_id in bad:
+        tamper(outbox.path, rowid_of(outbox.path, inspection_id), "attempts", marker())
+    caplog.set_level(logging.WARNING)
+
+    due = outbox.fetch_due(100)
+
+    assert len(due) == 97
+    assert [item.inspection_id for item in due] == [i for i in ids if i not in bad]
+    assert len(outbox_warnings(caplog)) == 3
+    assert outbox.stats().dead == 3
+    assert len(outbox.fetch_due(100)) == 97
+
+
+def test_fetch_due_marks_dead_in_one_transaction(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any
+) -> None:
+    ids = three_pending(outbox, fake_cloud, clock)
+    for inspection_id in ids[:2]:
+        tamper(outbox.path, rowid_of(outbox.path, inspection_id), "created_at", marker())
+    statements: list[str] = []
+    outbox._conn.set_trace_callback(statements.append)
+    assert [item.inspection_id for item in outbox.fetch_due()] == [ids[2]]
+    outbox._conn.set_trace_callback(None)
+    updates = [s for s in statements if s.startswith("UPDATE outbox")]
+    assert len(updates) == 2
+    assert all("WHERE rowid = " in s and "status = 'pending'" in s for s in updates)
+    assert statements.count("COMMIT") == 1
+
+
+def test_fetch_due_without_invalid_rows_writes_nothing(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any
+) -> None:
+    three_pending(outbox, fake_cloud, clock)
+    statements: list[str] = []
+    outbox._conn.set_trace_callback(statements.append)
+    assert len(outbox.fetch_due()) == 3
+    outbox._conn.set_trace_callback(None)
+    assert not [s for s in statements if s.startswith(("UPDATE", "COMMIT", "BEGIN"))]
+
+
+DEAD_CASES = [
+    ("inspection_id", "marker", "inspection_id"),
+    ("created_at", "marker", "created_at"),
+    ("created_at", b"\x00\xff", "created_at"),
+    ("attempts", "marker", "attempts"),
+    ("attempts", b"\x00\xff", "attempts"),
+    ("last_error", b"marker", "last_error"),
+]
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "reported"),
+    DEAD_CASES,
+    ids=[f"{c}-{i}" for i, (c, *_) in enumerate(DEAD_CASES)],
+)
+def test_dead_items_skips_an_invalid_row_and_writes_nothing(
+    outbox: SqliteOutbox,
+    fake_cloud: types.ModuleType,
+    clock: Any,
+    caplog: pytest.LogCaptureFixture,
+    column: str,
+    value: object,
+    reported: str,
+) -> None:
+    ids = three_pending(outbox, fake_cloud, clock)
+    for inspection_id in ids:
+        outbox.mark_dead(inspection_id, "HTTP 422")
+    rowid = rowid_of(outbox.path, ids[1])
+    mark = marker()
+    stored: object = value
+    if value == "marker":
+        stored = mark
+    elif value == b"marker":
+        stored = mark.encode()  # a BLOB that carries the marker
+    tamper(outbox.path, rowid, column, stored)
+    before = rows(outbox.path)
+    caplog.set_level(logging.DEBUG)
+
+    items = outbox.dead_items()
+
+    assert [item.inspection_id for item in items] == [ids[0], ids[2]]
+    assert outbox_warnings(caplog) == [
+        f"invalid dead row skipped (rowid={rowid}, column={reported})"
+    ]
+    assert mark not in caplog.text
+    assert rows(outbox.path) == before
+
+
+def test_dead_items_accepts_a_null_last_error(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    (first, *_) = three_pending(outbox, fake_cloud, clock)
+    outbox.mark_dead(first, "HTTP 422")
+    tamper(outbox.path, rowid_of(outbox.path, first), "last_error", None)
+    caplog.set_level(logging.WARNING)
+    (item,) = outbox.dead_items()
+    assert item.last_error is None
+    assert outbox_warnings(caplog) == []
+
+
+@pytest.mark.parametrize("column", ["attempts", "next_attempt_at"])
+def test_requeue_fixes_attempts_and_next_attempt_at(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any, column: str
+) -> None:
+    ids = three_pending(outbox, fake_cloud, clock)
+    rowid = rowid_of(outbox.path, ids[0])
+    tamper(outbox.path, rowid, column, marker())
+    assert [item.inspection_id for item in outbox.fetch_due()] == ids[1:]
+    outbox.mark_sent(ids[1:])
+    assert outbox.requeue_dead() == 1
+    (item,) = outbox.fetch_due()
+    assert item.inspection_id == ids[0]
+    assert item.attempts == 0
+    assert row_by_rowid(outbox.path, rowid)["last_error"] is None
+
+
+def test_requeue_of_an_invalid_created_at_goes_back_to_dead(
+    outbox: SqliteOutbox, fake_cloud: types.ModuleType, clock: Any
+) -> None:
+    ids = three_pending(outbox, fake_cloud, clock)
+    rowid = rowid_of(outbox.path, ids[0])
+    mark = marker()
+    tamper(outbox.path, rowid, "created_at", mark)
+    outbox.fetch_due()
+    assert outbox.requeue_dead() == 1
+    assert row_by_rowid(outbox.path, rowid)["status"] == "pending"
+    assert [item.inspection_id for item in outbox.fetch_due()] == ids[1:]
+    after = row_by_rowid(outbox.path, rowid)
+    assert after["status"] == "dead"
+    assert after["last_error"] == INVALID_ROW_ERROR
+    assert after["created_at"] == mark
