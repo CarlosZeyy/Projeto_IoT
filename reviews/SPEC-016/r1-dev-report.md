@@ -192,3 +192,42 @@ Os casos de `T-`/`XT-` listados na §3.1 para `test_spec_011.py` e `test_spec_03
 - [x] `.env.example` sem mudança (nenhuma variável nova); nenhuma dependência nova; `uv.lock` sem mudança
 - [x] Nenhum arquivo fora de `ml/` alterado (salvo esta seção do relatório) e nenhum em `tests/acceptance/`
 - [x] Ambiente devolvido ao estado do CI (`uv sync --all-packages --locked`)
+
+### Adendo: ajuste depois da reaprovação (SPEC_ISSUE-1 e SPEC_ISSUE-2)
+
+O architect corrigiu a SPEC (commit `83d64a1`, §4.7, §4.8, §3.3, §6, §7, CA-22 e CA-23 novos) e o humano reaprovou (commit `be3d2ec`). Ajustes da Parte B, ainda na r1:
+
+| Commit | O que muda |
+|---|---|
+| `f6fe277` | **§4.8 (SPEC_ISSUE-1).** `qc_ml.thresholds._choose_review` passa a contar a fração de `needs_review` entre as imagens de validação de `screw`, `nut` e `other` (`_mvp_mask`; numerador e denominador), deixando de fora só as ferramentas. Isso é a regra da SPEC-012 nos dados do MVP. `unusable_threshold` continua só em `screw`/`nut`. O texto do `rule` no `thresholds_report.json` foi atualizado. |
+| `cec9f3a` | **§4.7 (SPEC_ISSUE-2).** Estrato da extensão: (tipo, grau dominante) se a ferramenta é graduada por `tool_grade_coverage(df)`, calculado no `df` que a CLI do split leu; senão, o tipo inteiro (estrato `(tipo, "none")`). Um tipo que não é ferramenta mantém o grau dominante. Um tipo estendido que ficaria sem nenhuma peça no teste é recusado por `ExtensionError` (subclasse de `SplitError`): a CLI imprime uma linha `too few items to extend the test: <tipo>` por tipo, sai com 2 e não grava nada. A checagem prévia de menos de 3 peças (`type_decision_problems`) continua. Na mesma rodada: `ml/README.md` (limiares, estrato da extensão, conferência do teste no `split_v<N>.json` e nota sobre o `qc_ml.agreement`). |
+
+**Testes do autor afetados ou novos:**
+
+- `test_tools_model.py`
+  - `test_unusable_and_review_thresholds_ignore_the_tools` continua igual: nele, as imagens de validação são só de `screw` e `pliers`, e com isso o resultado não muda.
+  - Novos: `test_review_threshold_counts_screw_nut_and_other` (o `other` entra na fração, `n_images == 20`) e `test_ca22_review_threshold_example` (o exemplo do CA-22: `type_threshold == 0.85`, `grade_review_threshold == 0.60` e nenhuma nota `review_adjusted`).
+  - `test_ca18_evaluate_with_tools` foi ajustado: com 3 peças por estrato, as ferramentas desse dataset ficam sem grau pelo critério, então cada uma vira um estrato de 15 peças, com 2 peças (4 imagens) no teste.
+- `test_tools_split.py`
+  - `test_extension_is_the_split_v1_procedure_per_type` foi ajustado: no CA-15, `allen_key` fica sem grau, então tem um estrato de 20 peças e a divisão fica 14/3/3.
+  - Novos: `test_ca23_ungraded_tool_is_one_stratum` (3/1/1 por ferramenta) e `test_ca23_graded_tool_is_split_by_grade` (3/1/1 em cada grau, com as 5 ferramentas graduadas).
+  - Novo: `test_graded_type_without_any_test_item_is_refused`. Ferramenta graduada com 5 peças de graus dominantes diferentes: 5 estratos de 1 peça, nenhuma peça no teste, `ExtensionError`.
+  - Novo: `test_cli_prints_each_extension_error_alone`.
+  - Continuam passando sem mudança: CA-15 (a) a (e) (no (c), sem grau: 14/3/3 por ferramenta, todas com `train`, `val` e `test`) e CA-20.
+
+**Rastreabilidade acrescentada:**
+
+| Critério | Arquivo(s) | Teste unitário do autor |
+|---|---|---|
+| CA-22 | `ml/src/qc_ml/thresholds.py` (`_mvp_mask`, `_choose_review`) | `ml/tests/test_tools_model.py::test_ca22_review_threshold_example`, `::test_review_threshold_counts_screw_nut_and_other`, `::test_unusable_and_review_thresholds_ignore_the_tools` |
+| CA-23 | `ml/src/qc_ml/split.py` (`make_split`: `extension_strata`, `ExtensionError`; `main`) | `ml/tests/test_tools_split.py::test_ca23_ungraded_tool_is_one_stratum`, `::test_ca23_graded_tool_is_split_by_grade`, `::test_graded_type_without_any_test_item_is_refused`, `::test_cli_prints_each_extension_error_alone`, `::test_extension_is_the_split_v1_procedure_per_type` |
+
+**Resultados (2026-10-24, depois dos dois commits):**
+
+- Suíte completa no ambiente do CI, com o `partqc_test`: **18 failed, 6912 passed, 57 skipped**. São as mesmas 18 falhas de aceite antigos de antes (15 da Parte A e 3 de `ml/` pela chave `tool_grade_metrics`). Nenhum teste do autor falha.
+- Com o extra `train`: `test_tools_torch.py`, `test_pipeline_slow.py` e `acceptance/test_spec_012.py` dão 4 failed e 70 passed. As 4 falhas são as asserções de `METRIC_KEYS` já listadas.
+- O ambiente foi devolvido ao estado do CI (`uv sync --all-packages --locked`, sem torch). `ruff check .` e `ruff format --check .` limpos.
+- Testes do autor de SPEC-016 em `ml/`: 91 (87 sem torch e 4 com torch).
+- Nenhum aceite antigo novo passa a falhar com o ajuste.
+
+**SPEC_ISSUE:** nenhum novo. A observação do piloto de concordância das ferramentas foi incorporada à §3.3 pelo architect; o `agreement.py` não mudou.
