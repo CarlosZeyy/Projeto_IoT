@@ -137,3 +137,109 @@ Nenhum.
 - [x] `.env.example` atualizado (nenhuma variável nova; bloco e comentários da §4.4)
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] Nenhum valor real de subdomínio, IP, UUID, URL do painel ou segredo no repositório; nenhum domínio novo nos arquivos de `infra/`
+
+## Correção do SEC-39-01 (r1, depois da emenda 1 do ADR-023)
+
+| Campo | Valor |
+|---|---|
+| Origem | SEC-39-01 (alta) e SEC-39-02 de `r1-security-report.md`; SPEC corrigida pelo architect (`4239a2f`) e reaprovada pelo humano em 2026-10-25 (`94282f5`) |
+| Commits | `78f6ceb` (implementação e testes do autor), mais o commit deste adendo |
+
+### O que mudou
+
+- **`infra/compose.api.yaml`**, arquivo novo, é o recurso `partqc-api`:
+  - `name: partqc-api`, só com o serviço `api`;
+  - o `environment` é exatamente o da §4.1, item 6;
+  - `networks: [default, link]` na `api`;
+  - no topo, `networks: {link: {name: partqc-api-link, internal: true}}`;
+  - o endurecimento e os limites são os de antes;
+  - o texto não cita `PUBLIC_HOST` nem `MODEL_METRICS_PATH`.
+- **`infra/compose.yaml`** é o recurso `partqc-web`:
+  - só `caddy` e `dashboard`;
+  - o `caddy` tem `networks: [default, link]` e `depends_on: [dashboard]`, e o `dashboard` não tem `networks`;
+  - no topo, `networks: {link: {name: partqc-api-link, external: true}}`;
+  - o texto, inclusive os comentários, não contém `DATABASE_URL`, `TELEGRAM_` nem `ALERTS_`;
+  - nenhum valor é vazio;
+  - os cabeçalhos dos dois arquivos explicam o recurso, a Docker Compose Location, o domínio, as variáveis por recurso e a ordem do primeiro deploy. Troquei o exemplo `${NOME:?}` dos comentários por `${...:?}`, para que nenhuma referência fictícia entre no conjunto de nomes que o Coolify (e o CA-19) extraem do texto.
+- **`.dockerignore` da API e do dashboard:** só a linha `infra/` foi acrescentada, com um comentário, no fim do bloco "Documentação, relatórios e testes" (SEC-39-02). Conferi que nenhum código da API, do dashboard ou de `packages/` lê `infra/`, que não é membro do workspace.
+- **`.env.example`:** o bloco do Coolify agora mostra a divisão da §4.1A (`partqc-api`/`infra/compose.api.yaml` e `partqc-web`/`infra/compose.yaml`) e o `config --quiet` dos dois arquivos. A frase do bloco do dashboard cita o "recurso partqc-web".
+- **`docs/deployment-plan.md`:**
+  - conferi os passos que o architect reescreveu contra os dois arquivos e subi os dois projetos localmente (veja abaixo);
+  - corrigi o nome do botão do 2FA para **Configure 2FA**, como está na página oficial (conferida em 2026-10-25);
+  - acrescentei uma linha no histórico do arquivo.
+
+### Testes do autor
+
+| Critério | Teste |
+|---|---|
+| CA-01 | `test_coolify_deploy.py::test_compose_projects_and_services`, `::test_compose_has_no_ports_labels_or_volumes`, `::test_compose_link_network_between_the_resources`, `::test_compose_caddy_is_built_stateless_and_without_healthcheck`; `test_deploy_files.py::test_compose_structure` (os dois arquivos, redes, `depends_on`) |
+| CA-02 | `::test_compose_environment_is_exactly_the_spec` (sem valor vazio), `::test_web_compose_never_names_the_api_secrets`, `::test_referenced_variables_follow_the_split_of_section_4_1a` (os conjuntos `${NOME` de cada arquivo são exatamente os da tabela da §4.1A) |
+| CA-03 | `test_deploy_files.py::test_compose_structure` e `::test_compose_hardening_spec_032` (os três serviços, lidos dos dois arquivos) |
+| CA-05 | `test_deploy_files.py::test_caddy_version_is_pinned_only_in_its_dockerfile` e `test_coolify_deploy.py::test_compose_has_no_caddy_version_and_no_domain` (os dois arquivos) |
+| CA-06 | `::test_env_example_coolify_block` (com `partqc-api`, `partqc-web` e `compose.api.yaml`) e `::test_env_example_no_longer_names_the_vps_env_files` |
+| CA-07 | `::test_plan_names_the_coolify_interface` (com os itens novos: `/compose.api.yaml`, os dois recursos, `partqc-api-link`, `label=partqc.component`, `Config.Env` e `2FA`), `::test_plan_line_rules` (com a regra do `Connect to predefined network`), `::test_plan_explains_the_build_args_injection` (SEC-39-03) |
+| CA-08 (docker) | `::test_compose_config_resolves_every_variable` (os dois `config`, as redes resolvidas e nada de `DATABASE_URL`/`ALERTS_*`/`TELEGRAM_*` no `caddy` nem no `dashboard`), `::test_compose_config_fails_without_a_mandatory_variable` (os 4 pares), `::test_web_compose_resolves_without_the_database_url`; `test_docker_images.py::test_compose_resolves_host_and_limits`, `::test_compose_config_quiet_with_the_hardening[2 arquivos]`, `::test_compose_requires_each_mandatory_variable[4 pares]`, `::test_web_compose_does_not_need_the_database_url` |
+| CA-09 (docker) | `::test_compose_config_in_the_coolify_invocation` (`api.env` e `web.env` fora da cópia; projetos `partqc-api-coolify-test` e `partqc-web-coolify-test`) |
+| CA-12 (docker) | `::test_caddy_routes_through_the_link_network`: rede `web` e rede `link` com `--internal`; a `api` só na `link`, o `dashboard` só na `web`, o Caddy nas duas (`docker network connect --alias caddy`) e a sonda na `web`. Os critérios do CA-12 continuam iguais |
+| CA-13 (docker) | `::test_env_sentinels_stay_out_of_every_image` (agora também `test -e /app/infra` falha na `api` e no `dashboard`); `::test_api_and_dashboard_dockerignore_keep_the_env_rules` (linha `infra/`, sem exceção `!infra`) |
+| CA-19 (docker) | `::test_coolify_env_file_keeps_the_api_secrets_in_the_api_resource`: <ul><li>duas cópias, uma por recurso;</li><li>o arquivo do recurso é carregado, recebe `env_file: [".env"]` em todos os serviços e é gravado de novo;</li><li>o `infra/.env` tem exatamente os nomes que a regex `\$\{([A-Z0-9_]+)` acha no arquivo original: a `DATABASE_URL` fictícia, a `READ_API_KEY` e o `TELEGRAM_BOT_TOKEN` gerados, o `PUBLIC_HOST` e os padrões do arquivo nas demais;</li><li>`config` na forma do Coolify (`--env-file`, `--project-name`, `--project-directory`);</li><li>no `partqc-web`, nem as chaves nem os valores dos segredos da API; no `partqc-api`, os dois valores;</li><li>a saída não é impressa, e as asserções comparam booleanos, para que uma falha não mostre os valores.</li></ul>Controle: `::test_coolify_env_file_in_one_resource_would_leak`, que junta os serviços num arquivo único com o mesmo `env_file` e confirma que a simulação reproduz o vazamento da r1 (a `DATABASE_URL` aparece no `dashboard`) |
+
+**Resultados** (2026-10-25, Docker 29.9.2, Compose 5.6.1, sem `TEST_DATABASE_URL` e sem `CI`):
+
+- `infra/tests` fora de `acceptance/`: 249 passed, 149 skipped;
+- os testes marcados `docker` em `test_coolify_deploy.py` e `test_docker_images.py`: 37 passed;
+- `ruff check` e `ruff format --check` limpos.
+
+**Conferência local dos dois projetos:** numa cópia temporária com um `infra/.env` fictício, subi `docker compose -p t39api -f compose.api.yaml up -d --build` e depois `docker compose -p t39web -f compose.yaml up -d --build`.
+
+- A rede `partqc-api-link` foi criada pelo primeiro projeto, com `Internal = true` e 2 contêineres: a `api` e o `caddy`. Localmente, o `dashboard` não entra nela; no Coolify, ele entra, como a SPEC aceita.
+- O `dashboard` ficou `healthy`, e nenhum serviço publicou porta.
+- Pela rede padrão do `partqc-web`, `caddy:80/api/v1/health` respondeu 503 (sem banco), com HSTS e sem `Server`, e `/_stcore/health` respondeu 200 `ok`.
+- O `Config.Env` do `dashboard`, filtrado por nome, mostrou só `READ_API_KEY`.
+- Derrubei os dois projetos (`down --rmi local`, web antes de api). A rede, os contêineres, as imagens e a cópia foram removidos.
+
+Depois das execuções docker, também não sobrou nenhum contêiner, rede ou imagem `partqc-test-*`.
+
+### Testes de aceite que o tester precisa ajustar
+
+Rodei `infra/tests/acceptance` e `tests/` com `PARTQC_DOCKER_TESTS=1`: 18 falhas e 2 erros. Todos vêm da divisão em dois arquivos (a última linha da tabela da §3.1: a `api` passa a ser lida de `infra/compose.api.yaml`, e o `config` roda nos dois arquivos) ou do texto novo da §4.4. Os ajustes que o tester já fez nos testes antigos (015 e 032) partiram do layout de um arquivo só.
+
+| Arquivo | Teste | Causa |
+|---|---|---|
+| `test_spec_015.py` | `test_ca29_compose_structure` | `api` no outro arquivo; redes `link`; `depends_on: [dashboard]` |
+| `test_spec_015.py` | `test_extra_compose_network_is_bridge_and_no_extra_capabilities` | a rede `link` no lugar da ausência de redes |
+| `test_spec_015.py` | `test_ca33_compose_config_resolves` (docker) | `config` só em `infra/compose.yaml` (sem a `api`) |
+| `test_spec_015.py` | `test_extra_compose_single_quoted_dollar_is_literal` (docker) | idem (o segredo da `api` está no outro arquivo) |
+| `test_spec_032.py` | `test_ca06_compose_hardening` | `api` lida de `infra/compose.yaml` |
+| `test_spec_032.py` | `test_extra_compose_config_resolves_pids_and_override` (docker) | `config` num arquivo só |
+| `test_spec_032.py` | `test_ca07_api_runs_read_only` (docker) | `KeyError: 'api'` ao ler as opções do compose |
+| `test_spec_032.py` | `test_extra_hardening_is_effective_inside[api]` (docker) | idem |
+| `test_spec_032.py` | `test_extra_headers_through_reverse_proxy` (docker) | idem |
+| `test_spec_039.py` | `test_ca01_compose_structure` | CA-01 novo (dois arquivos, redes) |
+| `test_spec_039.py` | `test_ca02_compose_environment_and_secrets` | CA-02 novo |
+| `test_spec_039.py` | `test_ca03_compose_hardening` | `api` no outro arquivo |
+| `test_spec_039.py` | `test_extra_env_example_coolify_wording` | frase do dashboard com "recurso partqc-web" (§4.4) |
+| `test_spec_039.py` | `test_ca08_compose_config_resolves` (docker) | CA-08 novo (dois `config`) |
+| `test_spec_039.py` | `test_ca08_compose_config_requires_each_mandatory_variable[DATABASE_URL]` (docker) | a `DATABASE_URL` só é exigida por `infra/compose.api.yaml` |
+| `test_spec_039.py` | `test_extra_compose_config_quiet_with_limit_override_and_alerts` (docker) | `config` num arquivo só |
+| `test_spec_039.py` | `test_extra_compose_single_quoted_dollar_in_a_secret_is_literal` (docker) | idem |
+| `test_spec_039.py` | `test_ca09_compose_config_in_the_coolify_invocation` (docker) | CA-09 novo (dois arquivos, dois env files) |
+| `test_spec_039.py` | `test_ca12_caddy_routes_on_a_private_network` (docker, erro) | fixture lê a `api` de `infra/compose.yaml`; CA-12 novo com as redes `web` e `link` |
+| `test_spec_039.py` | `test_extra_caddy_blocks_api_docs_variants_and_accepts_any_host` (docker, erro) | mesma fixture |
+
+O tester ainda escreve testes de aceite para itens que mudaram ou são novos e que não aparecem como falha: o CA-13 (`/app/infra` ausente) e o CA-19.
+
+### CAs manuais (humano, depois do merge)
+
+São os da SPEC corrigida: CA-14 a CA-18, agora com os dois recursos, e o **CA-20**, novo. O CA-20 confere:
+
+- as listas de variáveis de cada recurso no painel;
+- os nomes no `Config.Env` de cada contêiner (`api`: `DATABASE_URL READ_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID`; `dashboard`: `READ_API_KEY`; `caddy`: `READ_API_KEY` ou nada);
+- `supabase` ausente no `caddy` e no `dashboard`;
+- a rede `partqc-api-link` com `Internal = true` e 3 contêineres.
+
+O CA-20 é repetido a cada atualização do Coolify. Depois deles, os CAs manuais da SPEC-015 e o CA-09 da SPEC-032, com a listagem por `label=partqc.component` (§4.7).
+
+### SPEC_ISSUE
+
+Nenhum. Uma observação sem impacto: localmente, o `dashboard` não entra na `partqc-api-link`, porque não declara `networks`. No Coolify, ele entra, porque o parser liga as redes do topo a todos os serviços. A SPEC (§4.1, item 4, e §7) já registra e aceita essa diferença, e o CA-20, passo 4, espera 3 contêineres na rede.
