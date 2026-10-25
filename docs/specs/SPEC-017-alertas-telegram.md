@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Review |
-| Rodada atual | r1 |
+| Status | In Dev |
+| Rodada atual | r2 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-006, SPEC-026, SPEC-015 (a API publicada na VPS, para o CA manual) e SPEC-016 (SPC por `grade is not null`, ADR-021) (e SPEC-003, SPEC-004, SPEC-014) |
