@@ -500,3 +500,33 @@ def test_app_with_alerts_and_a_failing_telegram_still_ingests(
             break
         time.sleep(0.05)
     assert rows(db) == [("L-005", "live", "out_of_control", False)]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "name"),
+    [
+        ({"TELEGRAM_BOT_TOKEN": ""}, "TELEGRAM_BOT_TOKEN"),
+        ({"TELEGRAM_BOT_TOKEN": "abc"}, "TELEGRAM_BOT_TOKEN"),
+        ({"TELEGRAM_CHAT_ID": "x"}, "TELEGRAM_CHAT_ID"),
+    ],
+)
+def test_app_with_an_invalid_alert_configuration_is_healthy(
+    db: psycopg.Connection,
+    make_settings: Callable[..., Settings],
+    caplog: pytest.LogCaptureFixture,
+    overrides: dict[str, str],
+    name: str,
+) -> None:
+    insert_out_lot(db, end=datetime.now(UTC) - timedelta(minutes=11))
+    caplog.set_level(logging.DEBUG)
+    recorder = Recorder()
+    app = create_app(
+        make_settings(ALERTS_ENABLED="true", **overrides), alerts_transport=recorder.transport()
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health").status_code == 200
+        assert app.state.alerts_task is None
+    records = [r for r in caplog.records if "alerts disabled: invalid configuration" in r.message]
+    assert [r.getMessage() for r in records] == [f"alerts disabled: invalid configuration ({name})"]
+    assert recorder.requests == []
+    assert rows(db) == []
