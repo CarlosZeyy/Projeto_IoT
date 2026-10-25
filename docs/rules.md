@@ -34,7 +34,7 @@ Este documento vale para humanos e agentes. Em caso de conflito com qualquer out
 | N-02 | Loss do modelo | Cross-entropy com label smoothing 0,1 nas **duas** cabeças (tipo e grau); CORN como ablação da cabeça de grau | ADR-005 |
 | N-03 | Limiares da rubrica de grau | Rubrica v0 em `docs/dataset-protocol.md`, calibrada no piloto | ADR-001 |
 | N-04 | Limiares de decisão na borda | Vêm do `decision.json` do modelo, com override por variável de ambiente | SPEC-008 |
-| N-05 | Hospedagem | API e dashboard na VPS pessoal do humano (Docker Compose + Caddy, um subdomínio pessoal); banco no Supabase Free; Render como reserva fria da API | ADR-018 (banco: ADR-008) |
+| N-05 | Hospedagem | API e dashboard na VPS pessoal do humano, publicados pelo Coolify já instalado nela (recurso Docker Compose a partir do repositório público; domínio e TLS no proxy do Coolify; Caddy só como roteador interno), num subdomínio pessoal; banco no Supabase Free; Render como reserva fria da API | ADR-023 (substitui em parte o ADR-018; banco: ADR-008) |
 | N-06 | Subgrupo do SPC | Lote informado pelo operador; `min_lot_size` = 5 | ADR-013 |
 | N-07 | Conteúdo das Fases 2 e 3 | Ver `docs/PRD.md`, seção de escopo | ADR-001 |
 | N-08 | Transporte borda → nuvem | HTTP; MQTT opcional na Fase 3 | ADR-009 |
