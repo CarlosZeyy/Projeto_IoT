@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Aceito (aprovado pelo humano em 2026-10-25: Caddy como roteador interno, deploy automático por webhook) |
+| Status | Aceito (aprovado pelo humano em 2026-10-25: Caddy como roteador interno, deploy automático por webhook). **Emenda 1 (2026-10-25, SEC-39-01: dois recursos no Coolify para isolar os segredos): proposta, aguardando aprovação humana** |
 | Data | 2026-10-25 |
 | Decisores | Humano (Carlos) (redigido pelo agente architect) |
 | Relacionados | ADR-018 (substituído em parte), ADR-008 (banco e keep-alive, sem mudança), ADR-006, ADR-007, ADR-016, ADR-019, SPEC-015, SPEC-032, SPEC-038, SPEC-039, SPEC-017, SPEC-028, R-01, R-03, R-13, N-05 |
@@ -35,6 +35,18 @@ Fatos do Coolify, conferidos pelo architect em **2026-10-25** na documentação 
 | Licença Apache-2.0; auto-hospedado: "Free and open source" | <https://github.com/coollabsio/coolify> |
 | O Caddy não ativa o HTTPS automático sem nenhum nome de host na configuração ou quando escuta só na porta HTTP | <https://caddyserver.com/docs/automatic-https> |
 
+**Fatos acrescentados pela emenda 1** (SEC-39-01 de `reviews/SPEC-039/r1-security-report.md`). Conferidos pelo architect em **2026-10-25** no código-fonte oficial, na branch `v4.x` e na tag `v4.5.0` (a última versão publicada), porque a documentação não os descreve:
+
+| Fato | Fonte |
+|---|---|
+| **O `environment` de um serviço não delimita o que ele recebe.** Fora do modo Raw, o Coolify acrescenta `env_file: ['.env']` a **todos** os serviços do recurso, sem opção para desligar: "Always add .env file to services", com `$service['env_file'] = ['.env']` num `map()` sobre todos os serviços (só o ramo Raw não passa por ali). O `applicationParser` faz o mesmo ("Auto-inject .env file so Coolify environment variables are available inside containers"), mantendo os `env_file` do arquivo e acrescentando o `.env`. Nesse `.env`, o Coolify grava **todas** as variáveis de runtime do recurso, sem filtro por serviço (`generate_runtime_environment_variables` e `save_runtime_environment_variables`). A página de Compose não cita o `env_file` | `deploy_docker_compose_buildpack` em `app/Jobs/ApplicationDeploymentJob.php` e `applicationParser` em `bootstrap/helpers/parsers.php` (<https://github.com/coollabsio/coolify/blob/v4.x/app/Jobs/ApplicationDeploymentJob.php>, <https://github.com/coollabsio/coolify/blob/v4.x/bootstrap/helpers/parsers.php>; os mesmos trechos existem na tag `v4.5.0`); <https://coolify.io/docs/knowledge-base/docker/compose> |
+| Sobrescrever com valor vazio (`DATABASE_URL: ""`) no serviço que não deve receber o segredo **não funciona**: o parser troca a string vazia pelo valor salvo da variável de mesmo nome ("Empty string - allow database override for backward compatibility") e gravaria o valor literal no compose gerado | `applicationParser`, `parsers.php` (`v4.x` e `v4.5.0`) |
+| As variáveis de **build** viram `ARG` em cada estágio dos Dockerfiles do compose, inclusive as `COOLIFY_*`, enquanto a configuração `inject_build_args_to_dockerfile` não for `false` explicitamente | `modify_dockerfiles_for_compose` e `generate_env_variables` (filtro `is_buildtime`), `ApplicationDeploymentJob.php` (`v4.x`) |
+| **Redes:** cada recurso tem a rede `<uuid>` (`docker network create --attachable`), à qual o Coolify liga o `coolify-proxy`, e o Traefik é instruído a usar essa rede para chegar ao serviço (`addTraefikDockerNetworkLabel($serviceLabels, $baseNetwork->first())`). As redes declaradas no topo do arquivo são mantidas, com `name:` literal ou com uma variável (`validateComposeNetworkNameField`; "only Docker Compose reads this value"), e o parser liga **todas** as redes do topo a **todos** os serviços do recurso (salvo os com `network_mode`) | `applicationParser`, `parsers.php` e `deploy_docker_compose_buildpack`, `ApplicationDeploymentJob.php` (`v4.x` e `v4.5.0`) |
+| "Connect to predefined network" liga os serviços à rede do destino (`coolify`), compartilhada pelos recursos do servidor. A documentação diz para usá-la "only when the Compose services must communicate with resources on the selected Coolify destination" e avisa que "Names can be prefixed to prevent collisions" | `parsers.php` (`connect_to_docker_network`); <https://coolify.io/docs/knowledge-base/docker/compose> |
+| Ao parar um recurso Compose, o Coolify desliga o `coolify-proxy` da rede `<uuid>` e tenta removê-la (`docker network disconnect`, `docker network rm`, sem conferir se há outros contêineres ligados) | `deleteConnectedNetworks` em `app/Models/Application.php` e `app/Actions/Application/StopApplication.php` (`v4.x`) |
+| **Webhook manual com vários recursos:** o Coolify seleciona todas as aplicações do mesmo repositório e branch e confere a assinatura com o segredo de **cada** uma (`manual_webhook_secret_github`, HMAC com `hash_equals`). Uma aplicação com segredo diferente é pulada com o registro `invalid_signature`, e as outras continuam | `app/Http/Controllers/Webhook/Github.php` (`v4.x`) |
+
 **O que não está claro na documentação, e o teste humano que confirma** (todos viram CAs manuais da SPEC-039 ou da SPEC-015):
 
 1. Se o `build.context: ..` funciona com Base Directory `/infra` (o código usa `--project-directory` igual ao diretório de trabalho, o que indica que sim). Teste: o primeiro deploy termina com sucesso e as três imagens existem (SPEC-039, CA-15).
@@ -45,6 +57,7 @@ Fatos do Coolify, conferidos pelo architect em **2026-10-25** na documentação 
 6. Se o log de deploy do Coolify mostra valores de variáveis. Teste: o humano lê o log no painel e nunca o cola em lugar público sem conferir (SPEC-039, CA-15).
 7. Se o contêiner do dashboard alcança a URL pública da própria VPS (hairpin). Teste: CA-17 da SPEC-015 (o painel carrega dados).
 8. O que acontece com a versão em execução quando um deploy falha. Teste: o log de deploy de cada merge e o smoke da atualização. Uma falha vira rollback por branch (decisão 5). O CA-18 da SPEC-039 confere o disparo pelo webhook.
+9. (emenda 1) Se a versão instalada do Coolify se comporta como o código lido: o `.env` de cada recurso só chega aos serviços dele, a rede `partqc-api-link` é criada como `internal` pelo recurso da API e mantida como `external` no outro, e o Caddy chega à `api` por ela. Teste: `Config.Env` de cada contêiner, só os nomes, e `docker network inspect` (SPEC-039, CA-20), e o smoke (CA-15 da SPEC-015).
 
 ## Opções consideradas
 
@@ -61,32 +74,57 @@ Fatos do Coolify, conferidos pelo architect em **2026-10-25** na documentação 
 
 **Segredos (dentro da opção A):** variáveis do recurso no painel do Coolify, referenciadas no compose como `${NOME:?}` no `environment` (escolhido), ou arquivos `env_file` criados à mão na VPS. Estes foram descartados: seriam um `.env` editado à mão fora do checkout, num diretório que o Coolify reescreve a cada deploy, e o caminho relativo do `env_file` depende do diretório do projeto que o Coolify escolhe.
 
+**Isolamento dos segredos entre os serviços (emenda 1).** Como o Coolify entrega o `.env` do recurso a todos os serviços dele (fatos da emenda 1), um único recurso daria a `DATABASE_URL`, a `READ_API_KEY` e o `TELEGRAM_BOT_TOKEN` ao Streamlit público e ao Caddy, contra o checklist §6 ("`DATABASE_URL` nunca fora da API") e a SPEC-028 §4.6. Opções:
+
+| Opção | O que garante | Custo e o que quebra | Manutenção a cada atualização do Coolify |
+|---|---|---|---|
+| a) Aceitar o risco, com exceção registrada | Nada: o dashboard e o Caddy ficam com acesso de escrita ao banco pelo ambiente | Nenhum código; exceção à SPEC-028 §4.6 e ao checklist §6; o CA-02 deixa de valer em produção | Nenhuma |
+| b) Segredo da API por arquivo (storage do Coolify montado só na `api`, `DATABASE_URL_FILE`) | Só a `api` lê o arquivo | Código novo na API (SPEC nova do developer), o mesmo para o `TELEGRAM_BOT_TOKEN`; o conteúdo do arquivo fica no painel, fora das variáveis; bind de arquivo é o caso que o ADR já evitou para o Caddyfile (diretório criado no lugar do arquivo); a `READ_API_KEY` continua no Caddy | Depende de como o Coolify trata os storages de Compose |
+| **c) Dois recursos (escolhida):** `partqc-api` só com a `api`; `partqc-web` com o `caddy` e o `dashboard`. O Caddy chega à `api` por uma rede dedicada `partqc-api-link` (`internal`), criada pelo compose do `partqc-api` e declarada `external` no `partqc-web` | Cada `.env` só chega aos serviços do próprio recurso: a `DATABASE_URL` e o `TELEGRAM_BOT_TOKEN` existem só na `api`. O arquivo do `partqc-web` nem referencia esses nomes, então o Coolify nem cria as variáveis nele | Nenhum código da API ou do dashboard; um compose a mais (`infra/compose.api.yaml`); dois recursos no painel, com a `READ_API_KEY` repetida nos dois; ordem no primeiro deploy (`partqc-api` antes); o Caddy recebe a `READ_API_KEY` (aceito: ele já a vê no header de cada requisição) | Conferir o `Config.Env` dos contêineres e a rede (SPEC-039, CA-20) |
+| c') Dois recursos com "Connect to predefined network" | O mesmo isolamento dos segredos | A `api` passa a ser alcançável por todos os contêineres da rede `coolify` (o próprio Coolify e os outros projetos), inclusive o `/docs`, sem passar pelo Caddy; o nome `api` pode colidir com o de outro projeto, e o Caddy mandaria requisições com chaves para ele | Nomes com prefixo variável |
+| c'') Dois recursos com a rede `<uuid>` do `partqc-api` como `external` (`name: ${VAR}`) | O mesmo isolamento | Uma variável a mais com o UUID; a rede é removida pelo Coolify ao parar o recurso da API (`deleteConnectedNetworks`) | Reserva, se a rede própria da opção c não for mantida pelo Coolify |
+| c''') Três recursos (o Caddy sozinho) | Tira também a `READ_API_KEY` do Caddy | Três recursos, duas redes de ligação e mais ordem de deploy, para um ganho pequeno (o Caddy vê a chave em trânsito) | Maior |
+| d) Modo Raw | O Coolify não acrescenta o `env_file` | Sem labels geradas: o arquivo teria de escrever as do Traefik com nomes internos do Coolify (opção C, já descartada) | Frágil |
+
 ## Decisão
 
-A `qc-api` e o `qc-dashboard` passam a ser publicados pelo **Coolify** já instalado na VPS pessoal, como **um recurso "Docker Compose" a partir do repositório público no GitHub** (branch `main`, Base Directory `/infra`, Docker Compose Location `/compose.yaml`). O **TLS e o domínio** ficam no proxy do Coolify (Traefik), configurados no campo de domínio do serviço `caddy` como `https://<subdominio>:80`. **Nenhum serviço do PartQC publica portas**, e o **Caddy fica só como roteador interno** em HTTP, com o Caddyfile embutido numa imagem própria. O Supabase continua sendo o banco (ADR-006, ADR-008), e o Render continua como reserva fria da API (ADR-018).
+A `qc-api` e o `qc-dashboard` passam a ser publicados pelo **Coolify** já instalado na VPS pessoal, como **dois recursos "Docker Compose" a partir do repositório público no GitHub** (emenda 1), os dois com branch `main` e Base Directory `/infra`:
+
+- `partqc-api`: Docker Compose Location `/compose.api.yaml`, só o serviço `api`, sem domínio;
+- `partqc-web`: Docker Compose Location `/compose.yaml`, os serviços `caddy` e `dashboard`.
+
+O **TLS e o domínio** ficam no proxy do Coolify (Traefik), configurados no campo de domínio do serviço `caddy` do `partqc-web` como `https://<subdominio>:80`. **Nenhum serviço do PartQC publica portas**, e o **Caddy fica só como roteador interno** em HTTP, com o Caddyfile embutido numa imagem própria. O Supabase continua sendo o banco (ADR-006, ADR-008), e o Render continua como reserva fria da API (ADR-018).
 
 Regras que passam a valer (detalhadas na SPEC-039; as demais regras do ADR-018 continuam):
 
 1. **Rede:**
    - nenhum serviço tem `ports`, e o compose não declara labels `traefik.*` nem `coolify.*` (o Coolify gera as dele);
    - só o serviço `caddy` tem domínio no Coolify, no caminho `/`. A `api` e o `dashboard` não têm domínio;
-   - a rede própria `partqc` e o alias do subdomínio saem; os serviços usam a rede do projeto (e o Coolify acrescenta a dele).
+   - a rede própria `partqc` e o alias do subdomínio saem; os serviços usam a rede do projeto (e o Coolify acrescenta a dele);
+   - (emenda 1) o Caddy chega à `api`, que está no outro recurso, pela rede `partqc-api-link`, com `internal: true`, criada pelo `infra/compose.api.yaml` e declarada `external` no `infra/compose.yaml`. O `reverse_proxy api:8000` do Caddyfile não muda. O Coolify liga essa rede também ao `dashboard` (todas as redes do topo vão a todos os serviços do recurso), o que repete o alcance que ele já tinha no recurso único;
+   - nunca ligar "Connect to predefined network" em nenhum dos dois recursos.
 2. **Caddy:**
    - site `:80`, sem nome de host e sem TLS (o HTTPS automático não se ativa);
    - mantém o roteamento, o bloqueio de `/docs` e `/openapi.json` e os headers da SPEC-032; o `handle_errors` da SPEC-038 entra no mesmo bloco;
    - **sem healthcheck**, porque o Traefik tira da rota um contêiner `unhealthy`, e a falha da API (por exemplo, com o Supabase pausado) derrubaria também o painel;
    - sem estado persistente: `/data` e `/config` em `tmpfs`, porque os certificados agora ficam no proxy do Coolify. Os volumes `caddy_data` e `caddy_config` saem.
-3. **Segredos e variáveis (R-03):**
-   - ficam nas variáveis do recurso no Coolify: `PUBLIC_HOST`, `DATABASE_URL` e `READ_API_KEY`, e os opcionais (limites, `MAX_BODY_BYTES`, `LOG_LEVEL`, `MODEL_METRICS_PATH` e, por decisão do humano de 2026-10-25, as variáveis `ALERTS_*` e `TELEGRAM_*` da SPEC-017, com os padrões dela, que deixam os alertas desligados);
-   - os segredos ficam com escopo **só de runtime** (fora do build), **Locked** e interpolação **Literal**;
+3. **Segredos e variáveis (R-03; reescrita pela emenda 1):**
+   - **no Coolify, quem delimita as variáveis de um serviço é o recurso, e não o `environment`:** todo serviço recebe o `.env` com todas as variáveis de runtime do seu recurso. Por isso, os segredos ficam divididos entre os dois recursos:
+     - `partqc-api`: `DATABASE_URL`, `READ_API_KEY`, `MAX_BODY_BYTES`, `LOG_LEVEL`, os limites `API_*` e, por decisão do humano de 2026-10-25, as variáveis `ALERTS_*` e `TELEGRAM_*` da SPEC-017, com os padrões dela, que deixam os alertas desligados;
+     - `partqc-web`: `PUBLIC_HOST`, `READ_API_KEY` (o mesmo valor), `MODEL_METRICS_PATH` e os limites `DASHBOARD_*` e `CADDY_*`;
+   - a `DATABASE_URL`, o `TELEGRAM_BOT_TOKEN` e as demais variáveis de alertas **nunca** existem no `partqc-web`. O `infra/compose.yaml` nem cita esses nomes, para o Coolify não criar as variáveis nesse recurso;
+   - o `caddy` recebe a `READ_API_KEY` e o `PUBLIC_HOST` pelo `.env` do `partqc-web`. Custo aceito: a chave de leitura passa pelo Caddy, no header, em toda requisição do dashboard;
+   - proibido tentar "apagar" uma variável num serviço com valor vazio (`NOME: ""`): o Coolify a troca pelo valor salvo;
+   - os segredos ficam com escopo **só de runtime** (fora do build), **Locked** e interpolação **Literal**, desde antes do primeiro deploy: uma variável com o build ligado vira `ARG` nos Dockerfiles e pode ficar numa camada de imagem;
    - nenhum `.env` é criado à mão na VPS, e nenhum checkout manual é feito nela;
-   - o compose referencia cada segredo como `${NOME:?}` no `environment` do serviço que o usa, nunca com valor;
-   - o `.dockerignore` por Dockerfile passa a proteger também o `.env` que o Coolify grava no diretório do recurso (`infra/.env` dentro do contexto de build).
+   - o compose referencia cada segredo como `${NOME:?}` no `environment` do serviço que o usa, nunca com valor. Isso continua valendo na execução local, e o CA-02 da SPEC-039 o confere; em produção, o isolamento vem da divisão em recursos (CA-19 e CA-20 da SPEC-039);
+   - o `.dockerignore` por Dockerfile passa a proteger também o `.env` que o Coolify grava no diretório de cada recurso (`infra/.env` dentro do contexto de build). Na `api` e no `dashboard`, ele também exclui `infra/`, onde o Coolify grava o compose processado (SEC-39-02).
 4. **Dashboard → API:** `API_BASE_URL=https://${PUBLIC_HOST}` continua, e a recusa de `http://` da SPEC-028 também. Sem o alias, o nome resolve pelo DNS público, e a conexão volta à própria VPS pelo proxy do Coolify, com TLS verificado.
 5. **Deploy automático e rollback** (decisão do humano de 2026-10-25, que substitui o deploy manual proposto na primeira versão e a decisão 8 do ADR-018):
    - **cada merge na `main` dispara o deploy**, por **webhook manual** com segredo do GitHub para o Coolify (Auto deploy = Deploy on push). O GitHub App foi descartado: daria ao Coolify um app com acesso à conta do GitHub e uma chave privada, para um repositório que já é público;
    - sem Watch Paths: todo merge publica (o cache do build deixa barato o merge só de documentação), porque a documentação não diz se os caminhos são relativos à raiz ou ao Base Directory, e um padrão errado deixaria de publicar em silêncio;
    - **o segredo do webhook (R-03)** fica só em dois lugares: o campo Webhook secret do Coolify e as configurações de webhook do repositório no GitHub. Nunca no Git, nos Secrets do Actions, em issue, PR ou log. Gerado com o gerador do Coolify ou com `secrets.token_urlsafe(32)`. Se vazar: um segredo novo nos dois lugares, na mesma sessão;
+   - (emenda 1) **um único webhook no GitHub e o mesmo segredo nos dois recursos**, os dois com Auto deploy na branch `main`: o Coolify confere cada recurso com o próprio segredo, e um segredo diferente geraria um `invalid_signature` a cada entrega. Cada merge dispara dois deploys, um por recurso;
    - a URL do webhook contém o endereço do painel do Coolify, que também não entra no repositório (R-13);
    - **o que isso exige do processo:**
      - a `main` precisa estar sempre publicável. Um merge é um deploy em produção;
@@ -95,7 +133,7 @@ Regras que passam a valer (detalhadas na SPEC-039; as demais regras do ADR-018 c
      - mudanças de contrato seguem "API primeiro": o merge da API vai à produção sozinho, e a borda só é atualizada depois;
      - nenhum merge na véspera nem no dia da apresentação (`docs/deployment-plan.md` §5);
    - **deploy com falha:** a documentação não diz o que acontece com a versão em execução. Pelo código, um erro de build para antes do `up -d`. Depois de cada merge, quem mergeou confere o log de deploy e roda o smoke. Se falhou ou se o smoke reprovar, faz o rollback por branch e abre uma correção por PR;
-   - **rollback:** uma branch temporária `deploy/rollback` no commit anterior, selecionada no recurso, e a volta para a `main` depois. Enquanto o recurso aponta para `deploy/rollback`, os pushes na `main` não disparam deploy (a branch não casa). Ao voltar para a `main`, clicar em Deploy. O rollback por imagens do painel não está documentado para Compose;
+   - **rollback:** uma branch temporária `deploy/rollback` no commit anterior, selecionada nos dois recursos (emenda 1), e a volta para a `main` depois. Enquanto o recurso aponta para `deploy/rollback`, os pushes na `main` não disparam deploy (a branch não casa). Ao voltar para a `main`, clicar em Deploy. O rollback por imagens do painel não está documentado para Compose;
    - nenhum segredo de acesso à VPS (SSH, token da API do Coolify) vai para o GitHub, e o Actions não entra na VPS.
 6. **Coexistência:** nunca reiniciar, parar nem reconfigurar o `coolify-proxy` nem as configurações do servidor no Coolify por causa do PartQC. As proibições de firewall e de `prune` do ADR-018 continuam.
 7. **Identidade (R-13):** o subdomínio fica só no painel do Coolify (campo de domínio e `PUBLIC_HOST`). A documentação continua com `<subdominio>`.
@@ -120,13 +158,17 @@ A R-01 não muda: o Coolify é software livre auto-hospedado, já estava instala
   - o rollback por branch temporária é mais lento que o `git checkout` na VPS;
   - com o deploy automático, um merge é um deploy em produção: um erro que passe pelo CI chega ao painel sem passo humano no meio, e o GitHub precisa alcançar a URL do painel do Coolify pela internet;
   - a VPS e o proxy do Coolify continuam sendo um ponto único de falha, compartilhado com o portfólio. A mitigação continua a mesma: outbox na borda e reserva no Render;
-  - os testes de aceite das SPECs 015, 032 e 038 que descrevem o compose e o Caddyfile antigos são ajustados pelo tester da SPEC-039 (regra de `docs/architecture.md` §10).
+  - os testes de aceite das SPECs 015, 032 e 038 que descrevem o compose e o Caddyfile antigos são ajustados pelo tester da SPEC-039 (regra de `docs/architecture.md` §10);
+  - (emenda 1) dois recursos para configurar e acompanhar, com a `READ_API_KEY` repetida (a troca da chave é feita nos dois) e o segredo do webhook repetido; o `partqc-api` tem de existir antes do primeiro deploy do `partqc-web`, e depois de uma limpeza que apague a rede `partqc-api-link`, porque o `partqc-web` falha sem ela; a `READ_API_KEY` também fica no ambiente do Caddy;
+  - (emenda 1) o isolamento depende de um comportamento do Coolify que a documentação não descreve (o `env_file` por recurso), conferido no código e, na VPS, pelo CA-20 da SPEC-039, que é repetido a cada atualização do Coolify.
 - **O que passa a ser obrigatório:**
   - a SPEC-039 (manutenção do deploy para o Coolify, `security-devops`) `Done` **antes** dos CAs manuais da SPEC-015 e do CA-09 da SPEC-032;
   - a SPEC-015 com os passos humanos e os CAs manuais refeitos para o Coolify, e o `docs/deployment-plan.md` reescrito (feito junto com este ADR, aguardando aprovação);
   - a SPEC-038, Parte B, ajustada ao Caddy em `:80` e aos comandos do Coolify (nota na própria SPEC), e mergeada depois da SPEC-039;
   - uma SPEC que acrescente variáveis à API ou ao dashboard também as declara no `environment` do compose como `${NOME}` (a mudança do compose é do `security-devops`), em vez de citar o `infra/.env.api`. As da SPEC-017 já entram pela SPEC-039, como opcionais e desligadas por padrão;
   - o webhook com segredo configurado no Coolify e no GitHub, e o CA-18 da SPEC-039 (um merge de teste dispara o deploy, e o log não mostra segredos);
+  - (emenda 1) os dois recursos e a rede `partqc-api-link` (SPEC-039 §4.1 e §4.1A); o CA-19 (simulação do `env_file` do Coolify no CI) e o CA-20 (manual: `Config.Env` de cada contêiner, só os nomes) da SPEC-039; o CA-20 de novo depois de cada atualização do Coolify;
+  - (emenda 1) uma variável nova da API entra só no `infra/compose.api.yaml` e no `partqc-api`; uma do dashboard, só no `infra/compose.yaml` e no `partqc-web`. Nenhum segredo da API entra no `infra/compose.yaml`;
   - depois do aceite: o status do ADR-018 vira "Substituído em parte por ADR-023", e a N-05 recebe o texto acima (pelo orquestrador);
   - `docs/architecture.md` §1, §2, §8 e §9 anotados "a partir da SPEC-039".
 
@@ -139,6 +181,8 @@ A R-01 não muda: o Coolify é software livre auto-hospedado, já estava instala
 - Se o Traefik do Coolify passar a acrescentar headers que conflitem com os do Caddy (HSTS com `includeSubDomains`, por exemplo).
 - Se for preciso um caminho público novo fora de `/api/*` e do Streamlit (por exemplo, publicar o `/docs`, decisão 4 do ADR-018).
 - Os gatilhos do ADR-018 sobre a VPS (upgrade pago, queda de mais de 24 h, pergunta 8 ao professor, pausa do Supabase) continuam.
+- (emenda 1) Se o CA-20 da SPEC-039 mostrar `DATABASE_URL` ou `TELEGRAM_BOT_TOKEN` fora da `api`, ou se o Coolify não mantiver a rede `partqc-api-link` (`internal`, ligada à `api`, ao `caddy` e ao `dashboard`): parar o `partqc-web`, trocar a senha do banco se ela vazou e avaliar a opção c'' ou a b, com emenda deste ADR.
+- (emenda 1) Se o Coolify passar a oferecer variáveis por serviço ou deixar de acrescentar o `env_file` a todos os serviços: avaliar a volta a um único recurso.
 
 ## Histórico
 
@@ -146,3 +190,4 @@ A R-01 não muda: o Coolify é software livre auto-hospedado, já estava instala
 |---|---|---|
 | 2026-10-25 | ADR redigido (`Proposto`): Coolify, TLS no proxy dele, Caddy como roteador interno, deploy manual pelo botão | Architect, a pedido do humano |
 | 2026-10-25 | Decisões do humano sobre o PR #55: (1) **opção A aprovada** (Caddy como roteador interno); (2) **deploy automático por webhook a cada merge na `main`**, no lugar do deploy manual: webhook manual com segredo (só no painel do Coolify e nas configurações do repositório no GitHub, R-03), sem GitHub App e sem Watch Paths; a `main` sempre publicável, merge só pelo portão da R-09, rollback por branch mantido (decisão 5, fontes de 2026-10-25 no Contexto); (3) as variáveis `ALERTS_*` e `TELEGRAM_*` da SPEC-017 entram já pela SPEC-039 como opcionais, com os padrões da 017 (alertas desligados), para a 017 não precisar mudar o compose (decisão 3); (4) o 502 com headers (`handle_errors`) fica na SPEC-038, e a SPEC-039 entra agora, direto na `main`. O status continua `Proposto` até o aceite formal | Humano (Carlos) |
+| 2026-10-25 | **Emenda 1 (proposta, aguardando aprovação humana)**, para o SEC-39-01 (`reviews/SPEC-039/r1-security-report.md`): fora do Raw, o Coolify entrega o `.env` com todas as variáveis de runtime do recurso a todos os serviços, então a premissa da decisão 3 ("o `environment` do serviço que o usa" delimita o segredo) não vale. Mudanças: fatos novos no Contexto (código-fonte `v4.x` e `v4.5.0`, consultado em 2026-10-25) e item 9 do que não está claro; tabela de opções do isolamento; Decisão com **dois recursos** (`partqc-api` só com a `api`; `partqc-web` com o `caddy` e o `dashboard`); decisão 1 com a rede `partqc-api-link` e a proibição de "Connect to predefined network"; decisão 3 reescrita (variáveis por recurso, `READ_API_KEY` aceita no Caddy, proibição do valor vazio, build desligado antes do primeiro deploy, `infra/` fora das imagens da `api` e do `dashboard`); decisão 5 com o mesmo segredo de webhook nos dois recursos e o rollback nos dois; consequências, obrigações e gatilhos novos. Antes, a decisão 3 dizia que os segredos ficavam "nas variáveis do recurso" e eram referenciados "no `environment` do serviço que o usa" | Architect, a pedido do orquestrador (SPEC_ISSUE SEC-39-01) |
