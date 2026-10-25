@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025, SPEC-030, SPEC-034, SPEC-036)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-025, SPEC-030, SPEC-034, SPEC-036)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -39,6 +39,7 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 | `DEVICE_API_KEY` | vazio | segredo (R-03): chave do dispositivo, gerada por `scripts/register_device.py` e mostrada uma única vez. Vazio = nada é enviado à nuvem. Só ASCII visível (sem espaço nem acento); outro valor → código 2 citando a variável, nunca o valor |
 | `CLOUD_API_URL` | vazio | URL base da `qc-api`, sem `/api/v1` no fim (ex.: `https://<seu-servico>.onrender.com`). `https://` obrigatório; `http://` só com `localhost` ou `127.0.0.1` (testes locais). Sem usuário/senha, query ou fragmento. Outro valor → código 2 citando `CLOUD_API_URL`. Vazio = nada é enviado |
 | `OUTBOX_PATH` | `EDGE_DATA_DIR/outbox.sqlite3` | arquivo SQLite do outbox (ignorado com `--stub-model`: nem aberto nem criado); as pastas que faltarem são criadas com `0700` e o arquivo novo com `0600`. Se não abrir (ex.: é um diretório) → código 2 citando `OUTBOX_PATH` |
+| `HEARTBEAT_INTERVAL_S` | `60` | segundos entre dois heartbeats (seção "Heartbeat"); inteiro de 10 a 3600, ou `0` para desligar. Outro valor (ex.: `5`, `abc`) → código 2 citando a variável, com ou sem `--stub-model` |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -247,6 +248,14 @@ uv run --package qc-edge python -m qc_edge.requeue --outbox-path edge/data/outbo
 - A idempotência por `inspection_id` da API impede duplicatas na nuvem, mesmo que parte dos itens já tenha chegado lá (R-05).
 - Pode rodar com o `qc-edge` ligado (o outbox está em WAL; o comando espera até 5 s por um lock). O arquivo nunca é criado: caminho inexistente, que não é arquivo regular ou que não é um outbox sai com código 2; uma falha do SQLite durante a leitura ou a alteração (por exemplo, o lock não liberado em 5 s) sai com código 1.
 - A saída nunca mostra o `payload` (lote, dispositivo, confianças) nem o `DEVICE_API_KEY`, e o comando não faz nenhuma requisição de rede: só altera o arquivo. Argumento desconhecido ou `--id` que não é UUID sai com código 2, e o log mostra só os nomes das opções, nunca os valores.
+
+### Heartbeat (SPEC-018)
+
+Quando o envio está ligado (sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL`, a primeira linha da tabela acima) e `HEARTBEAT_INTERVAL_S` não é `0`, uma segunda thread envia um heartbeat logo na subida e depois a cada `HEARTBEAT_INTERVAL_S` segundos (padrão 60) para `POST {CLOUD_API_URL}/api/v1/devices/<DEVICE_ID>/heartbeat`, com o header `X-API-Key`, o timeout de 5 s, o prazo de 15 s e o teto de 512 KiB do envio. O corpo é o `HeartbeatCreate` de `qc_contracts`: versão e sha256 do modelo carregado (nulos sem modelo), versão do `qc-edge`, tempo ligado (`uptime_s`, pelo relógio monotônico) e as contagens de pendentes e `dead` do outbox. Nada de imagem nem de dado pessoal (R-02). A página "Dispositivos" do dashboard mostra o dispositivo como online enquanto o último heartbeat tiver menos de 180 s, pela hora do servidor.
+
+- O heartbeat **não** passa pelo outbox: uma falha (rede fora, timeout, 5xx, 404 de uma API anterior à SPEC-018) vira um `WARNING` `heartbeat failed: ...` no log, e o laço tenta de novo no ciclo seguinte, sem afetar as inspeções.
+- 401 ou 403 → um único `ERROR` (`check DEVICE_API_KEY and restart qc-edge; heartbeats are paused`) e nenhum heartbeat até reiniciar o `qc-edge`, como o envio.
+- Com `--stub-model`, sem a chave ou sem a URL, ou com `HEARTBEAT_INTERVAL_S=0`, não há heartbeat (R-06). O simulador (`scripts/simulate.py`) também não envia heartbeat.
 
 ### Demo offline (CA-17 da SPEC-009, manual)
 

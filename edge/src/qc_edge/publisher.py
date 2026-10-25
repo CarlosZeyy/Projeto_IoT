@@ -25,12 +25,20 @@ request has a total deadline of 15 s and reads at most 512 KiB of response (SPEC
 above the deadline or a total above the cap closes the response and raises
 ``PublishTransientError`` with a fixed message, so the loop retries later. The deadline uses
 ``time.monotonic`` (injectable), never the wall clock. ``check_health`` never reads the body.
+
+SPEC-018: ``send_heartbeat`` posts a ``qc_contracts.HeartbeatCreate`` to
+``POST {CLOUD_API_URL}/api/v1/devices/{device_id}/heartbeat`` (``device_id`` given to the
+constructor), with the same timeout, deadline and byte cap. 204 is a success; 401/403 raise
+``PublishAuthError``; anything else raises ``PublishTransientError`` with the summary above
+(``HTTP <status>``, the refusal summary of a 413/422, or the redacted ``httpx`` error), never the
+body. The heartbeat carries no image and no personal data (R-02).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import unicodedata
 from collections.abc import Callable, Sequence
@@ -41,7 +49,14 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from qc_contracts import MAX_BATCH_SIZE, BatchCreate, BatchResult, InspectionCreate
+from qc_contracts import (
+    DEVICE_ID_PATTERN,
+    MAX_BATCH_SIZE,
+    BatchCreate,
+    BatchResult,
+    HeartbeatCreate,
+    InspectionCreate,
+)
 from qc_edge.config import check_cloud_api_url
 
 logger = logging.getLogger("qc_edge")
@@ -49,6 +64,7 @@ logger = logging.getLogger("qc_edge")
 API_KEY_HEADER = "X-API-Key"
 BATCH_PATH = "/api/v1/inspections/batch"
 HEALTH_PATH = "/api/v1/health"
+HEARTBEAT_PATH = "/api/v1/devices/{device_id}/heartbeat"
 DEFAULT_TIMEOUT_S = 5.0
 REQUEST_DEADLINE_S = 15.0
 MAX_RESPONSE_BYTES = 512 * 1024  # above the 256 KB of input that the API echoes in a 422
@@ -89,6 +105,12 @@ class Publisher(Protocol):
     def check_health(self) -> bool: ...
 
 
+class HeartbeatPublisher(Protocol):
+    """What the heartbeat loop needs (SPEC-018 section 4.4)."""
+
+    def send_heartbeat(self, heartbeat: HeartbeatCreate) -> None: ...
+
+
 def refusal_summary(status_code: int, body: bytes) -> str:
     """Summary of a 413/422 body (SPEC-009 section 4.2); the body itself is never returned.
 
@@ -125,14 +147,17 @@ def check_api_key(api_key: str) -> None:
 class HttpPublisher:
     """``Publisher`` over HTTPS (``http://`` only for ``localhost`` and ``127.0.0.1``).
 
-    ``deadline_s`` (total time of a batch request, checked after each chunk of the response
-    body) and ``max_response_bytes`` (cap of the body read) come from SPEC-030 section 4.1;
-    ``monotonic`` is injectable for the tests.
+    ``deadline_s`` (total time of a request, checked after each chunk of the response body)
+    and ``max_response_bytes`` (cap of the body read) come from SPEC-030 section 4.1;
+    ``monotonic`` is injectable for the tests. ``device_id`` (``DEVICE_ID_PATTERN``) is the
+    device of the heartbeat path (SPEC-018); without it, ``send_heartbeat`` raises
+    ``ValueError``.
 
     Raises:
         ValueError: ``base_url`` is not accepted by ``check_cloud_api_url``, the key is empty or
-            not visible ASCII, or ``timeout_s``, ``deadline_s`` or ``max_response_bytes`` is not
-            positive. The messages never contain the key.
+            not visible ASCII, ``device_id`` is outside ``DEVICE_ID_PATTERN``, or ``timeout_s``,
+            ``deadline_s`` or ``max_response_bytes`` is not positive. The messages never contain
+            the key.
     """
 
     def __init__(
@@ -145,9 +170,12 @@ class HttpPublisher:
         deadline_s: float = REQUEST_DEADLINE_S,
         max_response_bytes: int = MAX_RESPONSE_BYTES,
         monotonic: Callable[[], float] = time.monotonic,
+        device_id: str | None = None,
     ) -> None:
         self._base_url = check_cloud_api_url(base_url)
         check_api_key(api_key)
+        if device_id is not None and re.fullmatch(DEVICE_ID_PATTERN, device_id) is None:
+            raise ValueError("device_id must match DEVICE_ID_PATTERN")
         if not timeout_s > 0:
             raise ValueError("timeout_s must be > 0")
         if not deadline_s > 0:
@@ -158,6 +186,7 @@ class HttpPublisher:
         self._deadline_s = deadline_s
         self._max_response_bytes = max_response_bytes
         self._monotonic = monotonic
+        self._device_id = device_id
         self._client = httpx.Client(timeout=timeout_s, transport=transport, follow_redirects=False)
 
     def _redact(self, text: str) -> str:
@@ -217,6 +246,43 @@ class HttpPublisher:
                 raise PublishTransientError(RESPONSE_TOO_LARGE)
             chunks.append(chunk)
         return b"".join(chunks)
+
+    def send_heartbeat(self, heartbeat: HeartbeatCreate) -> None:
+        """Post ``heartbeat`` for the ``device_id`` of this publisher (SPEC-018 section 4.4).
+
+        The body is read only for 204 and 413/422, within the deadline and the byte cap.
+
+        Raises:
+            ValueError: the publisher was built without ``device_id``.
+            PublishAuthError: 401 or 403.
+            PublishTransientError: network, timeout, deadline, byte cap or any other status.
+        """
+        if self._device_id is None:
+            raise ValueError("device_id is required to send a heartbeat")
+        body = heartbeat.model_dump_json()
+        url = self._base_url + HEARTBEAT_PATH.format(device_id=self._device_id)
+        start = self._monotonic()
+        content: bytes | None = None
+        try:
+            with self._client.stream(
+                "POST",
+                url,
+                content=body.encode("utf-8"),
+                headers={"Content-Type": "application/json", API_KEY_HEADER: self._api_key},
+            ) as response:
+                status_code = response.status_code
+                if status_code == 204 or status_code in REJECTED_STATUSES:
+                    content = self._read_body(response, start)
+        except httpx.HTTPError as exc:
+            raise PublishTransientError(self._describe(exc)) from None
+
+        if status_code == 204:
+            return
+        if status_code in AUTH_STATUSES:
+            raise PublishAuthError(f"HTTP {status_code}")
+        if status_code in REJECTED_STATUSES:
+            raise PublishTransientError(refusal_summary(status_code, content or b""))
+        raise PublishTransientError(f"HTTP {status_code}")
 
     def check_health(self) -> bool:
         """``GET /api/v1/health`` (no key); ``True`` only with 200. The body is never read."""
