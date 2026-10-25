@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer (Parte A: `edge/`) e depois security-devops (Parte B: `infra/`, `.gitignore`, `.env.example` e `docs/deployment-plan.md`), na mesma rodada (§6) |
 | Tags | security, deploy, infra |
@@ -261,3 +261,4 @@ Os CAs marcados `docker` rodam só com `PARTQC_DOCKER_TESTS=1` (SPEC-015 §4.14)
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-24 | SPEC criada (`Draft`). Decisões do architect: (a) linha inválida do outbox vira `dead` no laço (`invalid outbox row`, por `rowid`) e é pulada na listagem, com aviso só de `rowid` e coluna; a CLI também captura `ValueError`/`TypeError` (§4.1); (b) `OperationalError` na abertura com mensagem própria, sem mudar o código 2 (§4.2); (c) `info` vazio antes do `save` na importação (§4.3); (d) logger `PIL` em pelo menos INFO nos `main` do importador e da varredura (§4.4); (e) rollback dos diretórios criados na linha (§4.5); (f) **RV-02 da 036 entra**: reconferência do hash sob o lock, porque o custo é pequeno (o `sources.csv` já é relido ali), o teste é determinístico e evita parar o pipeline com `duplicate_input` (§4.6); (g) pasta de entrada e plano recusados dentro de um repositório Git, no lugar de mais linhas no `.gitignore` para o plano (§4.7); (h) `handle_errors` no Caddy, com os mesmos 6 headers e corpo vazio, em vez de um segundo bloco `header` não adiado, que manteria o `Server` e poderia duplicar headers vindos da origem (§4.9); (i) 9 extensões de foto e vídeo só na forma com classes de caracteres (§4.10); (j) `0`/`-1` do `pids_limit` e o roteiro de atualização só em documentação (§4.11); (k) **RV-03 da 036 fica fora**, com a regra `PLE2502` (§3.2); (l) duas partes, developer e security-devops, com o portão de segurança dividido (§6). | SEC-34-01/02 de `reviews/SPEC-034/r1-security-report.md` e RV-01/02 de `r1-review-report.md`; O-01 a O-05 de `reviews/SPEC-036/r1-test-report.md`, RV-01 a RV-04 de `r1-review-report.md` e SEC-36-01 a 03 de `r1-security-report.md`; T-01, O-T-01 e O-T-02 de `reviews/SPEC-032/r1-test-report.md`, RV-01 a RV-03 de `r1-review-report.md` e SEC-32-01 a 03 de `r1-security-report.md`. Os relatórios das SPECs 036 e 032 foram lidos nas branches delas (`spec/SPEC-036-importacao-de-fotos` e a worktree da SPEC-032, PR #50) | Orquestrador, a pedido do humano (decisão de 2026-10-24) |
+| 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com as recomendações do §9: duas partes (developer na borda, security-devops no deploy) com o portão de segurança dividido, CA-18 manual na VPS mantido, sem pendências de outras SPECs. | Resposta do humano de 2026-10-24 (PR #51) | Orquestrador, a pedido do humano |
