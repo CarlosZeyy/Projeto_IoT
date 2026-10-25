@@ -75,6 +75,7 @@ Nenhum valor real vai para o Git (R-03). Os nomes ficam em `.env.example`. Os ar
 | `DATABASE_URL` (pooler do Supabase, modo transaction, porta 6543) | `infra/.env.api` na VPS (e o painel do Render, se a reserva for ativada) | `qc-api` |
 | `DATABASE_URL` (pooler em modo session, porta 5432) | `.env.migrate` local do humano, nunca no Git, na VPS nem no Actions | `infra/migrate.py` e o registro de dispositivos |
 | `READ_API_KEY` | `infra/.env.api` **e** `infra/.env.dashboard` na VPS (o mesmo valor) | `qc-api` (valida) e `qc-dashboard` (envia) |
+| `ALERTS_ENABLED`, `TELEGRAM_BOT_TOKEN` (segredo), `TELEGRAM_CHAT_ID`, `ALERTS_LOT_IDLE_MINUTES`, `ALERTS_LOOKBACK_HOURS`, `ALERTS_CHECK_INTERVAL_S`, `ALERTS_MAX_PER_HOUR`, `ALERTS_INCLUDE_SIMULATED` (SPEC-017; todas opcionais, alertas desligados por padrão) | `infra/.env.api` na VPS; no painel do Render, só se a reserva estiver ativa (§6) | `qc-api` |
 | `API_BASE_URL` | Definida pelo próprio `infra/compose.yaml` como `https://${PUBLIC_HOST}`; localmente, em `.streamlit/secrets.toml` | `qc-dashboard` |
 | `MODEL_METRICS_PATH` | Vazio no `infra/.env.dashboard` (vale o padrão `ml/models/partqc-mnv3-v1/metrics.json`, relativo a `/app`) | `qc-dashboard` |
 | `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL` (`https://<subdominio>`) | `.env` do notebook da borda | `qc-edge` |
@@ -159,7 +160,7 @@ Ordem da SPEC-015 §4.6. Todos os passos são humanos. Os comandos com `docker c
 1. Gerar a `READ_API_KEY` na VPS com `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. Nunca reaproveitar uma chave de dispositivo.
 2. Criar, **com um editor** (por exemplo, `nano`), os três arquivos abaixo. Nunca com `echo ... >`, que deixa o valor no histórico do shell.
    - `infra/.env`: uma linha com o nome `PUBLIC_HOST` e o subdomínio real como valor (sem `https://` e sem barra) e, se preciso, os limites `API_MEM_LIMIT`, `API_CPUS`, `DASHBOARD_MEM_LIMIT`, `DASHBOARD_CPUS`, `CADDY_MEM_LIMIT`, `CADDY_CPUS`, `API_PIDS_LIMIT`, `DASHBOARD_PIDS_LIMIT` e `CADDY_PIDS_LIMIT` (modelo no bloco `infra/.env` do `.env.example`).
-   - `infra/.env.api`: `DATABASE_URL` (pooler em modo transaction, porta 6543) e `READ_API_KEY`; opcionais `MAX_BODY_BYTES` e `LOG_LEVEL`.
+   - `infra/.env.api`: `DATABASE_URL` (pooler em modo transaction, porta 6543) e `READ_API_KEY`; opcionais `MAX_BODY_BYTES`, `LOG_LEVEL` e as variáveis dos alertas no Telegram (`ALERTS_*` e `TELEGRAM_*`, SPEC-017; desligados por padrão, passo a passo na §8, item 5).
    - `infra/.env.dashboard`: `READ_API_KEY` (o mesmo valor) e `MODEL_METRICS_PATH` vazio. **Sem** `API_BASE_URL`, que vem do compose, e sem `DATABASE_URL` ou chaves de dispositivo.
 3. Todo valor com `$` vai entre aspas simples, por exemplo `DATABASE_URL='postgresql://...'`. Sem aspas (ou com aspas duplas), o Compose interpola o `$` e trunca a senha sem aviso (<https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/>, 2026-10-19).
 4. Ajustar os limites do `infra/.env` conforme o `free -h` e o `nproc` do passo 2 (regra na §2).
@@ -280,7 +281,7 @@ A imagem do dashboard leva o `metrics.json` e os PNGs de `ml/reports/` **do comm
 - **Parar:** `docker compose -f infra/compose.yaml down`, sem `-v`. Nunca use `docker compose down -v`, que apaga o volume dos certificados (`partqc_caddy_data`) e pode esbarrar no limite de emissão do Let's Encrypt (§7, item 6).
 - **Modelo:** trocar `MODEL_DIR` para a versão anterior. O `model_version` de cada inspeção permite filtrar.
 - **Reserva fria** (VPS fora do ar por mais de 24 h, ou no dia da demo; SPEC-015 §4.16, item 5):
-  1. no Render (conta pessoal, sem cartão), "New → Blueprint" com `infra/render.yaml`; na criação, preencher `DATABASE_URL` (pooler em modo transaction) e `READ_API_KEY` (os dois com `sync: false`);
+  1. no Render (conta pessoal, sem cartão), "New → Blueprint" com `infra/render.yaml`; na criação, preencher `DATABASE_URL` (pooler em modo transaction) e `READ_API_KEY` (os dois com `sync: false`); para ter os alertas no Telegram durante a reserva, acrescentar no painel as variáveis `ALERTS_*` e `TELEGRAM_*` (§8, item 5), sabendo que eles só rodam enquanto o serviço está acordado (§7, item 10);
   2. na borda, `CLOUD_API_URL=https://<servico>.onrender.com`;
   3. rodar o dashboard no notebook com `.streamlit/secrets.toml` apontando para essa URL (SPEC-028 §4.6);
   4. o secret `KEEPALIVE_URL` passa a ser `https://<servico>.onrender.com` enquanto a reserva estiver em uso;
@@ -315,6 +316,8 @@ Cada linha tem a fonte e a data da verificação. Os riscos são do MVP (projeto
 7. **HTTP/3 sem `NET_ADMIN`.** O Caddy pode avisar no log sobre o tamanho do buffer UDP; a capacidade `NET_ADMIN` não é concedida (SPEC-015 §7), e o HTTP/2 por TCP continua (<https://hub.docker.com/_/caddy>, conferido em 2026-10-19).
 8. **Contêiner só de leitura e com limite de processos (SPEC-032 §4.4).** Uma atualização de dependência que passe a escrever em disco fora de `/tmp`, ou que crie muito mais threads, pode derrubar o serviço depois do `up -d --build`. Mitigação: as medições da §2 (pico de 15, 51 e 11 PIDs para um limite de 256), o smoke da atualização (§4, "Atualização", item 4), o diagnóstico pelo log (`Read-only file system`, `can't start new thread`) e o rollback da §6.
 9. **Respostas geradas pelo próprio Caddy mantêm `Server: Caddy` (SPEC-032 §4.3).** O bloco `header` do site é adiado (`defer`) e só age nas respostas que passam pelo `reverse_proxy`. Conferido com a imagem `caddy:2.11.7` em 2026-10-24: o redirecionamento automático `308` da porta 80 e o `502` que o Caddy devolve quando a API ou o dashboard estão fora do ar saem com `Server: Caddy` e sem os 4 headers do bloco. As respostas da API e do Streamlit por HTTPS saem sem `server` e sem `via`. O nome do software continua descobrível por outros sinais (por exemplo, o `Alt-Svc` do HTTP/3), e nenhuma dessas respostas tem conteúdo que possa ser emoldurado. **Decisão:** risco aceito no MVP; cobrir essas respostas (por exemplo, com `handle_errors`) só por SPEC nova. Uma política CSP completa também ficou fora (SPEC-032 §3.2).
+
+10. **Alertas no Telegram na reserva (SPEC-017 §7).** O laço de alertas roda dentro do processo da API. O serviço `free` do Render dorme depois de 15 min sem tráfego (linha do Render na §2), e, enquanto dorme, nenhum lote é verificado. Com a reserva ativa, um alerta só sai quando a API está acordada (o keep-alive e o uso do painel a acordam) e o lote ainda está na janela de `ALERTS_LOOKBACK_HOURS`. Na VPS, a API fica sempre ligada. **Decisão:** risco aceito; a reserva é só para incidentes.
 
 ## 8. Operação do banco e das chaves (SPEC-015 §4.9)
 
@@ -411,6 +414,17 @@ O `statement_timeout` do papel da API é o **teto do custo de banco** da carta p
 - A chave vai sempre pelo arquivo de ambiente (`SIM_DEVICE_API_KEY`). Nunca use `--api-key` em demo gravada, terminal projetado, CI ou workflow. Se for inevitável, use a forma `--api-key=<valor>` com um espaço no início do comando, para que ele não entre no histórico do shell.
 - Se uma chave aparecer numa gravação, num log compartilhado ou num print, rotacioná-la com `uv run --env-file .env.migrate --package qc-api python scripts/register_device.py --device-id sim-01 --rotate` e atualizar o `.env` local.
 
+### 5. Alertas no Telegram (SPEC-017)
+
+Desligados por padrão (`ALERTS_ENABLED=false`). O comportamento, as regras das variáveis e o passo a passo completo do bot estão no [`api/README.md`](../api/README.md), seção "Alertas no Telegram".
+
+- **Custo (R-01):** a Bot API do Telegram é gratuita para mensagens comuns (<https://core.telegram.org/bots/faq>, conferido pelo architect em 2026-10-24); o teto padrão de 10 mensagens por hora fica muito abaixo do limite de 20 por minuto num grupo. Nenhum cartão, nenhum serviço novo.
+- **Migração:** a tabela `alerts_sent` vem da `infra/migrations/005_alerts.sql`. Depois do merge da SPEC-017, aplicá-la da máquina do humano com o `.env.migrate` (passo 1, itens 4 e 5 da §4) **antes** de ligar os alertas. Sem a tabela, cada verificação registra `alerts check failed: type=UndefinedTable sqlstate=42P01` e a ingestão segue normal.
+- **Bot:** criado pelo `@BotFather` (`/newbot`). O token vai **só** no `infra/.env.api` da VPS (`TELEGRAM_BOT_TOKEN`), com um editor, nunca no Git, num chat, num print ou na linha de comando (R-03). O `chat_id` sai de `getUpdates`, chamado na própria VPS com o token lido do `infra/.env.api` (comando no `api/README.md`, sem o token no `argv` nem no histórico do shell), depois de mandar uma mensagem ao bot ou ao grupo do supervisor.
+- **Ligar:** no `infra/.env.api`, `ALERTS_ENABLED=true`, `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID`; depois, `docker compose -f infra/compose.yaml up -d api` (reinicia só a API). No log da API, deve aparecer `alerts enabled: ...` e nenhum `alerts disabled: invalid configuration (...)`, que cita só o nome da variável inválida.
+- **Token vazado ou revogado:** `/revoke` no `@BotFather`, novo token no `infra/.env.api` e `up -d api`. O token nunca aparece no log da API (nem nos registros do `httpx`), então colar o log do alerta não o expõe; o resto da regra de colagem da §9 continua valendo.
+- **Desligar:** `ALERTS_ENABLED=false` e `up -d api`.
+
 ## 9. Registro dos CAs manuais da SPEC-015
 
 Preenchido pelo humano (e copiado no dev-report), sem o subdomínio real nem o IP. Os comandos estão na SPEC-015 §5.
@@ -469,3 +483,26 @@ Depois da atualização da §4 ("Atualização") com a SPEC-032 na `main`, na VP
 | CA | O que | Resultado | Data |
 |---|---|---|---|
 | SPEC-032 CA-09 | Serviços de pé com `read_only` e `pids_limit`; headers novos e sem `server`/`via`; painel de ponta a ponta (CA-17, passos 1 a 3, da SPEC-015); `PIDS` ≤ metade do limite; nenhum `Read-only file system` no log | pendente | — |
+
+### CA manual da SPEC-017 (alertas no Telegram)
+
+Depois do merge da SPEC-017, da migração `005` (§8, item 5) e da atualização da §4 ("Atualização"), na VPS e no celular. Antes de colar, troque o subdomínio por `<subdominio>`; o token e o `chat_id` nunca são colados.
+
+1. Criar o bot e obter o `chat_id` (§8, item 5).
+2. Configurar o `infra/.env.api` (`ALERTS_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e `ALERTS_INCLUDE_SIMULATED=true`) e reiniciar só a API: `docker compose -f infra/compose.yaml up -d api`.
+3. Rodar o simulador (SPEC-014) com um lote fora de controle **entre os 3 últimos** (a regra avalia só os 3 lotes válidos mais recentes de cada origem), dentro dos limites da §8, item 4: por exemplo, `uv run --env-file .env.prod --package qc-api python scripts/simulate.py --lots 10 --lot-size 50 --defect-rate 0.2 --out-of-control-lots 10 --seed <n>`. No painel ("Controle estatístico", origem `Simulado`), conferir que o último lote ficou fora de controle; se não ficou, repetir com outro `--seed`.
+4. Conferir **uma única** mensagem `[SIMULADO] Lote ... fora de controle (...)` no celular depois de `ALERTS_LOT_IDLE_MINUTES` (10 min por padrão) a partir da última inspeção do lote, e nenhuma repetição nas verificações seguintes.
+5. Conferir que o token não aparece no log. O comando lê o valor do arquivo e o passa ao `grep` por um descritor (nunca no `argv` nem no histórico do shell):
+
+   ```bash
+   s=$(sed -n 's/^TELEGRAM_BOT_TOKEN[=]//p' infra/.env.api | tr -d "\"' \r" | cut -d: -f2)
+   if [ -n "$s" ]; then docker compose -f infra/compose.yaml logs api | grep -cF -f <(printf '%s\n' "$s"); else echo "TELEGRAM_BOT_TOKEN vazio ou ausente"; fi
+   unset s
+   ```
+
+   Esperado: `0`. Sem o teste de valor vazio, uma variável ausente viraria um padrão vazio, que casa todas as linhas.
+6. Voltar `ALERTS_INCLUDE_SIMULATED=false` e `docker compose -f infra/compose.yaml up -d api`.
+
+| CA | O que | Resultado | Data |
+|---|---|---|---|
+| SPEC-017 CA-13 | Bot criado; uma única mensagem `[SIMULADO]` no celular depois do tempo de lote concluído; token ausente do `docker compose logs api`; `ALERTS_INCLUDE_SIMULATED` de volta a `false` | pendente | — |

@@ -96,7 +96,7 @@ Nos testes, as fixtures `db_conninfo`, `migrated_db` e `clean_db` do `conftest.p
 
 ### API local e registro de dispositivo (SPEC-004)
 
-A API (`qc-api`) lê a configuração só do ambiente: `DATABASE_URL` e `READ_API_KEY` (mínimo de 32 caracteres) são obrigatórias; `MAX_BODY_BYTES` (padrão 262144) e `LOG_LEVEL` (padrão `INFO`) são opcionais. Ela não lê o `.env` sozinha: use `uv run --env-file .env ...` ou exporte as variáveis. Localmente, aponte para o Postgres de teste em Docker (seção anterior), já migrado.
+A API (`qc-api`) lê a configuração só do ambiente: `DATABASE_URL` e `READ_API_KEY` (mínimo de 32 caracteres) são obrigatórias; `MAX_BODY_BYTES` (padrão 262144) e `LOG_LEVEL` (padrão `INFO`) são opcionais, assim como as dos alertas no Telegram, desligados por padrão (SPEC-017; ver o [`api/README.md`](api/README.md)). Ela não lê o `.env` sozinha: use `uv run --env-file .env ...` ou exporte as variáveis. Localmente, aponte para o Postgres de teste em Docker (seção anterior), já migrado.
 
 ```bash
 export DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test
