@@ -1575,7 +1575,9 @@ def _env_file_paths(value: Any) -> list[tuple[str, Any]]:
 def test_ca29_compose_structure() -> None:
     data = _load_yaml(COMPOSE)
     assert data["name"] == "partqc"
-    services = data["services"]
+    # SPEC-039 sections 4.1 and 4.1A: the api lives in infra/compose.api.yaml (partqc-api)
+    api_data = _load_yaml(INFRA / "compose.api.yaml")
+    services = {**api_data["services"], **data["services"]}
     assert set(services) == {"caddy", "api", "dashboard"}
 
     assert "ports" not in services["caddy"]  # SPEC-039 section 4.1 item 2
@@ -1600,7 +1602,7 @@ def test_ca29_compose_structure() -> None:
     assert re.match(r"^https://\$\{PUBLIC_HOST:\?[^}]*\}$", dash_env["API_BASE_URL"])
     caddy = services["caddy"]
     assert "environment" not in caddy  # SPEC-039 section 4.1 item 5
-    assert "networks" not in caddy  # SPEC-039 section 4.1 item 4 (no alias)
+    assert caddy["networks"] == ["default", "link"]  # SPEC-039 section 4.1 item 4 (no alias)
     for name, svc in services.items():
         env = _env_dict(svc.get("environment"))
         # SPEC-039 section 4.1 item 8: only the mandatory ${NAME:?} references, never a value
@@ -1612,10 +1614,11 @@ def test_ca29_compose_structure() -> None:
     assert "image" not in caddy  # SPEC-039 section 4.1 item 5 and section 4.3
     assert caddy["build"] == {"context": "..", "dockerfile": "infra/docker/caddy.Dockerfile"}
     assert "volumes" not in caddy and "volumes" not in data  # SPEC-039 section 4.1 items 5, 9
+    assert "volumes" not in api_data
     assert caddy["cap_drop"] == ["ALL"]
     assert caddy["cap_add"] == ["NET_BIND_SERVICE"]
     deps = caddy["depends_on"]
-    assert set(deps) == {"api", "dashboard"}
+    assert set(deps) == {"dashboard"}  # SPEC-039 section 4.1 item 5: the api is another resource
     if isinstance(deps, dict):
         for dep in deps.values():
             assert (dep or {}).get("condition") != "service_healthy", deps
@@ -1634,19 +1637,25 @@ def test_ca29_compose_structure() -> None:
         assert svc["mem_limit"] == mem, name
         assert svc["cpus"] == cpus, name
 
-    assert "networks" not in data  # SPEC-039 section 4.1 item 4: default project network
-    for name, svc in services.items():
-        assert "networks" not in svc, name
+    # SPEC-039 section 4.1 item 4: the link network replaces the own network
+    assert data["networks"] == {"link": {"name": "partqc-api-link", "external": True}}
+    assert api_data["networks"] == {"link": {"name": "partqc-api-link", "internal": True}}
+    assert services["api"]["networks"] == ["default", "link"]
+    assert "networks" not in services["dashboard"]
 
 
 def test_extra_compose_network_is_bridge_and_no_extra_capabilities() -> None:
     data = _load_yaml(COMPOSE)
-    # SPEC-039 section 4.1 item 4: no networks key, so the project default (bridge) network
-    assert "networks" not in data
+    api_data = _load_yaml(INFRA / "compose.api.yaml")  # SPEC-039 section 4.1A
+    # SPEC-039 section 4.1 item 4: only the link network, bridge (no driver), internal
+    link = api_data["networks"]["link"]
+    assert link.get("driver", "bridge") == "bridge" and link.get("internal") is True
+    assert set(data["networks"]) == {"link"} and data["networks"]["link"].get("external") is True
+    services = {**api_data["services"], **data["services"]}
     for name in ("api", "dashboard"):
-        assert "cap_add" not in data["services"][name], name
-        assert "volumes" not in data["services"][name], name
-    text = _read(COMPOSE)
+        assert "cap_add" not in services[name], name
+        assert "volumes" not in services[name], name
+    text = _read(COMPOSE) + _read(INFRA / "compose.api.yaml")
     assert "NET_ADMIN" not in text
     assert "SYS_ADMIN" not in text
 
@@ -1939,9 +1948,10 @@ def compose_copy(tmp_path_factory: pytest.TempPathFactory, support: ModuleType) 
     )
 
 
-def _compose_config(copy: Path) -> subprocess.CompletedProcess:
+def _compose_config(copy: Path, filename: str = "compose.yaml") -> subprocess.CompletedProcess:
+    # SPEC-039 section 4.1: compose.yaml (caddy, dashboard) or compose.api.yaml (api)
     return subprocess.run(
-        ["docker", "compose", "-f", str(copy / "infra" / "compose.yaml"), "config"]
+        ["docker", "compose", "-f", str(copy / "infra" / filename), "config"]
         + ["--format", "json"],
         env=_compose_env(),
         capture_output=True,
@@ -1962,9 +1972,12 @@ def test_ca33_compose_config_resolves(compose_copy: Path) -> None:
         cfg = json.loads(result.stdout)
         services = cfg["services"]
         assert services["dashboard"]["environment"]["API_BASE_URL"] == f"https://{TEST_HOST}"
-        assert "networks" not in services["caddy"] or set(services["caddy"]["networks"]) == {
-            "default"
-        }  # SPEC-039 section 4.1 item 4: no alias, project default network only
+        caddy_nets = services["caddy"]["networks"]  # SPEC-039 section 4.1 item 4: no alias
+        assert set(caddy_nets) == {"default", "link"}, caddy_nets
+        assert not any((v or {}).get("aliases") for v in caddy_nets.values()), caddy_nets
+        api_result = _compose_config(compose_copy, "compose.api.yaml")  # SPEC-039 section 4.1A
+        assert api_result.returncode == 0, api_result.stderr
+        services = {**json.loads(api_result.stdout)["services"], **services}
         assert _bytes_of(services["api"]["mem_limit"]) == 512 * 1024**2
         assert _bytes_of(services["dashboard"]["mem_limit"]) == 1024**3
         assert _bytes_of(services["caddy"]["mem_limit"]) == 256 * 1024**2
@@ -1973,7 +1986,7 @@ def test_ca33_compose_config_resolves(compose_copy: Path) -> None:
         assert "DATABASE_URL" not in services["dashboard"].get("environment", {})
 
         env_file.write_bytes(original_env + b"API_MEM_LIMIT=768m\n")
-        result = _compose_config(compose_copy)
+        result = _compose_config(compose_copy, "compose.api.yaml")
         assert result.returncode == 0, result.stderr
         api = json.loads(result.stdout)["services"]["api"]
         assert _bytes_of(api["mem_limit"]) == 768 * 1024**2
@@ -1994,7 +2007,7 @@ def test_ca33_compose_config_resolves(compose_copy: Path) -> None:
                 if not line.startswith(b"DATABASE_URL=")
             )
         )
-        result = _compose_config(compose_copy)
+        result = _compose_config(compose_copy, "compose.api.yaml")
         assert result.returncode != 0
     finally:
         env_file.write_bytes(original_env)
@@ -2011,13 +2024,13 @@ def test_extra_compose_single_quoted_dollar_is_literal(compose_copy: Path) -> No
     value = "ab$cd" + secrets.token_hex(4)
     try:
         api_env.write_bytes(original + f"LOG_LEVEL='{value}'\n".encode())
-        result = _compose_config(compose_copy)
+        result = _compose_config(compose_copy, "compose.api.yaml")  # SPEC-039 section 4.1A
         assert result.returncode == 0, result.stderr
         quoted = json.loads(result.stdout)["services"]["api"]["environment"]["LOG_LEVEL"]
         assert quoted == value.replace("$", "$$")
 
         api_env.write_bytes(original + f"LOG_LEVEL={value}\n".encode())
-        result = _compose_config(compose_copy)
+        result = _compose_config(compose_copy, "compose.api.yaml")
         assert result.returncode == 0, result.stderr
         unquoted = json.loads(result.stdout)["services"]["api"]["environment"]["LOG_LEVEL"]
         assert unquoted == "ab", unquoted  # the $cd... part was interpolated (empty)

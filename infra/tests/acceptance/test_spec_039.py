@@ -2,14 +2,17 @@
 Caddy as an internal router with its own image, secrets in the Coolify panel).
 
 Written by the tester from the SPEC acceptance criteria (black box), before reading the
-implementation. One test (at least) per automated CA, named ``test_caNN_*`` (CA-01 to CA-13;
-CA-14 to CA-18 are manual, on the VPS and in the Coolify panel); ``test_extra_*`` tests cover
-requirements of section 4 that no CA spells out, plus exploratory edge cases.
+implementation. One test (at least) per automated CA, named ``test_caNN_*`` (CA-01 to CA-13 and
+CA-19; CA-14 to CA-18 and CA-20 are manual, on the VPS and in the Coolify panel);
+``test_extra_*`` tests cover requirements of section 4 that no CA spells out, plus exploratory
+edge cases. Since the SEC-39-01 fix, the deploy is two Coolify resources: ``partqc-api``
+(``infra/compose.api.yaml``, the ``api``) and ``partqc-web`` (``infra/compose.yaml``, ``caddy``
+and ``dashboard``), linked by the ``partqc-api-link`` network.
 
-The tests marked ``docker`` (CA-08 to CA-13) run only with ``PARTQC_DOCKER_TESTS=1`` (SPEC-015
-section 4.14): compose projects and build contexts are temporary copies of the tracked tree
-(``copy_tracked_tree`` / ``build_image``), the real working tree is never written, containers
-never publish ports and every container and network created here is removed.
+The tests marked ``docker`` (CA-08 to CA-13, CA-19) run only with ``PARTQC_DOCKER_TESTS=1``
+(SPEC-015 section 4.14): compose projects and build contexts are temporary copies of the
+tracked tree (``copy_tracked_tree`` / ``build_image``), the real working tree is never written,
+containers never publish ports and every container and network created here is removed.
 
 No credential appears as a literal: keys, passwords and markers are generated at run time
 (``secrets``), and the fictitious database URL is assembled from them (``reviews/checklist.md``
@@ -39,7 +42,9 @@ pytestmark = [pytest.mark.acceptance]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INFRA = REPO_ROOT / "infra"
-COMPOSE = INFRA / "compose.yaml"
+COMPOSE = INFRA / "compose.yaml"  # resource partqc-web
+COMPOSE_API = INFRA / "compose.api.yaml"  # resource partqc-api
+COMPOSE_FILES = (COMPOSE_API, COMPOSE)
 CADDYFILE = INFRA / "Caddyfile"
 CADDY_DOCKERFILE_PATH = INFRA / "docker" / "caddy.Dockerfile"
 CADDY_DOCKERIGNORE = INFRA / "docker" / "caddy.Dockerfile.dockerignore"
@@ -54,6 +59,9 @@ CADDY_DOCKERFILE = "infra/docker/caddy.Dockerfile"
 
 TEST_HOST = "partqc.example.org"
 SERVICES = ("caddy", "api", "dashboard")
+LINK = "partqc-api-link"
+API_SECRET_NAMES = ("DATABASE_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+REF_RE = re.compile(r"\$\{([A-Z0-9_]+)")  # how Coolify finds the variables of a resource
 CADDY_FROM = "caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af"
 
 # SPEC-039 section 4.1, items 6 and 7 (exact).
@@ -139,7 +147,8 @@ def _load_yaml(path: Path) -> Any:
 
 
 def _services() -> dict[str, Any]:
-    return _load_yaml(COMPOSE)["services"]
+    """The three services: ``api`` from ``compose.api.yaml``, the others from ``compose.yaml``."""
+    return {**_load_yaml(COMPOSE_API)["services"], **_load_yaml(COMPOSE)["services"]}
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -278,16 +287,17 @@ def _bytes_of(value: Any) -> int:
 
 
 def test_ca01_compose_structure() -> None:
-    data = _load_yaml(COMPOSE)
-    assert data["name"] == "partqc"
-    services = data["services"]
-    assert set(services) == set(SERVICES)
+    web = _load_yaml(COMPOSE)
+    api_file = _load_yaml(COMPOSE_API)
+    assert web["name"] == "partqc"
+    assert set(web["services"]) == {"caddy", "dashboard"}
+    assert api_file["name"] == "partqc-api"
+    assert set(api_file["services"]) == {"api"}
+    services = _services()
 
     for name, svc in services.items():
-        for key in ("ports", "container_name", "network_mode", "privileged", "pid"):
+        for key in ("ports", "container_name", "network_mode", "privileged", "pid", "env_file"):
             assert key not in svc, (name, key)
-        assert "networks" not in svc, name
-        assert "env_file" not in svc, name
         for key in _label_keys(svc.get("labels")):
             assert not key.startswith(("traefik.", "coolify.")), (name, key)
         for vol in svc.get("volumes", []) or []:
@@ -296,19 +306,19 @@ def test_ca01_compose_structure() -> None:
     for name, port in (("caddy", "80"), ("api", "8000"), ("dashboard", "8501")):
         assert [str(p) for p in services[name]["expose"]] == [port], name
 
-    assert "networks" not in data
-    assert "volumes" not in data
+    assert "volumes" not in web and "volumes" not in api_file
+    assert api_file["networks"] == {"link": {"name": LINK, "internal": True}}
+    assert web["networks"] == {"link": {"name": LINK, "external": True}}
+    assert services["api"]["networks"] == ["default", "link"]
+    assert services["caddy"]["networks"] == ["default", "link"]
+    assert "networks" not in services["dashboard"]
 
     caddy = services["caddy"]
     assert caddy["build"] == {"context": "..", "dockerfile": "infra/docker/caddy.Dockerfile"}
     for key in ("image", "environment", "volumes", "healthcheck"):
         assert key not in caddy, key
     assert caddy["tmpfs"] == ["/tmp:size=64m", "/data:size=16m", "/config:size=16m"]
-    deps = caddy["depends_on"]
-    assert set(deps) == {"api", "dashboard"}, deps
-    if isinstance(deps, dict):
-        for dep in deps.values():
-            assert "condition" not in (dep or {}), deps
+    assert caddy["depends_on"] == ["dashboard"], caddy["depends_on"]
 
     for name in ("api", "dashboard"):
         assert services[name]["build"] == {
@@ -334,22 +344,76 @@ def test_ca02_compose_environment_and_secrets() -> None:
         for key, value in env.items():
             assert isinstance(value, str), (name, key, value)
             assert ENV_VALUE_RE.match(value), (name, key, value)
+            assert value != "", (name, key)
     api_env = _env_dict(services["api"]["environment"])
     assert api_env["DATABASE_URL"] == "${DATABASE_URL:?}"
     assert api_env["READ_API_KEY"] == "${READ_API_KEY:?}"
     assert _env_dict(services["dashboard"]["environment"])["READ_API_KEY"] == "${READ_API_KEY:?}"
 
+    web_text = _read(COMPOSE)  # comments included
+    for needle in ("DATABASE_URL", "TELEGRAM_", "ALERTS_"):
+        assert needle not in web_text, needle
+    api_text = _read(COMPOSE_API)
+    for needle in ("PUBLIC_HOST", "MODEL_METRICS_PATH"):
+        assert needle not in api_text, needle
+
+
+def test_extra_referenced_variables_follow_the_split_of_section_4_1a() -> None:
+    """Exploratory (section 4.1A): the names Coolify would create in each resource (``${NAME``
+    references, comments included) are exactly the ones of the table."""
+    web_refs = set(REF_RE.findall(_read(COMPOSE)))
+    api_refs = set(REF_RE.findall(_read(COMPOSE_API)))
+    assert web_refs == {
+        "PUBLIC_HOST",
+        "READ_API_KEY",
+        "MODEL_METRICS_PATH",
+        "DASHBOARD_MEM_LIMIT",
+        "DASHBOARD_CPUS",
+        "DASHBOARD_PIDS_LIMIT",
+        "CADDY_MEM_LIMIT",
+        "CADDY_CPUS",
+        "CADDY_PIDS_LIMIT",
+    }, web_refs
+    assert api_refs == set(API_ENV) | {"API_MEM_LIMIT", "API_CPUS", "API_PIDS_LIMIT"}, api_refs
+
+
+def test_extra_no_empty_value_anywhere_in_the_compose_files() -> None:
+    """Exploratory (section 4.1 item 8): no ``NAME: ""`` (nor ``NAME:`` with null) in any
+    mapping of either file: Coolify swaps an empty value for the saved one."""
+    for path in COMPOSE_FILES:
+        for node in _walk(_load_yaml(path)):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    assert value != "", (path.name, key)
+                    if key in ("environment",):
+                        for k, v in _env_dict(value).items():
+                            assert v not in ("", None), (path.name, k)
+        assert not re.search(r':\s*""\s*$', _read(path), re.M), path.name
+
 
 def test_extra_compose_text_has_no_literal_secret_or_env_file() -> None:
     """Exploratory (R-03): the raw text has no ``env_file``, no ``.env.api``/``.env.dashboard``
     and every ``DATABASE_URL``/``READ_API_KEY`` occurrence is a ``${NAME:?}`` reference."""
-    text = _read(COMPOSE)
-    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    assert "env_file" not in code
-    assert ".env.api" not in text and ".env.dashboard" not in text
-    for m in re.finditer(r"(DATABASE_URL|READ_API_KEY)\s*:\s*(\S+)", code):
-        assert m.group(2).strip("\"'") == "${" + m.group(1) + ":?}", m.group(0)
-    assert "postgres" not in code.lower()
+    for path in COMPOSE_FILES:
+        text = _read(path)
+        code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+        assert "env_file" not in code, path.name
+        assert ".env.api" not in text and ".env.dashboard" not in text, path.name
+        for m in re.finditer(r"(DATABASE_URL|READ_API_KEY)\s*:\s*(\S+)", code):
+            assert m.group(2).strip("\"'") == "${" + m.group(1) + ":?}", m.group(0)
+        assert "postgres" not in code.lower(), path.name
+    assert "supabase" not in _read(COMPOSE).lower()
+
+
+def test_extra_compose_files_have_no_ipv4_or_real_host() -> None:
+    """Exploratory (R-13): the new ``compose.api.yaml`` follows the CA-41 rules of SPEC-015
+    (no IPv4 literal, no domain outside the allowed documentation hosts)."""
+    domain = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|br|me|xyz|cloud)\b")
+    for path in COMPOSE_FILES:
+        text = _read(path)
+        assert not IPV4_RE.search(text), (path.name, IPV4_RE.search(text))
+        for m in domain.finditer(text.lower()):
+            assert m.group(0).endswith(("example.org", "example.com")), (path.name, m.group(0))
 
 
 # ============================================================================================
@@ -378,11 +442,12 @@ def test_ca03_compose_hardening() -> None:
 def test_extra_compose_no_dangerous_keys_anywhere() -> None:
     """Exploratory: no ``ports``/``labels``/``healthcheck`` text in the caddy service, no extra
     capabilities, no ``extra_hosts`` (the SPEC section 7 alternative needs a decision)."""
-    text = _read(COMPOSE)
-    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    for word in ("ports:", "labels:", "traefik", "NET_ADMIN", "SYS_ADMIN", "extra_hosts"):
-        assert word not in code, word
-    assert "docker.sock" not in text
+    for path in COMPOSE_FILES:
+        text = _read(path)
+        code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+        for word in ("ports:", "labels:", "traefik", "NET_ADMIN", "SYS_ADMIN", "extra_hosts"):
+            assert word not in code, (path.name, word)
+        assert "docker.sock" not in text, path.name
     assert "healthcheck" not in json.dumps(_services()["caddy"])
 
 
@@ -465,7 +530,8 @@ def test_ca05_caddy_dockerfile_and_dockerignore() -> None:
         'LABEL partqc.component="caddy"',
     ]
     assert _meaningful_lines(CADDY_DOCKERIGNORE) == ["*", "!infra/Caddyfile"]
-    assert "caddy:2." not in _read(COMPOSE)
+    for path in COMPOSE_FILES:
+        assert "caddy:2." not in _read(path), path.name
 
 
 def test_extra_caddy_dockerfile_has_no_forbidden_instruction() -> None:
@@ -498,7 +564,16 @@ def test_ca06_env_example() -> None:
     assert ENV_TITLE in lines
     block = _env_block(lines)
     joined = "\n".join(block)
-    for needle in ("Coolify", "Locked", "Literal", "ALERTS_", "config --quiet"):
+    for needle in (
+        "Coolify",
+        "Locked",
+        "Literal",
+        "ALERTS_",
+        "config --quiet",
+        "partqc-api",
+        "partqc-web",
+        "compose.api.yaml",
+    ):
         assert needle in joined, needle
     for expected in (
         "PUBLIC_HOST=<subdominio>",
@@ -533,8 +608,8 @@ def test_extra_env_example_coolify_wording() -> None:
     assert "TELEGRAM_" in joined
     flat = " ".join(" ".join(line.lstrip("# ").split()) for line in lines if line.startswith("#"))
     assert (
-        "Na VPS, READ_API_KEY e MODEL_METRICS_PATH vêm das variáveis do recurso no Coolify, "
-        "e API_BASE_URL vem do infra/compose.yaml"
+        "Na VPS, READ_API_KEY e MODEL_METRICS_PATH vêm das variáveis do recurso partqc-web no "
+        "Coolify, e API_BASE_URL vem do infra/compose.yaml"
     ) in flat
     assert "infra/.env.dashboard" not in flat
     # one PUBLIC_HOST line, outside any fake value
@@ -553,6 +628,10 @@ def test_ca07_deployment_plan() -> None:
         "`/infra`",
         "Docker Compose Location",
         "`/compose.yaml`",
+        "`/compose.api.yaml`",
+        "partqc-api",
+        "partqc-web",
+        "partqc-api-link",
         "https://<subdominio>:80",
         "Environment Variables",
         "Locked",
@@ -560,12 +639,16 @@ def test_ca07_deployment_plan() -> None:
         "Preserve repository",
         "Connect to predefined network",
         "com.docker.compose.project=<uuid>",
+        "label=partqc.component",
+        "Config.Env",
         "Manual Git Webhooks",
         "Deploy on push",
         "Just the push event",
         "Enable SSL verification",
+        "2FA",
     ):
         assert needle in text, needle
+    assert any("ARG" in line and "build" in line for line in text.splitlines()), "SEC-39-03"
 
     webhook_secret_in_actions = re.compile(r"secrets\.[A-Za-z0-9_]*WEBHOOK", re.IGNORECASE)
     for line in text.splitlines():
@@ -579,6 +662,8 @@ def test_ca07_deployment_plan() -> None:
             assert "Nunca" in line or "nunca" in line, line
         if "Raw" in line:
             assert "Nunca" in line or "nunca" in line or "não" in line, line
+        if "Connect to predefined network" in line:
+            assert "desligad" in line or "Nunca" in line or "nunca" in line, line
 
     # CA-25, CA-27, CA-38 and CA-41 of SPEC-015 still hold.
     acc015 = _acc015()
@@ -615,7 +700,7 @@ def test_extra_plan_and_repo_reference_no_coolify_api_token_in_actions() -> None
 
 
 # ============================================================================================
-# CA-08 .. CA-13: docker
+# CA-08 .. CA-13, CA-19: docker
 # ============================================================================================
 
 
@@ -627,11 +712,22 @@ def _fake_db() -> tuple[str, str]:
 
 
 def _compose_env() -> dict[str, str]:
-    """The process environment without any variable the compose interpolates."""
+    """The process environment without any variable the compose files interpolate."""
     drop = {"PUBLIC_HOST", "DATABASE_URL", "READ_API_KEY", "MAX_BODY_BYTES", "LOG_LEVEL"}
     drop |= {"MODEL_METRICS_PATH", "API_BASE_URL"}
     prefixes = ("API_", "DASHBOARD_", "CADDY_", "COMPOSE_", "ALERTS_", "TELEGRAM_")
     return {k: v for k, v in os.environ.items() if k not in drop and not k.startswith(prefixes)}
+
+
+def _compose_run(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", "compose", *args],
+        env=_compose_env(),
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
 
 
 class ComposeCopy:
@@ -653,16 +749,18 @@ class ComposeCopy:
         }
         return "".join(f"{k}={v}\n" for k, v in values.items() if k != drop) + extra
 
-    def config(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["docker", "compose", "-f", str(self.root / "infra" / "compose.yaml"), "config"]
-            + list(args or ["--format", "json"]),
-            env=_compose_env(),
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
+    def config(self, filename: str, *args: str) -> subprocess.CompletedProcess:
+        return _compose_run(
+            "-f", str(self.root / "infra" / filename), "config", *(args or ("--format", "json"))
         )
+
+    def resolved(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """``config --format json`` of ``compose.api.yaml`` and of ``compose.yaml``."""
+        api = self.config("compose.api.yaml")
+        assert api.returncode == 0, "config of compose.api.yaml failed"
+        web = self.config("compose.yaml")
+        assert web.returncode == 0, "config of compose.yaml failed"
+        return json.loads(api.stdout), json.loads(web.stdout)
 
 
 @pytest.fixture
@@ -679,11 +777,13 @@ def compose_copy(tmp_path: Path) -> ComposeCopy:
 @pytest.mark.docker
 def test_ca08_compose_config_resolves(compose_copy: ComposeCopy) -> None:
     before = _git_status()
-    result = compose_copy.config()
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
-    api_env = services["api"]["environment"]
-    dash_env = services["dashboard"]["environment"]
+    api_cfg, web_cfg = compose_copy.resolved()
+    api = api_cfg["services"]["api"]
+    dash = web_cfg["services"]["dashboard"]
+    caddy = web_cfg["services"]["caddy"]
+    assert set(api_cfg["services"]) == {"api"}
+    assert set(web_cfg["services"]) == {"caddy", "dashboard"}
+    api_env, dash_env = api["environment"], dash["environment"]
     assert dash_env["API_BASE_URL"] == f"https://{TEST_HOST}"
     assert api_env["DATABASE_URL"] == compose_copy.db_url
     assert api_env["READ_API_KEY"] == dash_env["READ_API_KEY"] == compose_copy.read_key
@@ -692,24 +792,39 @@ def test_ca08_compose_config_resolves(compose_copy: ComposeCopy) -> None:
     assert dash_env["MODEL_METRICS_PATH"] == ""
     for key, value in ALERT_DEFAULTS.items():
         assert api_env[key] == value, key
-    for name in ("dashboard", "caddy"):
-        env = services[name].get("environment") or {}
-        leaked = [k for k in env if k.startswith(("ALERTS_", "TELEGRAM_"))]
+    for name, svc in (("dashboard", dash), ("caddy", caddy)):
+        env = svc.get("environment") or {}
+        leaked = [k for k in env if k == "DATABASE_URL" or k.startswith(("ALERTS_", "TELEGRAM_"))]
         assert not leaked, (name, leaked)
-    for name, svc in services.items():
-        assert not svc.get("ports"), (name, svc.get("ports"))
-    assert _bytes_of(services["api"]["mem_limit"]) == 512 * 1024**2
+    assert api_cfg["networks"]["link"]["name"] == LINK
+    assert api_cfg["networks"]["link"]["internal"] is True
+    assert web_cfg["networks"]["link"]["name"] == LINK
+    assert web_cfg["networks"]["link"]["external"] is True
+    assert {"default", "link"} <= set(api["networks"]), api["networks"]
+    assert {"default", "link"} <= set(caddy["networks"]), caddy["networks"]
+    for cfg in (api_cfg, web_cfg):
+        for name, svc in cfg["services"].items():
+            assert not svc.get("ports"), name
+    assert _bytes_of(api["mem_limit"]) == 512 * 1024**2
     assert _git_status() == before
     assert not (REPO_ROOT / "infra" / ".env").exists()
 
 
 @pytest.mark.docker
-@pytest.mark.parametrize("missing", ["PUBLIC_HOST", "DATABASE_URL", "READ_API_KEY"])
+@pytest.mark.parametrize(
+    ("filename", "missing"),
+    [
+        ("compose.api.yaml", "DATABASE_URL"),
+        ("compose.api.yaml", "READ_API_KEY"),
+        ("compose.yaml", "PUBLIC_HOST"),
+        ("compose.yaml", "READ_API_KEY"),
+    ],
+)
 def test_ca08_compose_config_requires_each_mandatory_variable(
-    compose_copy: ComposeCopy, missing: str
+    compose_copy: ComposeCopy, filename: str, missing: str
 ) -> None:
     compose_copy.env_file.write_text(compose_copy.env_text(drop=missing), encoding="utf-8")
-    result = compose_copy.config()
+    result = compose_copy.config(filename)
     assert result.returncode != 0
     assert missing in result.stderr, result.stderr
     output = result.stdout + result.stderr
@@ -718,13 +833,21 @@ def test_ca08_compose_config_requires_each_mandatory_variable(
 
 
 @pytest.mark.docker
+def test_ca08_web_compose_does_not_need_the_database_url(compose_copy: ComposeCopy) -> None:
+    compose_copy.env_file.write_text(compose_copy.env_text(drop="DATABASE_URL"))
+    result = compose_copy.config("compose.yaml")
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.docker
 def test_extra_compose_config_quiet_with_limit_override_and_alerts(
     compose_copy: ComposeCopy,
 ) -> None:
-    """Exploratory: ``config --quiet`` (the local check of section 4.1 item 10) passes; a panel
-    override of a limit and of the alert variables reaches only the api; a non-numeric pids
-    limit fails without echoing values."""
-    assert compose_copy.config("--quiet").returncode == 0
+    """Exploratory: ``config --quiet`` of both files passes (the local check of section 4.4); a
+    panel override of a limit and of the alert variables reaches only the api; a non-numeric
+    pids limit fails without echoing values."""
+    for filename in ("compose.api.yaml", "compose.yaml"):
+        assert compose_copy.config(filename, "--quiet").returncode == 0, filename
     chat = str(secrets.randbelow(10**9))
     token = secrets.token_urlsafe(24)
     compose_copy.env_file.write_text(
@@ -736,21 +859,19 @@ def test_extra_compose_config_quiet_with_limit_override_and_alerts(
         ),
         encoding="utf-8",
     )
-    result = compose_copy.config()
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
-    assert _bytes_of(services["api"]["mem_limit"]) == 768 * 1024**2
-    assert int(services["dashboard"]["pids_limit"]) == 512
-    assert int(services["api"]["pids_limit"]) == 256
-    api_env = services["api"]["environment"]
-    assert api_env["ALERTS_ENABLED"] == "true"
-    assert api_env["TELEGRAM_CHAT_ID"] == chat
-    assert api_env["TELEGRAM_BOT_TOKEN"] == token
-    assert api_env["LOG_LEVEL"] == "DEBUG"
-    assert token not in json.dumps(services["dashboard"]) + json.dumps(services["caddy"])
+    api_cfg, web_cfg = compose_copy.resolved()
+    api = api_cfg["services"]["api"]
+    assert _bytes_of(api["mem_limit"]) == 768 * 1024**2
+    assert int(web_cfg["services"]["dashboard"]["pids_limit"]) == 512
+    assert int(api["pids_limit"]) == 256
+    assert api["environment"]["ALERTS_ENABLED"] == "true"
+    assert api["environment"]["TELEGRAM_CHAT_ID"] == chat
+    assert api["environment"]["TELEGRAM_BOT_TOKEN"] == token
+    assert api["environment"]["LOG_LEVEL"] == "DEBUG"
+    assert token not in json.dumps(web_cfg["services"])
 
     compose_copy.env_file.write_text(compose_copy.env_text(extra="API_PIDS_LIMIT=abc\n"))
-    bad = compose_copy.config("--quiet")
+    bad = compose_copy.config("compose.api.yaml", "--quiet")
     assert bad.returncode != 0
     assert compose_copy.read_key not in bad.stdout + bad.stderr
 
@@ -760,16 +881,27 @@ def test_extra_compose_single_quoted_dollar_in_a_secret_is_literal(
     compose_copy: ComposeCopy,
 ) -> None:
     """Exploratory: a key with ``$`` in single quotes in the env file reaches the containers
-    literally (``config`` prints it as ``$$``); unquoted, compose interpolates it. Coolify's
-    "Literal" flag exists for this reason (section 4.1 item 6, CA-17)."""
+    literally (``config`` prints it as ``$$``), in both resources. Coolify's "Literal" flag
+    exists for this reason (section 4.1 item 6, CA-17)."""
     value = "ab$cd" + secrets.token_hex(6)
     compose_copy.env_file.write_text(
         compose_copy.env_text(drop="READ_API_KEY", extra=f"READ_API_KEY='{value}'\n")
     )
-    result = compose_copy.config()
-    assert result.returncode == 0, result.stderr
-    env = json.loads(result.stdout)["services"]["api"]["environment"]
-    assert env["READ_API_KEY"] == value.replace("$", "$$")
+    api_cfg, web_cfg = compose_copy.resolved()
+    assert api_cfg["services"]["api"]["environment"]["READ_API_KEY"] == value.replace("$", "$$")
+    dash_env = web_cfg["services"]["dashboard"]["environment"]
+    assert dash_env["READ_API_KEY"] == value.replace("$", "$$")
+
+
+def _coolify_config(
+    env_file: Path, project: str, copy: Path, compose_file: Path, *args: str
+) -> subprocess.CompletedProcess:
+    """``docker compose`` in the form Coolify uses (ADR-023)."""
+    return _compose_run(
+        "--env-file", str(env_file), "--project-name", project,
+        "--project-directory", str(copy / "infra"), "-f", str(compose_file),
+        "config", *(args or ("--format", "json")),
+    )  # fmt: skip
 
 
 @pytest.mark.docker
@@ -778,59 +910,173 @@ def test_ca09_compose_config_in_the_coolify_invocation(tmp_path: Path) -> None:
     copy = support.copy_tracked_tree(tmp_path / "coolify-copy")
     assert not (copy / "infra" / ".env").exists()
     db_url, _ = _fake_db()
-    env_file = tmp_path / "coolify.env"
-    env_file.write_text(
-        f"PUBLIC_HOST={TEST_HOST}\nDATABASE_URL={db_url}\n"
-        f"READ_API_KEY={secrets.token_urlsafe(32)}\n",
-        encoding="utf-8",
+    key = secrets.token_urlsafe(32)
+    api_env = tmp_path / "api.env"
+    api_env.write_text(f"DATABASE_URL={db_url}\nREAD_API_KEY={key}\n", encoding="utf-8")
+    web_env = tmp_path / "web.env"
+    web_env.write_text(f"PUBLIC_HOST={TEST_HOST}\nREAD_API_KEY={key}\n", encoding="utf-8")
+
+    api = _coolify_config(
+        api_env, "partqc-api-coolify-test", copy, copy / "infra" / "compose.api.yaml"
     )
-    result = subprocess.run(
-        ["docker", "compose", "--env-file", str(env_file)]
-        + ["--project-name", "partqc-coolify-test"]
-        + ["--project-directory", str(copy / "infra")]
-        + ["-f", str(copy / "infra" / "compose.yaml"), "config", "--format", "json"],
-        env=_compose_env(),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    cfg = json.loads(result.stdout)
-    assert cfg["name"] == "partqc-coolify-test"
+    assert api.returncode == 0, api.stderr
+    web = _coolify_config(web_env, "partqc-web-coolify-test", copy, copy / "infra" / "compose.yaml")
+    assert web.returncode == 0, web.stderr
+    api_cfg, web_cfg = json.loads(api.stdout), json.loads(web.stdout)
+    assert api_cfg["name"] == "partqc-api-coolify-test"
+    assert web_cfg["name"] == "partqc-web-coolify-test"
     root = Path(copy).resolve()
+    services = {**api_cfg["services"], **web_cfg["services"]}
+    assert set(services) == set(SERVICES)
     for name in SERVICES:
-        build = cfg["services"][name]["build"]
+        build = services[name]["build"]
         assert Path(build["context"]).is_absolute(), build
         assert Path(build["context"]).resolve() == root, (name, build)
         assert build["dockerfile"].endswith(f"infra/docker/{name}.Dockerfile"), (name, build)
-    assert cfg["services"]["dashboard"]["environment"]["API_BASE_URL"] == f"https://{TEST_HOST}"
-    # exploratory: the Coolify form also resolves without ports, volumes or networks of its own
-    for name, svc in cfg["services"].items():
+    assert web_cfg["services"]["dashboard"]["environment"]["API_BASE_URL"] == f"https://{TEST_HOST}"
+    # exploratory: the Coolify form resolves without ports or volumes
+    for name, svc in services.items():
         assert not svc.get("ports"), name
         assert not svc.get("volumes"), (name, svc.get("volumes"))
-    assert not cfg.get("volumes"), cfg.get("volumes")
+    assert not api_cfg.get("volumes") and not web_cfg.get("volumes")
 
 
 @pytest.mark.docker
-def test_extra_coolify_invocation_fails_without_the_panel_variables(tmp_path: Path) -> None:
-    """Exploratory: the same invocation with an empty ``--env-file`` (variables not created in
+@pytest.mark.parametrize("filename", ["compose.api.yaml", "compose.yaml"])
+def test_extra_coolify_invocation_fails_without_the_panel_variables(
+    tmp_path: Path, filename: str
+) -> None:
+    """Exploratory: the Coolify invocation with an empty ``--env-file`` (variables not created in
     the panel) fails and names a mandatory variable: the ``:?`` blocks the deploy."""
     copy = _support().copy_tracked_tree(tmp_path / "coolify-copy")
     env_file = tmp_path / "coolify.env"
     env_file.write_text("", encoding="utf-8")
-    result = subprocess.run(
-        ["docker", "compose", "--env-file", str(env_file), "--project-name", "partqc-c39"]
-        + ["--project-directory", str(copy / "infra")]
-        + ["-f", str(copy / "infra" / "compose.yaml"), "config", "--quiet"],
-        env=_compose_env(),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    result = _coolify_config(env_file, "partqc-c39", copy, copy / "infra" / filename, "--quiet")
     assert result.returncode != 0
     assert any(v in result.stderr for v in ("PUBLIC_HOST", "DATABASE_URL", "READ_API_KEY"))
+
+
+# --------------------------------------------------------------------------------------------
+# CA-19 (docker): simulation of the Coolify env_file (SEC-39-01, section 4.1A)
+# --------------------------------------------------------------------------------------------
+
+
+def _default_of(text: str, name: str) -> str:
+    m = re.search(r"\$\{" + name + r":-([^}]*)\}", text)
+    return m.group(1) if m else ""
+
+
+class CoolifyResource:
+    """One Coolify resource: its own checkout, its compose file rewritten with
+    ``env_file: [".env"]`` on every service, and an ``infra/.env`` with exactly the names the
+    original file references (fictitious values)."""
+
+    def __init__(
+        self,
+        root: Path,
+        path_in_repo: str,
+        compose_text: str,
+        values: dict[str, str],
+        services: dict[str, Any],
+    ) -> None:
+        self.root = root
+        self.names = sorted(set(REF_RE.findall(compose_text)))
+        self.compose = root / path_in_repo  # rewritten in place, as Coolify does
+        data = yaml.safe_load(compose_text)
+        data["services"] = services if services else data["services"]
+        for svc in data["services"].values():
+            svc["env_file"] = [".env"]
+        self.compose.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        env = {n: values.get(n, _default_of(compose_text, n)) for n in self.names}
+        self.env_file.write_text("".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8")
+
+    @property
+    def env_file(self) -> Path:
+        return self.root / "infra" / ".env"
+
+    def config(self, project: str) -> tuple[int, dict[str, Any]]:
+        """Return code and resolved config; the output is never printed (fictitious secrets)."""
+        result = _coolify_config(self.env_file, project, self.root, self.compose)
+        return result.returncode, (json.loads(result.stdout) if result.returncode == 0 else {})
+
+
+@pytest.fixture
+def coolify_values() -> dict[str, str]:
+    db_url, password = _fake_db()
+    return {
+        "DATABASE_URL": db_url,
+        "_password": password,
+        "READ_API_KEY": secrets.token_urlsafe(32),
+        "TELEGRAM_BOT_TOKEN": secrets.token_urlsafe(32),
+        "PUBLIC_HOST": TEST_HOST,
+    }
+
+
+def _resource(tmp_path: Path, name: str, path_in_repo: str, values, services=None):
+    root = _support().copy_tracked_tree(tmp_path / name)
+    text = (root / path_in_repo).read_text(encoding="utf-8")
+    return CoolifyResource(root, path_in_repo, text, values, services or {})
+
+
+def _leaks(svc: dict[str, Any], values: dict[str, str]) -> list[str]:
+    """Names of the API secrets found in a resolved service (keys or values), without values."""
+    env = svc.get("environment") or {}
+    found = [k for k in API_SECRET_NAMES if k in env]
+    blob = json.dumps(svc)
+    for label in ("DATABASE_URL", "_password", "TELEGRAM_BOT_TOKEN"):
+        if values[label] in blob:
+            found.append(f"value of {label}")
+    return found
+
+
+@pytest.mark.docker
+def test_ca19_coolify_env_file_keeps_the_api_secrets_in_the_api_resource(
+    tmp_path: Path, coolify_values: dict[str, str]
+) -> None:
+    api_res = _resource(tmp_path, "partqc-api", "infra/compose.api.yaml", coolify_values)
+    web_res = _resource(tmp_path, "partqc-web", "infra/compose.yaml", coolify_values)
+
+    for name in API_SECRET_NAMES:
+        assert name not in web_res.names, name
+    assert not [n for n in web_res.names if n.startswith("ALERTS_")], web_res.names
+    assert "DATABASE_URL" in api_res.names and "TELEGRAM_BOT_TOKEN" in api_res.names
+
+    api_code, api_cfg = api_res.config("partqc-api-ca19-test")
+    web_code, web_cfg = web_res.config("partqc-web-ca19-test")
+    assert api_code == 0, "config of the partqc-api resource failed"
+    assert web_code == 0, "config of the partqc-web resource failed"
+
+    for name in ("caddy", "dashboard"):
+        assert _leaks(web_cfg["services"][name], coolify_values) == [], name
+    api_env = api_cfg["services"]["api"]["environment"]
+    assert (api_env["DATABASE_URL"] == coolify_values["DATABASE_URL"]) is True
+    assert (api_env["TELEGRAM_BOT_TOKEN"] == coolify_values["TELEGRAM_BOT_TOKEN"]) is True
+
+
+@pytest.mark.docker
+def test_ca19_negative_control_one_resource_would_leak(
+    tmp_path: Path, coolify_values: dict[str, str]
+) -> None:
+    """Control: the same simulation with the three services in ONE resource (the r1 layout)
+    reproduces SEC-39-01: the dashboard and the caddy receive the database URL. Without this,
+    a simulation that never leaks would make CA-19 pass vacuously."""
+    merged = {**_load_yaml(COMPOSE_API)["services"], **_load_yaml(COMPOSE)["services"]}
+    for svc in merged.values():
+        svc.pop("networks", None)  # one resource: the default network only
+    text = _read(COMPOSE_API) + "\n" + _read(COMPOSE)  # the references of both files
+    root = _support().copy_tracked_tree(tmp_path / "single")
+    single = CoolifyResource(root, "infra/compose.yaml", _read(COMPOSE), coolify_values, merged)
+    single.names = sorted(set(REF_RE.findall(text)))
+    env = {n: coolify_values.get(n, _default_of(text, n)) for n in single.names}
+    single.env_file.write_text("".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8")
+    data = yaml.safe_load(single.compose.read_text(encoding="utf-8"))
+    data.pop("networks", None)
+    single.compose.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    code, cfg = single.config("partqc-single-ca19-test")
+    assert code == 0, "config of the single resource failed"
+    for name in ("caddy", "dashboard"):
+        assert "DATABASE_URL" in _leaks(cfg["services"][name], coolify_values), name
 
 
 @pytest.fixture(scope="module")
@@ -1011,7 +1257,72 @@ def test_extra_caddy_context_admits_only_the_caddyfile(build_image: Callable[...
 
 
 # --------------------------------------------------------------------------------------------
-# CA-12 (docker): Caddy routes on a private network, under the compose options
+# Exploratory (docker): local up of both projects, secrets per container (CA-20 rehearsal)
+# --------------------------------------------------------------------------------------------
+
+LOCAL_PROJECTS = ("partqc-test-039-tester-api", "partqc-test-039-tester-web")
+
+
+def _env_names(container: str) -> list[str]:
+    raw = _inspect(container, "{{json .Config.Env}}")
+    return [item.split("=", 1)[0] for item in json.loads(raw or "[]")]
+
+
+@pytest.mark.docker
+def test_extra_local_up_of_both_projects_keeps_api_secrets_in_the_api(tmp_path: Path) -> None:
+    """Exploratory (section 4.1A, CA-20 rehearsal without Coolify): ``up -d --build`` of
+    ``compose.api.yaml`` and then ``compose.yaml`` (own project names), from one ``infra/.env``
+    with every variable. ``Config.Env`` of the ``dashboard`` and the ``caddy`` has none of the
+    API secrets (names or values); the ``api`` has them; ``partqc-api-link`` is ``internal``
+    and holds the api and the caddy; no container publishes a port. Everything is removed."""
+    if _docker("network", "inspect", LINK).returncode == 0:
+        pytest.skip(f"a network named {LINK} already exists on this host (not ours)")
+    db_url, password = _fake_db()
+    token = secrets.token_urlsafe(32)
+    key = secrets.token_urlsafe(32)
+    env = (
+        f"PUBLIC_HOST={TEST_HOST}\nDATABASE_URL={db_url}\nREAD_API_KEY={key}\n"
+        f"TELEGRAM_BOT_TOKEN={token}\nTELEGRAM_CHAT_ID=1\n"
+    )
+    copy = _support().copy_tracked_tree(tmp_path / "local-up", {"infra/.env": env.encode()})
+    files = (copy / "infra" / "compose.api.yaml", copy / "infra" / "compose.yaml")
+    try:
+        for project, compose_file in zip(LOCAL_PROJECTS, files, strict=True):
+            up = _compose_run("-p", project, "-f", str(compose_file), "up", "-d", "--build")
+            assert up.returncode == 0, up.stderr[-2000:].replace(password, "<password>")
+        ids: dict[str, str] = {}
+        for project, compose_file in zip(LOCAL_PROJECTS, files, strict=True):
+            for service in _load_yaml(compose_file)["services"]:
+                ps = _compose_run("-p", project, "-f", str(compose_file), "ps", "-q", service)
+                ids[service] = ps.stdout.strip()
+                assert ids[service], (project, service)
+        secrets_values = (db_url, password, token)
+        for service in ("dashboard", "caddy"):
+            names = _env_names(ids[service])
+            bad = [n for n in names if n in API_SECRET_NAMES or n.startswith("ALERTS_")]
+            assert bad == [], (service, bad)
+            raw = _inspect(ids[service], "{{json .Config.Env}}")
+            assert not any(v in raw for v in secrets_values), service
+            assert "supabase" not in raw.lower(), service
+        api_names = set(_env_names(ids["api"]))
+        assert {"DATABASE_URL", "READ_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"} <= (
+            api_names
+        )
+        assert "PUBLIC_HOST" not in api_names and "MODEL_METRICS_PATH" not in api_names
+        assert "READ_API_KEY" in _env_names(ids["dashboard"])
+        assert _inspect(LINK, "{{.Internal}}") == "true"
+        members = set(json.loads(_inspect(LINK, "{{json .Containers}}") or "{}"))
+        assert {ids["api"], ids["caddy"]} <= members, "api and caddy on the link network"
+        for service, cid in ids.items():
+            assert _inspect(cid, "{{json .HostConfig.PortBindings}}") in ("{}", "null"), service
+    finally:
+        for project, compose_file in reversed(list(zip(LOCAL_PROJECTS, files, strict=True))):
+            _compose_run("-p", project, "-f", str(compose_file), "down", "--rmi", "local")
+    assert _docker("network", "inspect", LINK).returncode != 0, "link network left behind"
+
+
+# --------------------------------------------------------------------------------------------
+# CA-12 (docker): Caddy routes through the web and link networks, under the compose options
 # --------------------------------------------------------------------------------------------
 
 
@@ -1027,8 +1338,8 @@ class Containers:
         self.names.append(name)
         return name
 
-    def network(self) -> str:
-        name = f"partqc-acc039-net-{uuid.uuid4().hex[:8]}"
+    def network(self, prefix: str = "net") -> str:
+        name = f"partqc-acc039-{prefix}-{uuid.uuid4().hex[:8]}"
         result = _docker("network", "create", "--internal", name)
         assert result.returncode == 0, result.stderr
         self.networks.append(name)
@@ -1119,36 +1430,49 @@ def _hardened(service: str) -> list[str]:
 def routed_stack(
     api_image: str, dashboard_image: str, caddy_image: str, containers: Containers
 ) -> dict[str, str]:
-    net = containers.network()
+    """CA-12: network ``web`` (dashboard, caddy, probe) and network ``link`` (``--internal``, like
+    ``partqc-api-link``: api, caddy). ``web`` is also ``--internal`` here, so no test container
+    has a way out (stricter than the CA, which only requires it of ``link``)."""
+    web = containers.network("web")
+    link = containers.network("link")
     db_url, _ = _fake_db()
     key = secrets.token_urlsafe(32)
-    containers.run(
-        api_image, "--network", net, "--network-alias", "api",
+    api = containers.run(
+        api_image, "--network", link, "--network-alias", "api",
         "-e", f"DATABASE_URL={db_url}", "-e", f"READ_API_KEY={key}", *_hardened("api"),
     )  # fmt: skip
     dash = containers.run(
-        dashboard_image, "--network", net, "--network-alias", "dashboard",
+        dashboard_image, "--network", web, "--network-alias", "dashboard",
         "-e", f"API_BASE_URL=https://{TEST_HOST}", "-e", f"READ_API_KEY={key}",
         *_hardened("dashboard"),
     )  # fmt: skip
     caddy = containers.run(
-        caddy_image, "--network", net, "--network-alias", "caddy",
+        caddy_image, "--network", web, "--network-alias", "caddy",
         "--read-only",
         "--tmpfs", "/tmp:size=64m", "--tmpfs", "/data:size=16m", "--tmpfs", "/config:size=16m",
         "--cap-drop", "ALL", "--cap-add", "NET_BIND_SERVICE",
         "--security-opt", "no-new-privileges", "--pids-limit", "256",
     )  # fmt: skip
+    connected = _docker("network", "connect", "--alias", "caddy", link, caddy)
+    assert connected.returncode == 0, connected.stderr
+    nets = json.loads(_inspect(caddy, "{{json .NetworkSettings.Networks}}"))
+    assert set(nets) == {web, link}, nets
+    assert set(json.loads(_inspect(api, "{{json .NetworkSettings.Networks}}"))) == {link}
+    assert set(json.loads(_inspect(dash, "{{json .NetworkSettings.Networks}}"))) == {web}
+    mounts = json.loads(_inspect(caddy, "{{json .Mounts}}") or "[]")
+    assert mounts == [], mounts
+    assert _inspect(caddy, "{{json .HostConfig.PortBindings}}") in ("{}", "null")
 
     def healthy() -> bool:
         assert _inspect(dash, "{{.State.Status}}") == "running", _logs(dash)
         return _inspect(dash, "{{.State.Health.Status}}") == "healthy"
 
     assert _wait(healthy, 90), _logs(dash)
-    return {"net": net, "caddy": caddy, "dashboard": dash, "client": api_image}
+    return {"net": web, "link": link, "caddy": caddy, "dashboard": dash, "client": api_image}
 
 
 @pytest.mark.docker
-def test_ca12_caddy_routes_on_a_private_network(routed_stack: dict[str, str]) -> None:
+def test_ca12_caddy_routes_through_the_link_network(routed_stack: dict[str, str]) -> None:
     net, caddy, client = routed_stack["net"], routed_stack["caddy"], routed_stack["client"]
     paths = ("/api/v1/health", "/_stcore/health", "/docs", "/openapi.json")
 
@@ -1215,6 +1539,39 @@ def test_extra_caddy_blocks_api_docs_variants_and_accepts_any_host(
     assert other["/api/v1/health"]["status"] in (200, 503), other
 
 
+DIRECT_PROBE = (
+    "import socket, sys\n"
+    "try:\n"
+    "    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=5).close()\n"
+    "    print('open')\n"
+    "except Exception as exc:\n"
+    "    print(type(exc).__name__)\n"
+)
+
+
+@pytest.mark.docker
+def test_extra_api_is_reachable_only_through_the_link_network(
+    routed_stack: dict[str, str],
+) -> None:
+    """Exploratory (section 4.1 item 4): from the ``web`` network the name ``api`` does not
+    resolve (only the Caddy, on both networks, reaches it); from the ``link`` network it does."""
+    client = routed_stack["client"]
+    for net, expected_open in ((routed_stack["net"], False), (routed_stack["link"], True)):
+
+        def probe(net: str = net) -> str:
+            result = _docker(
+                "run", "--rm", "--network", net, "--entrypoint", "python", client,
+                "-c", DIRECT_PROBE, "api", "8000",
+                timeout=120,
+            )  # fmt: skip
+            return result.stdout.strip()
+
+        if expected_open:
+            assert _wait(lambda: probe() == "open", 90), probe()
+        else:
+            assert probe() != "open"
+
+
 @pytest.mark.docker
 def test_extra_caddy_runs_stateless_under_compose_options(
     caddy_image: str, containers: Containers
@@ -1273,7 +1630,7 @@ def test_ca13_env_sentinels_stay_out_of_api_and_dashboard(
     before = _git_status()
     image = build_image(dockerfile, _sentinels(env_marker))
     assert _git_status() == before
-    for path in ("/app/infra/.env", "/app/.env"):
+    for path in ("/app/infra/.env", "/app/.env", "/app/infra"):  # /app/infra: SEC-39-02
         result = _docker(
             "run", "--rm", "--network", "none", "--entrypoint", "test", image, "-e", path
         )
@@ -1316,9 +1673,15 @@ def test_ca13_ca36_of_spec_015_still_holds(
 
 def test_extra_dockerignores_keep_the_env_rules() -> None:
     """Section 4.6: the api and dashboard ``.dockerignore`` keep ``**/.env*`` (and the
-    case variant of SPEC-032); the Caddy one starts by excluding everything."""
+    case variant of SPEC-032) and exclude ``infra/`` (SEC-39-02) without excluding the
+    workspace files; the Caddy one starts by excluding everything."""
     for component in ("api", "dashboard"):
         lines = _meaningful_lines(INFRA / "docker" / f"{component}.Dockerfile.dockerignore")
         assert "**/.env*" in lines, component
         assert any(line.startswith("**/.[eE][nN][vV]") for line in lines), component
+        # SEC-39-02 (section 4.6): infra/ excluded, with no exception that reopens it
+        assert "infra/" in lines or "infra" in lines, component
+        assert not [line for line in lines if line.startswith("!infra")], component
+        for kept in ("pyproject.toml", "uv.lock", "packages", "packages/"):
+            assert kept not in lines, (component, kept)
     assert _meaningful_lines(CADDY_DOCKERIGNORE)[0] == "*"

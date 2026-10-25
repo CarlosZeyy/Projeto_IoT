@@ -743,6 +743,12 @@ def _size_bytes(value: str) -> int:
     return int(m.group(1)) * {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[m.group(2)]
 
 
+def _all_services() -> dict[str, Any]:
+    """SPEC-039 sections 4.1 and 4.1A: ``api`` from ``compose.api.yaml``, the others from
+    ``compose.yaml``."""
+    return {**_load_yaml(INFRA / "compose.api.yaml")["services"], **_load_yaml(COMPOSE)["services"]}
+
+
 def _tmpfs_items(svc: dict[str, Any]) -> list[str]:
     tmpfs = svc.get("tmpfs")
     assert tmpfs is not None
@@ -758,7 +764,7 @@ def _tmpfs_size(item: str) -> str | None:
 
 
 def test_ca06_compose_hardening() -> None:
-    services = _load_yaml(COMPOSE)["services"]
+    services = _all_services()  # SPEC-039 section 4.1: the api in infra/compose.api.yaml
     assert set(services) == set(SERVICES)
     for name, svc in services.items():
         assert svc.get("read_only") is True, name
@@ -778,7 +784,7 @@ def test_ca06_compose_hardening() -> None:
 
 def test_extra_compose_tmpfs_mount_points_are_exact() -> None:
     """``/tmpfoo`` or ``/home/application`` would pass a bare ``startswith``."""
-    services = _load_yaml(COMPOSE)["services"]
+    services = _all_services()  # SPEC-039 section 4.1: the api in infra/compose.api.yaml
     for name, svc in services.items():
         for item in _tmpfs_items(svc):
             target = item.split(":", 1)[0]
@@ -847,9 +853,10 @@ def compose_copy(tmp_path: Path) -> Path:
     )
 
 
-def _compose(copy: Path, *args: str) -> subprocess.CompletedProcess:
+def _compose(copy: Path, *args: str, filename: str = "compose.yaml") -> subprocess.CompletedProcess:
+    # SPEC-039 section 4.1: compose.yaml (caddy, dashboard) or compose.api.yaml (api)
     return subprocess.run(
-        ["docker", "compose", "-f", str(copy / "infra" / "compose.yaml"), *args],
+        ["docker", "compose", "-f", str(copy / "infra" / filename), *args],
         env=_compose_env(),
         capture_output=True,
         text=True,
@@ -861,30 +868,37 @@ def _compose(copy: Path, *args: str) -> subprocess.CompletedProcess:
 @pytest.mark.docker
 def test_ca06_compose_config_quiet(compose_copy: Path) -> None:
     before = _git_status()
-    result = _compose(compose_copy, "config", "--quiet")
-    assert result.returncode == 0, result.stderr
+    for filename in ("compose.api.yaml", "compose.yaml"):  # SPEC-039 section 4.1: both files
+        result = _compose(compose_copy, "config", "--quiet", filename=filename)
+        assert result.returncode == 0, result.stderr
     assert _git_status() == before
     assert not (REPO_ROOT / "infra" / ".env").exists()
 
 
 @pytest.mark.docker
+def _resolved_services(copy: Path) -> dict[str, Any]:
+    """SPEC-039 section 4.1: ``config`` of both files, services merged."""
+    services: dict[str, Any] = {}
+    for filename in ("compose.api.yaml", "compose.yaml"):
+        result = _compose(copy, "config", "--format", "json", filename=filename)
+        assert result.returncode == 0, result.stderr
+        services.update(json.loads(result.stdout)["services"])
+    return services
+
+
 def test_extra_compose_config_resolves_pids_and_override(compose_copy: Path) -> None:
-    result = _compose(compose_copy, "config", "--format", "json")
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    services = _resolved_services(compose_copy)
     for name in SERVICES:
         assert int(services[name]["pids_limit"]) == 256, name
         assert services[name]["read_only"] is True, name
     env_file = compose_copy / "infra" / ".env"
     base = env_file.read_text(encoding="utf-8")  # SPEC-039 section 4.1: keep the mandatory ones
     env_file.write_text(base + "DASHBOARD_PIDS_LIMIT=512\n", encoding="utf-8")
-    result = _compose(compose_copy, "config", "--format", "json")
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    services = _resolved_services(compose_copy)
     assert int(services["dashboard"]["pids_limit"]) == 512
     assert int(services["api"]["pids_limit"]) == 256
     env_file.write_text(base + "API_PIDS_LIMIT=abc\n", encoding="utf-8")
-    result = _compose(compose_copy, "config", "--quiet")
+    result = _compose(compose_copy, "config", "--quiet", filename="compose.api.yaml")
     assert result.returncode != 0
     assert "abc" not in result.stdout
 
@@ -905,7 +919,7 @@ def dashboard_image(build_image: Callable[..., str]) -> str:
 
 
 def _tmpfs_args(service: str) -> list[str]:
-    svc = _load_yaml(COMPOSE)["services"][service]
+    svc = _all_services()[service]  # SPEC-039 section 4.1: the api in infra/compose.api.yaml
     args: list[str] = []
     for item in _tmpfs_items(svc):
         args += ["--tmpfs", item]
