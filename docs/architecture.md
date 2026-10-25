@@ -37,7 +37,7 @@ Fonte de verdade técnica do projeto. As SPECs detalham cada parte, mas **não p
 | `packages/contracts/` | `qc-contracts` (`qc_contracts`) | Enums, schemas Pydantic v2, rótulos PT-BR, regra `is_defective` | pydantic | qualquer I/O |
 | `packages/preprocess/` | `qc-preprocess` (`qc_preprocess`) | Pré-processamento determinístico da imagem (idêntico no treino e na borda) | numpy, pillow | torch |
 | `edge/` | `qc-edge` (`qc_edge`) | Gateway de borda: página do celular, inferência, decisão, outbox, publisher, modo coleta | qc-contracts, qc-preprocess, fastapi, uvicorn, onnxruntime, qrcode, httpx, python-multipart | torch |
-| `api/` | `qc-api` (`qc_api`) | API na nuvem: ingestão, leitura, métricas, SPC | qc-contracts, fastapi, uvicorn, psycopg 3 (pool), pydantic-settings, httpx | torch, onnxruntime |
+| `api/` | `qc-api` (`qc_api`) | API na nuvem: ingestão, leitura, métricas, SPC; alertas no Telegram (a partir da SPEC-017, §4) | qc-contracts, fastapi, uvicorn, psycopg 3 (pool), pydantic-settings, httpx | torch, onnxruntime |
 | `dashboard/` | `qc-dashboard` | Painel Streamlit | qc-contracts, streamlit, plotly, pandas, httpx | torch, onnxruntime, acesso direto ao banco |
 | `ml/` | `qc-ml` (`qc_ml`) | Manifest, split, treino, avaliação, export ONNX, paridade | qc-contracts, qc-preprocess, numpy, pandas, scikit-learn, onnxruntime, pillow; **extra opcional `train`**: torch, torchvision, timm, onnx, coral-pytorch | — |
 | `scripts/` | (scripts soltos, executados com o ambiente do `qc-api`) | `simulate.py`, `register_device.py`, `smoke_test.py` | httpx, qc-contracts, psycopg | — |
@@ -162,7 +162,27 @@ Resposta (com os campos da 0.3.0; `points` abreviado a 1 dos 100 itens de uma hi
 | `POST /devices/{device_id}/heartbeat` | dispositivo | `HeartbeatCreate` → **204** sem corpo (a partir da SPEC-018). Um `UPDATE` da linha do dispositivo, sem histórico: grava `last_heartbeat_at = now()` e `last_seen_at = now()` (hora do servidor) e os campos do corpo; o `sent_at` da borda fica só para diagnóstico. `device_id` do caminho fora de `DEVICE_ID_PATTERN` ou corpo inválido → 422, sem o corpo no log | 018 |
 | `GET /devices` | leitura | **200** `list[DeviceStatus]`, em ordem de `device_id`, no máximo 500 itens (a partir da SPEC-018). `online = last_heartbeat_at is not null and now() − last_heartbeat_at < 180 s`, pela hora do servidor em UTC; `last_source` pela inspeção de maior `received_at` | 018 |
 
-A partir da SPEC-017, a API tem um laço em segundo plano, desligado por padrão (`ALERTS_ENABLED`), que avisa no Telegram quando um lote concluído fica fora de controle (tabela `alerts_sent`; sem rota nova).
+**Alertas no Telegram** (a partir da SPEC-017; RF-17, sem rota nova e sem mudança de contrato). Um laço em segundo plano, desligado por padrão, avisa num chat do Telegram quando um lote concluído fica fora de controle (`qc_api.services.alerts`):
+- **Laço:** com `ALERTS_ENABLED=true` e a configuração válida, o `lifespan` cria uma tarefa `asyncio` (`app.state.alerts_task`; `None` sem laço) que roda `run_check` numa thread (`asyncio.to_thread`) na subida e depois a cada `ALERTS_CHECK_INTERVAL_S`, nunca no caminho de uma requisição. Uma exceção na verificação é registrada só pela classe e pelo SQLSTATE (regra de erros de banco abaixo) e o laço continua. No encerramento, a tarefa é cancelada.
+- **Regra:** por origem (`live` sempre; `simulated` só com `ALERTS_INCLUDE_SIMULATED=true`), a carta p do §3.4 com `baseline_lots=20` e `min_lot_size=5`, sem filtro de tipo, lida pela seleção limitada do ADR-017 com tetos inteiros (`max_points=3`, `max_excluded=0`, nunca `None`). Um ponto `out_of_control` gera alerta quando a última inspeção do lote (`ended_at`) tem pelo menos `ALERTS_LOT_IDLE_MINUTES` e no máximo `ALERTS_LOOKBACK_HOURS` em relação ao relógio do servidor (UTC). Pela ADR-021, só contam as inspeções com grau.
+- **Deduplicação e teto:** a linha de `alerts_sent` (§5) é inserida **antes** do envio, com `INSERT … ON CONFLICT DO NOTHING RETURNING`; sem linha devolvida, o lote já foi tratado. A chave primária garante uma mensagem por lote também com mais de um worker do uvicorn, e um `pg_advisory_xact_lock` (de transação, válido no pooler em modo transaction) serializa a conferência do teto e a inserção, sem ficar preso durante o envio. Com `ALERTS_MAX_PER_HOUR` linhas criadas na última hora, o alerta é pulado sem linha, com um aviso que traz a contagem. No máximo uma tentativa por alerta: `delivered = true` só depois de o Telegram aceitar; uma falha fica `false` e não é repetida.
+- **Envio:** `POST https://api.telegram.org/bot<token>/sendMessage` com `{"chat_id", "text"}` (texto puro em PT-BR, sem imagem, R-02; `[SIMULADO]` no início quando a origem é `simulated`, R-06), `httpx` síncrono com timeout de 5 s, `trust_env=False` e sem seguir redirecionamento. Sucesso só com HTTP 200 e `{"ok": true}`; o resto é falha registrada, e nunca afeta a ingestão.
+- **Token (R-03):** o token vai só na URL do Telegram. Nunca aparece em log (um filtro nos loggers `httpx` e `httpcore` e nos filhos do `httpcore` troca o token e a parte depois de `:` por `***`), em resposta da API nem em mensagem de exceção registrada (as do `httpx` são registradas só pela classe). No `Settings`, o token é `SecretStr`.
+
+**Configuração da API** (variáveis de ambiente; na VPS, no `infra/.env.api`; documentadas no `.env.example` e no `api/README.md`). Além de `DATABASE_URL` (§2) e `READ_API_KEY` (autenticação abaixo), a partir da SPEC-017:
+
+| Variável | Padrão | Regra |
+|---|---|---|
+| `ALERTS_ENABLED` | `false` | booleano |
+| `TELEGRAM_BOT_TOKEN` | vazio | obrigatória com os alertas ligados; `[0-9]{3,20}:[A-Za-z0-9_-]{20,100}` (casamento completo) |
+| `TELEGRAM_CHAT_ID` | vazio | obrigatória com os alertas ligados; `-?[0-9]{1,20}` (casamento completo) |
+| `ALERTS_LOT_IDLE_MINUTES` | `10` | inteiro de 1 a 1.440 |
+| `ALERTS_LOOKBACK_HOURS` | `24` | inteiro de 1 a 168 |
+| `ALERTS_CHECK_INTERVAL_S` | `60` | inteiro de 30 a 3.600 |
+| `ALERTS_MAX_PER_HOUR` | `10` | inteiro de 1 a 60 |
+| `ALERTS_INCLUDE_SIMULATED` | `false` | booleano |
+
+As regras ficam fora do `Settings`, em `load_alert_config`, porque os alertas nunca podem impedir a API de subir: com `ALERTS_ENABLED=true` e alguma variável inválida (ou com o próprio `ALERTS_ENABLED` inválido), a API sobe normalmente, registra **um** erro `alerts disabled: invalid configuration (<nomes>)`, só com os nomes das variáveis e sem os valores, e não inicia o laço. Um número ou booleano vazio vale o padrão. No Render (reserva fria, que hiberna), os alertas só rodam enquanto a reserva está acordada (SPEC-017 §7).
 
 **Autenticação** (header `X-API-Key`):
 - **Dispositivo:** a chave é gerada por `scripts/register_device.py`. Só o hash SHA-256 fica na tabela `devices`, e a comparação usa `secrets.compare_digest`. O `device_id` do corpo precisa ser o dono da chave; caso contrário, retorna 403. No heartbeat (a partir da SPEC-018), a mesma regra vale para o `device_id` do caminho. A cada escrita, atualiza `devices.last_seen_at`.
@@ -191,7 +211,18 @@ inspections(
   check ((object_type = 'unknown') = (grade is null))
 )
 -- índices: (inspected_at), (lot_id), (source, inspected_at), (device_id)
--- RLS habilitado em devices, inspections e schema_migrations, sem políticas e sem force
+-- a partir da SPEC-017 (migração 005):
+alerts_sent(
+  lot_id text not null check (lot_id ~ '^[A-Za-z0-9_-]{1,40}$'),
+  source text not null check (source in ('live','simulated')),
+  kind text not null check (kind in ('out_of_control')),
+  created_at timestamptz not null default now(),
+  delivered boolean not null default false,
+  primary key (lot_id, source, kind)
+)
+-- índice: (created_at)
+-- RLS habilitado em devices, inspections, schema_migrations e (a partir da SPEC-017) alerts_sent,
+--   sem políticas e sem force
 --   → as chaves anon/authenticated não leem nem escrevem nada; o dono (a API) não é afetado.
 ```
 
@@ -199,6 +230,7 @@ inspections(
 - **Restrições da `002`** (SPEC-027; a partir do merge dela): `model_version` com a regex do contrato; `inspection_id` com versão 4 e variante RFC 4122 (`UUID4` do pydantic); `inspected_at` e `received_at` na faixa do `datetime` do Python em UTC (`>= 0001-01-01 00:00:00+00` e `< 10000-01-01 00:00:00+00`, o que recusa `infinity`). Sem elas, uma linha gravada fora da API (SQL Editor, migração manual) derrubava a leitura com 500. A migração confere antes as linhas existentes e recusa, só com contagens na mensagem, se alguma violar as regras.
 - **Restrições da `003`** (SPEC-016 §4.2, ADR-021; a partir da SPEC-016): o `check` de `object_type` aceita os 8 valores do `ObjectType` 0.4.0, e o `check ((object_type = 'unknown') = (grade is null))` do esquema acima é trocado pela invariante dos grupos de grau (§3.1): `screw`/`nut` com grau, `unknown` sem grau e as ferramentas manuais com ou sem grau. `is_defective` não muda.
 - **Colunas da `004`** (`004_device_heartbeat.sql`, SPEC-018 §4.2; a partir da SPEC-018): `devices` ganha, todas anuláveis, `last_heartbeat_at timestamptz` (hora do servidor; decide o `online` do §4), `hb_sent_at timestamptz` (relógio da borda, só diagnóstico), `hb_model_version text`, `hb_model_sha256 text` e `hb_app_version text` (`check` com as regexes do contrato 0.5.0), `hb_uptime_s`, `hb_outbox_pending` e `hb_outbox_dead` (`integer`, `check (>= 0)`) e `check ((hb_model_version is null) = (hb_model_sha256 is null))`. Só o último heartbeat de cada dispositivo fica guardado (sem histórico).
+- **Tabela da `005`** (`005_alerts.sql`, SPEC-017 §4.3; a partir da SPEC-017): `alerts_sent`, uma linha por alerta já tratado (`lot_id`, `source`, `kind`), inserida pela API **antes** do envio ao Telegram. A chave primária `(lot_id, source, kind)` é a deduplicação (uma mensagem por lote e origem, também com vários workers); a regex de `lot_id` espelha o `LOT_ID_PATTERN` do contrato, e `kind` aceita só `out_of_control`. `created_at` é o `now` da verificação (relógio do servidor em UTC, o mesmo das janelas do §4), e o índice em `created_at` serve à contagem do teto por hora a cada verificação. `delivered` só vira `true` depois de o Telegram aceitar a mensagem; uma falha fica `false` e não é repetida. RLS habilitado, sem políticas e sem `force`, como as demais tabelas. Sem chave estrangeira para `inspections`.
 - **Colunas `real` (`float4`):** arredondam (ex.: `0.97` vira `0.9700000286`) e recusam com `22003` todo valor diferente de zero que arredonde para zero (abaixo de cerca de `7e-46`). A API converte esse erro em 422 (§4); a borda legítima não produz esses valores.
 - **Grants do Supabase:** o RLS não cobre `TRUNCATE`, `REFERENCES` e `TRIGGER`. Projetos novos do Supabase deixaram de dar grants automáticos a `anon`/`authenticated` nas tabelas novas do `public` (changelog 45329, <https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically>, consultado em 2026-10-12), mas isso depende da opção escolhida na criação. A SPEC-015 (CA-14) confere os grants em produção e os revoga se existirem; o `revoke` não vai para uma migração, porque esses papéis não existem no Postgres local nem no do CI.
 
