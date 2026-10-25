@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Test |
+| Status | In Review |
 | Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: contrato, banco, API, borda e dashboard) e depois ml-engineer (Parte B: `qc-ml`), na mesma rodada (§6) |
 | Tags | contrato, security |
