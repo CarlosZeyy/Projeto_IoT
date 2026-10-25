@@ -39,6 +39,8 @@ def test_repository_migrations_are_valid() -> None:
     assert migrations[1].filename == "002_contract_checks.sql"
     assert [m.version for m in migrations][:3] == ["001", "002", "003"]
     assert migrations[2].filename == "003_tool_object_types.sql"
+    assert [m.version for m in migrations][:4] == ["001", "002", "003", "004"]
+    assert migrations[3].filename == "004_device_heartbeat.sql"
 
 
 def test_ordered_by_number(tmp_path: Path) -> None:
