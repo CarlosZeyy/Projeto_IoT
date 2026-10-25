@@ -49,6 +49,7 @@ from qc_ml.data import (
     ITEM_ID_PATTERN,
     ITEM_PREFIX_TYPES,
     KNOWN_OBJECT_TYPES,
+    NO_GRADE,
     SPLIT_NAMES,
     configure_logging,
     dominant_grade,
@@ -57,6 +58,7 @@ from qc_ml.data import (
     load_exclusions,
     load_manifest,
     print_problems,
+    tool_grade_coverage,
 )
 from qc_ml.errors import ManifestError, SplitError, SplitIntegrityError
 
@@ -94,6 +96,15 @@ class SplitResult:
 
     frame: pd.DataFrame
     warnings: list[dict[str, Any]] = field(default_factory=list)
+
+
+class ExtensionError(SplitError):
+    """Extended types that would have no item in test (SPEC-016 section 4.7); ``lines`` has one
+    ``too few items to extend the test: <type>`` per type, in order."""
+
+    def __init__(self, lines: Sequence[str]) -> None:
+        self.lines = list(lines)
+        super().__init__("\n".join(self.lines))
 
 
 def round_half_up(value: Decimal | float | int) -> int:
@@ -435,12 +446,17 @@ def make_split(
 
     ADR-022 (SPEC-016 section 4.7), only with ``previous`` (ignored for ``split_v1``): the images
     of the ``defer_types`` leave ``df`` before anything else; the non-external items of each of
-    the ``extend_test_types`` are split 70/15/15 by the procedure of ``split_v1`` (strata
-    ``(type, dominant grade)``, a fresh ``numpy`` generator from ``seed`` for each type), with
-    ``small_stratum`` warnings carrying ``"scope": "test_extension"``. The checks of the two
+    the ``extend_test_types`` are split 70/15/15 by the procedure of ``split_v1`` (a fresh
+    ``numpy`` generator from ``seed`` for each type), with ``small_stratum`` warnings carrying
+    ``"scope": "test_extension"``. The strata follow ADR-022, decision 3, with "type with grade"
+    read as a graded type (SPEC-016 section 4.7): ``(type, dominant grade)`` when the tool is
+    graded by ``tool_grade_coverage(df)`` (any type that is not a tool keeps its dominant
+    grade), ``(type, "none")`` (the whole type) when the tool is ungraded. The checks of the two
     lists over every earlier version are made by ``type_decision_problems`` (the CLI); here an
-    extended type with an item already in ``previous`` or ``history``, or with fewer than 3
-    non-external items, is a ``SplitError``.
+    extended type with an item already in ``previous`` or ``history`` is a ``SplitError``, and
+    an extended type that would have no item in test (fewer than 3 non-external items in
+    particular) is an ``ExtensionError`` (one ``too few items to extend the test: <type>`` line
+    per type).
 
     Raises:
         ValueError: ``max_external_fraction`` outside ``(0, 1]``.
@@ -472,6 +488,14 @@ def make_split(
         if both:
             raise SplitError(f"object types both extended and deferred: {', '.join(both)}")
         extended = set(extend_test_types)
+        # SPEC-016 4.7: the criterion of section 4.6 on the df read by the CLI of the split.
+        coverage = tool_grade_coverage(df)
+
+        def extension_strata(object_type: str, stratum: tuple[str, str]) -> tuple[str, str]:
+            if object_type in coverage and not coverage[object_type]["graded"]:
+                return (object_type, NO_GRADE)  # an ungraded tool: the whole type
+            return stratum
+
         df = df[~df["object_type"].isin(list(defer_types))]
     df = df[~df["image_path"].isin(list(excluded))]
     external = df["item_id"].map(lambda i: is_external_item(str(i))).astype(bool)
@@ -552,7 +576,9 @@ def make_split(
             elif old:
                 assignment[item_id] = old[0]
             elif item_type in extended:
-                extension_groups[item_type][strata[item_id]].append(item_id)
+                extension_groups[item_type][extension_strata(item_type, strata[item_id])].append(
+                    item_id
+                )
             else:
                 new_groups[strata[item_id]].append(item_id)
         new_assignment, allocation_warnings = _allocate(
@@ -560,19 +586,26 @@ def make_split(
         )
         assignment.update(new_assignment)
         warnings.extend(allocation_warnings)
+        without_test: list[str] = []
         for object_type in sorted(extended):
             groups_of_type = extension_groups.get(object_type, {})
             n_items = sum(len(ids) for ids in groups_of_type.values())
             if n_items < MIN_EXTENSION_ITEMS:
-                raise SplitError(TOO_FEW_TO_EXTEND + object_type)
+                without_test.append(object_type)
+                continue
             # ADR-022: the procedure of split_v1 (test included), its own generator per type.
             extension, extension_warnings = _allocate(
                 dict(groups_of_type), np.random.default_rng(seed), r_val, r_test
             )
+            if "test" not in extension.values():
+                without_test.append(object_type)
+                continue
             assignment.update(extension)
             for warning in extension_warnings:
                 warning["scope"] = "test_extension"
             warnings.extend(extension_warnings)
+        if without_test:
+            raise ExtensionError([TOO_FEW_TO_EXTEND + t for t in without_test])
 
     splits = [assignment[item_id] for item_id in df["item_id"]]
     check_item_integrity(df, splits)
@@ -1002,6 +1035,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             extend_test_types=extend,
             defer_types=defer,
         )
+    except ExtensionError as exc:
+        for line in exc.lines:  # each alone on its line, like type_decision_problems
+            print(line, file=sys.stderr)
+        return EXIT_ERROR
     except SplitError as exc:
         print(f"split error: {exc}", file=sys.stderr)
         return EXIT_ERROR

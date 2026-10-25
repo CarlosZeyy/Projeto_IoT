@@ -10,6 +10,7 @@ import csv
 import json
 import logging
 import shutil
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -17,10 +18,12 @@ import pytest
 
 from qc_ml import split
 from qc_ml.data import (
+    GRADES,
     TOOL_OBJECT_TYPES,
     build_data_report,
     is_external_item,
     load_manifest,
+    tool_grade_coverage,
 )
 from qc_ml.errors import SplitError
 from qc_ml.split import (
@@ -165,13 +168,91 @@ def test_extension_is_the_split_v1_procedure_per_type(ca15: tuple[Path, Path]) -
         return {p: s for p, s in pairs if p in allen}
 
     assert pick(one) == pick(every)
-    # per stratum of 4 items: 1 test, 1 val, 2 train (as split_v1 with 4 items)
+    # allen_key is ungraded (4 items x 3 images per grade): one stratum of 20 items -> 14/3/3
     own = df[(df["object_type"] == "allen_key") & ~df["item_id"].map(is_external_item)]
     splits_of = pick(one)
+    pairs = zip(own["image_path"], own["item_id"], strict=True)
+    per_item = {i: splits_of[p] for p, i in pairs}
+    assert sorted(Counter(per_item.values()).items()) == [("test", 3), ("train", 14), ("val", 3)]
+
+
+def _items_by_split(dataset: Path, split_csv: Path, tool: str) -> dict[str, Counter]:
+    """grade -> Counter(split -> n items) of the non-external items of ``tool``."""
+    df = _load(dataset)
+    mapping = _split_map(split_csv)
+    own = df[(df["object_type"] == tool) & ~df["item_id"].map(is_external_item)]
+    result: dict[str, Counter] = {}
     for grade, part in own.groupby("grade"):
-        pairs = zip(part["image_path"], part["item_id"], strict=True)
-        per_item = {i: splits_of[p] for p, i in pairs}
-        assert sorted(per_item.values()) == ["test", "train", "train", "val"], grade
+        items = {i: mapping[p] for p, i in zip(part["image_path"], part["item_id"], strict=True)}
+        result[str(grade)] = Counter(items.values())
+    return result
+
+
+def _extend_after_v1(tmp_path: Path, **kwargs) -> tuple[Path, Path]:
+    plain_kwargs = {k: v for k, v in kwargs.items() if k != "tool_items_per_stratum"}
+    plain = make_synthetic_dataset(tmp_path / "plain", **plain_kwargs)
+    assert _cli(plain, tmp_path / "splits") == 0
+    tools = make_synthetic_dataset(tmp_path / "tools", **kwargs)
+    assert _cli(tools, tmp_path / "splits", "--extend-test-types", TOOLS) == 0
+    return tools, tmp_path / "splits" / "split_v2.csv"
+
+
+def test_ca23_ungraded_tool_is_one_stratum(tmp_path: Path) -> None:
+    dataset, split_csv = _extend_after_v1(tmp_path, tool_items_per_stratum=1)
+    for tool in TOOL_OBJECT_TYPES:
+        total = sum(_items_by_split(dataset, split_csv, tool).values(), Counter())
+        assert total == Counter({"train": 3, "val": 1, "test": 1}), tool
+
+
+def test_ca23_graded_tool_is_split_by_grade(tmp_path: Path) -> None:
+    dataset, split_csv = _extend_after_v1(tmp_path, images_per_item=12, tool_items_per_stratum=5)
+    for tool in TOOL_OBJECT_TYPES:
+        by_grade = _items_by_split(dataset, split_csv, tool)
+        assert sorted(by_grade) == sorted(GRADES)
+        for grade, counts in by_grade.items():
+            assert counts == Counter({"train": 3, "val": 1, "test": 1}), (tool, grade)
+
+
+def test_graded_type_without_any_test_item_is_refused(tmp_path: Path) -> None:
+    """A graded tool whose 5 items have 5 different dominant grades: 5 strata of 1 item, no
+    test item -> ExtensionError (SPEC-016 4.7), even with 3 or more items."""
+    dataset = make_synthetic_dataset(tmp_path / "ds")
+    assert _cli(dataset, tmp_path / "splits") == 0
+    df = _load(dataset)
+    v1 = load_split(tmp_path / "splits" / "split_v1.csv")
+    rows = []
+    for k in range(5):  # item k: 12 images of every grade, plus 1 of grade k (its dominant)
+        item = f"T-00{k + 1}"
+        grades = [g for g in GRADES for _ in range(12)] + [GRADES[k]]
+        rows += [
+            {"image_path": f"raw/pliers/x/{item}__{j}.jpg", "item_id": item,
+             "object_type": "pliers", "grade": g}
+            for j, g in enumerate(grades)
+        ]  # fmt: skip
+    frame = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+    assert tool_grade_coverage(frame)["pliers"]["graded"] is True
+    with pytest.raises(split.ExtensionError) as excinfo:
+        make_split(frame, previous=v1, extend_test_types=["pliers"])
+    assert excinfo.value.lines == ["too few items to extend the test: pliers"]
+
+
+def test_cli_prints_each_extension_error_alone(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_synthetic_dataset(tmp_path / "ds")
+    assert _cli(dataset, tmp_path / "splits") == 0
+    for k in range(3):
+        add_synthetic_item(dataset, f"T-00{k + 1}", "allen_key", "good", seed=k)
+    lines = ["too few items to extend the test: allen_key"]
+
+    def refuse(*args, **kwargs):
+        raise split.ExtensionError(lines)
+
+    monkeypatch.setattr(split, "make_split", refuse)
+    capsys.readouterr()
+    assert _cli(dataset, tmp_path / "splits", "--extend-test-types", "allen_key") == 2
+    assert capsys.readouterr().err.splitlines() == lines
+    assert not (tmp_path / "splits" / "split_v2.csv").exists()
 
 
 def test_ca15e_too_few_items_to_extend(tmp_path: Path, capsys) -> None:
