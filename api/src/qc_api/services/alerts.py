@@ -12,6 +12,10 @@
   *before* the message is sent; no row back means the lot was already handled. At most one try
   per alert: a failure keeps ``delivered = false`` and is never retried. With
   ``ALERTS_MAX_PER_HOUR`` rows created in the last hour, the alert is skipped without a row.
+* **Total timeout** (section 4.5): the whole send (client setup, name resolution, connect, write,
+  status line, headers and body) runs in a daemon worker thread that the caller waits for at most
+  ``SEND_TIMEOUT_S``; past that, the send is a failure and the worker is abandoned. While an
+  abandoned send is still alive, no new alert is reserved nor sent (at most one stuck thread).
 * **Secret** (section 4.5, R-03): the token goes only in the Telegram URL. It never reaches a
   log record (a filter on the ``httpx`` and ``httpcore`` loggers replaces it with ``***``), an
   API response or a logged exception message: ``httpx`` errors are logged only by class.
@@ -32,6 +36,7 @@ import contextlib
 import json
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -60,7 +65,10 @@ ALERT_MAX_EXCLUDED = 0
 ALERT_KIND = "out_of_control"
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
+# Section 4.5: total timeout of the whole request, name resolution included.
 SEND_TIMEOUT_S = 5.0
+# How long a check waits for a send abandoned at its deadline to end before giving up the check.
+ABANDONED_SEND_GRACE_S = 1.0
 # Telegram answers a sendMessage with a small JSON; anything bigger is not a success.
 MAX_RESPONSE_BYTES = 65_536
 REDACTED = "***"
@@ -407,47 +415,100 @@ def mark_delivered(pool: ConnectionPool, alert: Alert) -> None:
 # --------------------------------------------------------------------------- Telegram
 
 
-def send_message(
-    client: httpx.Client,
-    config: AlertConfig,
-    text: str,
-    *,
-    monotonic: Callable[[], float] = time.monotonic,
-) -> bool:
-    """POST ``sendMessage``; ``True`` only for HTTP 200 with ``{"ok": true}`` (section 4.5).
+_abandoned_lock = threading.Lock()
+_abandoned_sends: list[threading.Thread] = []
 
-    Every other outcome (status, 429, timeout, network error, a body that is not that JSON,
-    larger than ``MAX_RESPONSE_BYTES`` or slower than ``SEND_TIMEOUT_S`` in total, any exception)
-    is a failure, logged without the token: exceptions only by class. Never raises.
 
-    ``SEND_TIMEOUT_S`` bounds each network operation (connect, write, each read) and, checked
-    after each chunk of the body, the whole request (the edge precedent, SPEC-030).
+def previous_send_running(grace_s: float = ABANDONED_SEND_GRACE_S) -> bool:
+    """``True`` while a send abandoned at its deadline is still alive, after up to ``grace_s``.
+
+    An abandoned worker cannot be interrupted (threads cannot be); it ends on its own when its
+    network operation ends. Until then no new alert is reserved, so at most one thread is stuck.
     """
-    url = f"{TELEGRAM_API_BASE}/bot{config.token}/sendMessage"
-    body = {"chat_id": config.chat_id, "text": text}
+    with _abandoned_lock:
+        threads = list(_abandoned_sends)
+    limit = time.monotonic() + grace_s
+    for thread in threads:
+        thread.join(max(0.0, limit - time.monotonic()))
+    with _abandoned_lock:
+        _abandoned_sends[:] = [thread for thread in _abandoned_sends if thread.is_alive()]
+        return bool(_abandoned_sends)
+
+
+def _post(
+    transport: httpx.BaseTransport | None,
+    url: str,
+    body: dict[str, str],
+    cancelled: threading.Event,
+    monotonic: Callable[[], float],
+) -> tuple[bool, str]:
+    """The request itself, run in the worker thread: ``(delivered, failure reason)``.
+
+    Never raises and never logs (the caller logs, so an abandoned worker stays silent). The
+    reason carries only integers and exception class names, never the token.
+    """
     start = monotonic()
     try:
-        with client.stream("POST", url, json=body) as response:
+        with _client(transport) as client, client.stream("POST", url, json=body) as response:
             status = response.status_code
             content = bytearray()
             for chunk in response.iter_bytes():
                 content.extend(chunk)
                 if len(content) > MAX_RESPONSE_BYTES:
-                    logger.warning("telegram send failed: response too large (status=%d)", status)
-                    return False
-                if monotonic() - start > SEND_TIMEOUT_S:
-                    logger.warning("telegram send failed: deadline exceeded (status=%d)", status)
-                    return False
-    except Exception as exc:  # httpx errors and anything else: one try, logged by class only
-        logger.warning("telegram send failed: error=%s", type(exc).__name__)
-        return False
+                    return False, f"response too large (status={status})"
+                # The caller enforces the deadline; this only lets an abandoned worker end soon.
+                if cancelled.is_set() or monotonic() - start > SEND_TIMEOUT_S:
+                    return False, f"deadline exceeded (status={status})"
+    except Exception as exc:  # httpx errors and anything else: one try, reported by class only
+        return False, f"error={type(exc).__name__}"
     if status != 200:
-        logger.warning("telegram send failed: status=%d", status)
-        return False
+        return False, f"status={status}"
     if not _telegram_ok(bytes(content)):
-        logger.warning("telegram send failed: status=%d without ok=true", status)
+        return False, f"status={status} without ok=true"
+    return True, ""
+
+
+def send_message(
+    config: AlertConfig,
+    text: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> bool:
+    """POST ``sendMessage``; ``True`` only for HTTP 200 with ``{"ok": true}`` (section 4.5).
+
+    Every other outcome (status, 429, timeout, network error, a body that is not that JSON,
+    larger than ``MAX_RESPONSE_BYTES``, any exception) is a failure, logged without the token:
+    exceptions only by class. Never raises.
+
+    The total timeout is ``SEND_TIMEOUT_S`` for the whole request: the client is built and used
+    in a daemon worker thread (name resolution, connect, write, status line, headers and body all
+    happen there), and this function waits for it at most ``SEND_TIMEOUT_S``. Past that, the send
+    is a failure; the worker is abandoned and ends on its own (see ``previous_send_running``).
+    ``monotonic`` is the worker's clock for its own deadline check between body chunks.
+    """
+    url = f"{TELEGRAM_API_BASE}/bot{config.token}/sendMessage"
+    body = {"chat_id": config.chat_id, "text": text}
+    outcome: list[tuple[bool, str]] = []
+    cancelled = threading.Event()
+
+    def work() -> None:
+        outcome.append(_post(transport, url, body, cancelled, monotonic))
+
+    worker = threading.Thread(target=work, name="qc-api-telegram-send", daemon=True)
+    worker.start()
+    worker.join(SEND_TIMEOUT_S)
+    if not outcome:
+        cancelled.set()
+        if worker.is_alive():
+            with _abandoned_lock:
+                _abandoned_sends.append(worker)
+        logger.warning("telegram send failed: deadline exceeded")
         return False
-    return True
+    delivered, reason = outcome[0]
+    if not delivered:
+        logger.warning("telegram send failed: %s", reason)
+    return delivered
 
 
 def _telegram_ok(content: bytes) -> bool:
@@ -491,16 +552,26 @@ def run_check(
     if not alerts:
         return 0
     sent = 0
-    with _client(transport) as client:
-        for alert in alerts:
-            if not reserve_alert(pool, alert, now, config.max_per_hour):
-                continue
-            if send_message(client, config, format_alert_text(alert.point, alert.source)):
-                mark_delivered(pool, alert)
-                sent += 1
-                logger.info(
-                    "alert sent: lot_id=%s source=%s", alert.point.lot_id, alert.source.value
-                )
+    for alert in alerts:
+        try:  # before the reservation: an inconsistent point never leaves a row behind
+            text = format_alert_text(alert.point, alert.source)
+        except ValueError:
+            logger.warning(
+                "alert skipped: point inside the control limits (lot_id=%s, source=%s)",
+                alert.point.lot_id,
+                alert.source.value,
+            )
+            continue
+        if previous_send_running():
+            # Nothing reserved: the alert may go out in a later check, while still in the window.
+            logger.warning("alerts check stopped: a previous send is still running")
+            break
+        if not reserve_alert(pool, alert, now, config.max_per_hour):
+            continue
+        if send_message(config, text, transport=transport):
+            mark_delivered(pool, alert)
+            sent += 1
+            logger.info("alert sent: lot_id=%s source=%s", alert.point.lot_id, alert.source.value)
     return sent
 
 
@@ -580,7 +651,8 @@ async def stop_alerts_task(task: asyncio.Task[None] | None) -> None:
     """Cancel the alert loop and wait for the task to end.
 
     A check already running in its thread is not interrupted (threads cannot be): it finishes on
-    its own, bounded by the pool and HTTP timeouts, and is not awaited here.
+    its own, bounded by the pool timeout and by ``SEND_TIMEOUT_S`` per send, and is not awaited
+    here. A send abandoned at its deadline runs in a daemon thread and never holds the exit.
     """
     if task is None:
         return

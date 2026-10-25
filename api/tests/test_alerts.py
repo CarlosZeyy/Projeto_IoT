@@ -381,14 +381,14 @@ def timeout(request: httpx.Request) -> httpx.Response:
 
 
 def _send(token: str, handler: Callable[[httpx.Request], httpx.Response], **kw: Any) -> bool:
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        return send_message(client, config(token), "Lote L-1 fora", **kw)
+    return send_message(
+        config(token), "Lote L-1 fora", transport=httpx.MockTransport(handler), **kw
+    )
 
 
 def test_send_posts_the_json_body_to_the_bot_path(token: str) -> None:
     recorder = Recorder(ok)
-    with alerts._client(recorder.transport()) as client:
-        assert send_message(client, config(token), "texto") is True
+    assert send_message(config(token), "texto", transport=recorder.transport()) is True
     (request,) = recorder.requests
     assert request.method == "POST"
     assert request.url.host == "api.telegram.org"
@@ -481,6 +481,42 @@ def test_run_check_ignores_alerts_enabled(token: str, monkeypatch: pytest.Monkey
     s = alert_settings(token, ALERTS_ENABLED=False)
     assert alerts.run_check(ExplodingPool(), s, now=T.astimezone(brt)) == 0  # type: ignore[arg-type]
     assert seen == [T] and seen[0].tzinfo is UTC
+
+
+def test_inconsistent_point_is_dropped_before_the_reservation(
+    token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """RV-03 (r1 review): the text is built first, so a point inside the limits leaves no row
+    and does not abort the other alerts of the check."""
+    inside = point(0.3, 0.645, 0.0, lot_id="L-001").model_copy(update={"out_of_control": True})
+    lots = [alerts.Alert(Source.LIVE, inside), alerts.Alert(Source.LIVE, point(0.8, 0.645, 0.0))]
+    reserved: list[str] = []
+    delivered: list[str] = []
+    monkeypatch.setattr(alerts, "find_alerts", lambda pool, cfg, now: lots)
+
+    def fake_reserve(pool: Any, alert: alerts.Alert, now: datetime, max_per_hour: int) -> bool:
+        reserved.append(alert.point.lot_id)
+        return True
+
+    monkeypatch.setattr(alerts, "reserve_alert", fake_reserve)
+    monkeypatch.setattr(
+        alerts, "mark_delivered", lambda pool, alert: delivered.append(alert.point.lot_id)
+    )
+    recorder = Recorder(ok)
+    caplog.set_level(logging.WARNING, logger="qc_api.alerts")
+    sent = alerts.run_check(
+        ExplodingPool(),  # type: ignore[arg-type]
+        alert_settings(token),
+        now=T,
+        transport=recorder.transport(),
+    )
+    assert sent == 1
+    assert reserved == ["L-005"]
+    assert delivered == ["L-005"]
+    assert len(recorder.requests) == 1
+    assert "alert skipped: point inside the control limits (lot_id=L-001, source=live)" in [
+        record.getMessage() for record in caplog.records
+    ]
 
 
 # --------------------------------------------------------------------------- loop (4.2)
