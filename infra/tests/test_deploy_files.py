@@ -1,5 +1,9 @@
 """Static checks of the deploy files (SPEC-015 sections 4.1 to 4.4 and 4.10 to 4.14).
 
+The compose file, the Caddyfile and the infra/.env block follow SPEC-039 (Coolify, ADR-023),
+which replaces SPEC-015 sections 4.12 and 4.13 where they differ; test_coolify_deploy.py has the
+rest of the SPEC-039 checks.
+
 No Docker, network or database: the files are read as YAML, TOML or text.
 """
 
@@ -21,7 +25,6 @@ DOCKERFILES = {
     "api": INFRA / "docker" / "api.Dockerfile",
     "dashboard": INFRA / "docker" / "dashboard.Dockerfile",
 }
-PUBLIC_HOST_REQUIRED = re.compile(r"^\$\{PUBLIC_HOST:\?[^}]*\}$")
 
 
 def _yaml(path: Path) -> dict:
@@ -310,17 +313,26 @@ TMPFS_SIZE = re.compile(r"(?:^|,)size=(\d+)([kmg]?)(?:,|$)")
 
 
 def test_compose_structure() -> None:
+    """SPEC-015 section 4.12 as amended by SPEC-039 section 4.1 (Coolify, no published ports)."""
     compose = _yaml(INFRA / "compose.yaml")
     services = compose["services"]
     assert compose["name"] == "partqc"
     assert set(services) == {"caddy", "api", "dashboard"}
-    assert services["caddy"]["ports"] == ["80:80", "443:443", "443:443/udp"]
-    assert "ports" not in services["api"] and "ports" not in services["dashboard"]
-    assert services["api"]["expose"] == ["8000"]
-    assert services["dashboard"]["expose"] == ["8501"]
+    assert set(compose) == {"name", "services"}  # no top-level networks nor volumes
+    expose = {"caddy": ["80"], "api": ["8000"], "dashboard": ["8501"]}
     for name, service in services.items():
-        for key in ("privileged", "network_mode", "pid", "container_name"):
+        for key in (
+            "ports",
+            "privileged",
+            "network_mode",
+            "pid",
+            "container_name",
+            "networks",
+            "env_file",
+            "labels",
+        ):
             assert key not in service, (name, key)
+        assert service["expose"] == expose[name]
         assert not [v for v in service.get("volumes", []) if "docker.sock" in str(v)]
         assert service["restart"] == "unless-stopped"
         assert "no-new-privileges:true" in service["security_opt"]
@@ -330,30 +342,17 @@ def test_compose_structure() -> None:
         }
         assert (service["mem_limit"], service["cpus"]) == LIMITS[name]
         assert service["cap_drop"] == ["ALL"]
-        assert not {"DATABASE_URL", "READ_API_KEY"} & set(service.get("environment") or {})
-    for name in ("api", "dashboard"):
-        assert services[name]["build"] == {
+        assert service["build"] == {
             "context": "..",
             "dockerfile": f"infra/docker/{name}.Dockerfile",
         }
-        assert services[name]["env_file"] == [f".env.{name}"]
-    assert re.fullmatch(
-        r"https://\$\{PUBLIC_HOST:\?[^}]*\}", services["dashboard"]["environment"]["API_BASE_URL"]
-    )
+        assert "image" not in service
     caddy = services["caddy"]
-    assert PUBLIC_HOST_REQUIRED.fullmatch(caddy["environment"]["PUBLIC_HOST"])
-    (alias,) = caddy["networks"]["partqc"]["aliases"]
-    assert PUBLIC_HOST_REQUIRED.fullmatch(alias)
-    assert re.fullmatch(r"caddy:2\.\d+\.\d+(-alpine)?(@sha256:[0-9a-f]{64})?", caddy["image"])
-    assert set(caddy["volumes"]) >= {
-        "./Caddyfile:/etc/caddy/Caddyfile:ro",
-        "caddy_data:/data",
-        "caddy_config:/config",
-    }
-    assert set(compose["volumes"]) == {"caddy_data", "caddy_config"}
+    for key in ("environment", "volumes", "healthcheck"):
+        assert key not in caddy, key
     assert caddy["cap_add"] == ["NET_BIND_SERVICE"]
     assert caddy["depends_on"] == ["api", "dashboard"]
-    assert compose["networks"]["partqc"].get("internal") is not True
+    assert "cap_add" not in services["api"] and "cap_add" not in services["dashboard"]
 
 
 def _tmpfs_size_bytes(item: str) -> int | None:
@@ -365,7 +364,11 @@ def _tmpfs_size_bytes(item: str) -> int | None:
 
 
 def test_compose_hardening_spec_032() -> None:
-    """SPEC-032 section 4.4: read_only, pids_limit and /tmp tmpfs of at most 64m."""
+    """SPEC-032 section 4.4: read_only, pids_limit and /tmp tmpfs of at most 64m.
+
+    SPEC-039 section 4.1, item 5: the caddy also has /data and /config (16m) in tmpfs, in place
+    of the caddy_data and caddy_config volumes.
+    """
     services = _yaml(INFRA / "compose.yaml")["services"]
     for name, service in services.items():
         assert service["read_only"] is True, name
@@ -376,20 +379,24 @@ def test_compose_hardening_spec_032() -> None:
         for item in tmpfs:
             size = _tmpfs_size_bytes(item)
             assert size is not None and 0 < size <= 64 * 1024**2, (name, item)
-            path = item.split(":", 1)[0]
-            assert path == "/tmp" or (name != "caddy" and path.startswith("/home/app")), item
-    # Measured (dev-report r1): neither process writes under /home/app, so only /tmp.
+    # Measured (dev-report r1 of SPEC-032): neither process writes under /home/app, so only /tmp.
     assert {name: s["tmpfs"] for name, s in services.items()} == {
-        name: ["/tmp:size=64m"] for name in services
+        "api": ["/tmp:size=64m"],
+        "dashboard": ["/tmp:size=64m"],
+        "caddy": ["/tmp:size=64m", "/data:size=16m", "/config:size=16m"],
     }
-    caddy = services["caddy"]
-    assert {"caddy_data:/data", "caddy_config:/config"} <= set(caddy["volumes"])
-    assert not [v for v in caddy["volumes"] if v.startswith("caddy_") and v.endswith(":ro")]
+    assert "volumes" not in services["caddy"]
 
 
-def test_compose_caddy_version_matches_nothing_floating() -> None:
-    image = _yaml(INFRA / "compose.yaml")["services"]["caddy"]["image"]
-    assert not image.endswith((":latest", ":2", ":alpine"))
+def test_caddy_version_is_pinned_only_in_its_dockerfile() -> None:
+    """SPEC-039 section 4.3: the Caddy version lives only in infra/docker/caddy.Dockerfile."""
+    (base,) = [
+        line
+        for line in _instructions(INFRA / "docker" / "caddy.Dockerfile")
+        if line.startswith("FROM ")
+    ]
+    assert re.fullmatch(r"FROM caddy:2\.\d+\.\d+@sha256:[0-9a-f]{64}", base)
+    assert "caddy:2." not in (INFRA / "compose.yaml").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------- Caddyfile (section 4.13)
@@ -406,7 +413,7 @@ def _caddy_code() -> list[str]:
 def test_caddyfile_routes_and_headers() -> None:
     code = _caddy_code()
     text = "\n".join(code)
-    assert code[0] == "{$PUBLIC_HOST} {"
+    assert code[0] == ":80 {"  # SPEC-039 section 4.2
     assert not [line for line in code if line.strip() == "{"]
     assert "\thandle /api/* {\n\t\treverse_proxy api:8000\n\t}" in text
     assert "\thandle {\n\t\treverse_proxy dashboard:8501\n\t}" in text
@@ -491,7 +498,9 @@ def test_env_example_vps_block() -> None:
         "# ---------- Segredos fora do .env (GitHub Secrets) ----------",
     ):
         assert line in lines, line
-    start = lines.index("# ---------- infra/.env (VPS, infra/compose.yaml) ----------")
+    start = lines.index(
+        "# ---------- Coolify (variáveis do recurso) e infra/.env (conferência local) ----------"
+    )
     end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("# ----------"))
     for name in ("API_PIDS_LIMIT", "DASHBOARD_PIDS_LIMIT", "CADDY_PIDS_LIMIT"):
         assert start < lines.index(f"{name}=256") < end, name  # SPEC-032 section 4.4

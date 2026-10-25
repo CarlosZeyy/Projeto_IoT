@@ -7,9 +7,10 @@ Histórico do arquivo:
 - 2026-10-18: estrutura reescrita pelo architect para o ADR-018;
 - 2026-10-19: comandos, valores finais e datas completados pelo autor da SPEC-015;
 - 2026-10-25: reescrita pelo architect para o Coolify (ADR-023). O autor da SPEC-039 confere e completa as versões e as datas;
-- 2026-10-25: decisão do humano: deploy automático por webhook a cada merge na `main` (passo 7A) e variáveis opcionais de alertas da SPEC-017 no compose.
+- 2026-10-25: decisão do humano: deploy automático por webhook a cada merge na `main` (passo 7A) e variáveis opcionais de alertas da SPEC-017 no compose;
+- 2026-10-25: comandos conferidos contra o `infra/compose.yaml`, o `infra/Caddyfile` e o `infra/docker/caddy.Dockerfile` da SPEC-039, e fontes do Coolify conferidas de novo pelo autor (security-devops).
 
-> **Estado em 2026-10-25:** o ADR-023 está `Proposto`, e a SPEC-039, em `Draft`. Os passos da §4 descrevem o deploy pelo Coolify e **só podem ser executados depois do merge da SPEC-039**. O `infra/compose.yaml` da `main` até lá publica as portas 80 e 443, que o proxy do Coolify já ocupa, e o deploy falharia.
+> **Estado em 2026-10-25:** o ADR-023 está `Aceito`, e a SPEC-039, em desenvolvimento. Os passos da §4 descrevem o deploy pelo Coolify e **só podem ser executados depois do merge da SPEC-039**. Até lá, o `infra/compose.yaml` da `main` publica as portas 80 e 443, que o proxy do Coolify já ocupa, e o deploy falharia.
 
 Os limites de free tier e as versões mudam com frequência: **confira de novo antes de cada decisão** e atualize a coluna "Verificado em".
 
@@ -45,7 +46,7 @@ Os agentes não têm acesso à VPS, ao painel do Coolify, ao Supabase, ao DNS ne
 | Serviço | Uso | Limites relevantes | Fonte | Verificado em |
 |---|---|---|---|---|
 | VPS pessoal do humano | `caddy`, `qc-api`, `qc-dashboard` (`infra/compose.yaml`), publicados pelo Coolify | Recurso pessoal **preexistente**, pago a cada 2 anos, sem custo adicional para o projeto (R-01, ADR-018). Gerenciada pelo Coolify; o proxy do Coolify ocupa as portas 80/443 e também publica o portfólio do humano (ADR-023). Versões, RAM, CPUs e disco: preencher no passo 2 da §4 (tabela "Conferência da VPS" logo abaixo) | Declaração do humano (ADR-018, ADR-023) | 2026-10-25 (a completar pelo humano no passo 2) |
-| Coolify (auto-hospedado, já instalado) | Deploy do recurso Docker Compose a partir do GitHub; domínio e certificado no proxy (Traefik, resolvedor `letsencrypt`); variáveis do recurso | Software livre (Apache-2.0); auto-hospedado é "Free and open source", sem conta paga (R-01). Rolling update não suportado em Compose; o rollback do painel não está documentado para Compose (usar a §6). Versão: a preencher no passo 2 | <https://github.com/coollabsio/coolify>, <https://coolify.io/docs/knowledge-base/docker/compose>, <https://coolify.io/docs/knowledge-base/proxy/traefik/overview>, <https://coolify.io/docs/knowledge-base/rolling-updates> | 2026-10-25 (versão a completar pelo autor da SPEC-039) |
+| Coolify (auto-hospedado, já instalado) | Deploy do recurso Docker Compose a partir do GitHub; domínio e certificado no proxy (Traefik, resolvedor `letsencrypt`); variáveis do recurso | Software livre (Apache-2.0); auto-hospedado é "Free and open source", sem conta paga (R-01). Rolling update não suportado em Compose; o rollback do painel não está documentado para Compose (usar a §6). Versão instalada na VPS: preenchida pelo humano no passo 2 (CA-14 da SPEC-039), na tabela "Conferência da VPS". Referência: a última versão publicada no GitHub era a `v4.5.0` (marcada "Latest", de 23/10) | <https://github.com/coollabsio/coolify>, <https://github.com/coollabsio/coolify/releases>, <https://coolify.io/docs/knowledge-base/docker/compose>, <https://coolify.io/docs/applications/build-packs/docker-compose>, <https://coolify.io/docs/knowledge-base/proxy/traefik/overview>, <https://coolify.io/docs/knowledge-base/rolling-updates> | 2026-10-25 (versão instalada: a completar pelo humano no CA-14) |
 | Imagens base | `python:3.12.15-slim-trixie` (API e dashboard), `ghcr.io/astral-sh/uv:0.13.2` (cópia do binário `uv` no build), `caddy:2.11.7` (o `FROM` de `infra/docker/caddy.Dockerfile`, a partir da SPEC-039), todas fixadas também pelo digest `@sha256:` do índice multi-arquitetura | Software livre; nenhuma conta. Atualizar: conferir a tag nova na fonte, trocar a tag e o digest (`docker buildx imagetools inspect <imagem>:<tag>`) e abrir PR | <https://hub.docker.com/_/python>, <https://docs.astral.sh/uv/guides/integration/docker/>, <https://hub.docker.com/_/caddy> | 2026-10-19 |
 | Caddy: headers da resposta | `infra/Caddyfile` (SPEC-032 §4.3): `Strict-Transport-Security`, `X-Content-Type-Options`, `Referrer-Policy "no-referrer"`, `Content-Security-Policy "frame-ancestors 'self'"`, `-Server` e `-Via` | "Prefix with `-` to delete the field"; apagar um campo ativa o `defer`, que "defers the execution of header operations until the response is being sent to the client", ou seja, depois do `reverse_proxy`. Conferido também na prática com a imagem `caddy:2.11.7` fixada: atrás de um `reverse_proxy` cuja origem responde `Server: uvicorn`, a resposta sai sem `Server` e sem `Via` e com os 4 headers. Com o Coolify, os headers passam pelo Traefik até o cliente (conferido no CA-13 da SPEC-015 e no CA-09 da SPEC-032) | <https://caddyserver.com/docs/caddyfile/directives/header> | 2026-10-24 |
 | Docker Compose: `pids_limit`, `read_only` e `tmpfs` | `infra/compose.yaml` (SPEC-032 §4.4; no Caddy, `tmpfs` também em `/data` e `/config` a partir da SPEC-039) | `pids_limit` "tunes a container's PIDs limit" (conta processos **e threads**); `read_only` cria o contêiner com sistema de arquivos só de leitura; `tmpfs` na forma curta `<path>:<options>`. A opção `size` da forma curta não aparece na referência, mas foi conferida com `docker compose run` no Compose 5.6.1 e no Docker Engine 29.9.2: `/tmp` montado com `size=65536k` e com `nosuid,nodev,noexec` (os padrões do Docker). Se o Coolify preserva esses campos é conferido no CA-16 da SPEC-039 | <https://docs.docker.com/reference/compose-file/services/> | 2026-10-24 |
@@ -191,11 +192,10 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
 
 1. No painel: o projeto escolhido → **+ New** → **Public Repository**.
 2. URL: `https://github.com/CarlosZeyy/Projeto_IoT.git` (repositório público, nenhuma credencial) → **Check Repository** → branch `main`.
-3. Build pack: **Docker Compose**. **Base Directory**: `/infra`. **Docker Compose Location**: `/compose.yaml`. Com isso, o Coolify roda o compose com o diretório do projeto em `infra/`, como na execução local, e o `context: ..` dos três serviços aponta para a raiz do repositório.
+3. Build pack: **Docker Compose**. Em General > Build pipeline: **Base Directory** `/infra` e **Docker Compose Location** `/compose.yaml`. Com isso, o Coolify roda o compose com o diretório do projeto em `infra/`, como na execução local, e o `context: ..` dos três serviços aponta para a raiz do repositório. No mesmo grupo, **Preserve repository during deployment** fica desligado (nenhum arquivo do repositório é montado; o Caddyfile vai dentro da imagem do Caddy).
 4. Em Advanced:
-   - o modo de deploy do compose fica no padrão (nunca Raw: nele, o Coolify não gera as rotas do proxy);
-   - **Connect to predefined network**: desligado;
-   - **Preserve repository during deployment**: desligado (nenhum arquivo do repositório é montado; o Caddyfile vai dentro da imagem);
+   - Docker compose > Compose deployment: o modo fica no padrão. Nunca Raw (deploy file as-is): nele, o Coolify não gera as rotas do proxy;
+   - Docker compose > Predefined network: **Connect to predefined network** desligado;
    - deploy automático: ainda não. O webhook é configurado no passo 7A, depois do primeiro deploy pelo botão.
 5. Não clicar em Deploy ainda.
 
@@ -206,8 +206,9 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
    - `PUBLIC_HOST`: o subdomínio real, sem `https://` e sem barra;
    - `DATABASE_URL`: a URL do pooler em modo transaction (passo 1, item 5);
    - `READ_API_KEY`: a chave do item 1;
-   - opcionais: os limites (`API_MEM_LIMIT` e os demais da §3), `MAX_BODY_BYTES`, `LOG_LEVEL` e `MODEL_METRICS_PATH` (vazia). Sem valor, vale o padrão do compose.
-3. Em `DATABASE_URL` e `READ_API_KEY`: build desligado (só runtime), **Locked** e **Literal**. Em `PUBLIC_HOST`, só runtime basta.
+   - opcionais: os limites (`API_MEM_LIMIT` e os demais da §3), `MAX_BODY_BYTES`, `LOG_LEVEL` e `MODEL_METRICS_PATH` (vazia). Sem valor, vale o padrão do compose;
+   - `ALERTS_*` e `TELEGRAM_*` (SPEC-017): deixar com os padrões do compose (`ALERTS_ENABLED=false`, alertas desligados) até a SPEC-017 ser mergeada e este plano explicar como ligá-los.
+3. Em `DATABASE_URL` e `READ_API_KEY` (e em `TELEGRAM_BOT_TOKEN`, quando for preenchida): build desligado (só runtime), **Locked** e **Literal**. Em `PUBLIC_HOST`, só runtime basta.
 4. Ajustar os limites conforme o `free -h` e o `nproc` do passo 2 (regra na §2).
 5. Não existe `API_BASE_URL` no painel: o compose a monta como `https://${PUBLIC_HOST}`.
 

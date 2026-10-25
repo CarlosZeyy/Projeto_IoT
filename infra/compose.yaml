@@ -1,44 +1,39 @@
-# PartQC na VPS pessoal (SPEC-015 §4.12, ADR-018): Caddy (TLS e proxy) + qc-api + qc-dashboard.
+# PartQC na VPS pessoal, publicado pelo Coolify (ADR-023, SPEC-039; antes, SPEC-015 §4.12):
+# Caddy (roteador interno em HTTP) + qc-api + qc-dashboard.
 #
-# Uso, sempre a partir da raiz do checkout:
+# No Coolify (recurso "Docker Compose" a partir do repositório público, docs/deployment-plan.md §4):
+#   Base Directory /infra e Docker Compose Location /compose.yaml (o context: .. dos três serviços
+#   aponta para a raiz do repositório);
+#   domínio só no serviço caddy, na porta interna 80 (https://<subdominio>:80). O TLS e o
+#   certificado ficam no proxy do Coolify, e nenhum serviço publica portas;
+#   as variáveis ficam nas Environment Variables do recurso no painel. Os segredos (DATABASE_URL,
+#   READ_API_KEY e, se usado, TELEGRAM_BOT_TOKEN) só em runtime, Locked e Literal. As referências
+#   ${NOME:?} são obrigatórias e bloqueiam o deploy se faltarem. Nenhum arquivo de ambiente é
+#   criado à mão na VPS.
+#
+# Conferência local, a partir da raiz do checkout, com um infra/.env de valores fictícios (fora
+# do Git e do contexto de build):
 #   docker compose -f infra/compose.yaml config --quiet     (nunca sem --quiet: imprime segredos)
-#   docker compose -f infra/compose.yaml up -d --build
 #
-# Arquivos de ambiente, todos em infra/, fora do Git e do contexto de build, com chmod 600:
-#   infra/.env           PUBLIC_HOST e os limites de recursos (interpolação deste arquivo)
-#   infra/.env.api       DATABASE_URL (pooler, porta 6543) e READ_API_KEY
-#   infra/.env.dashboard READ_API_KEY
-# Valores com $ vão entre aspas simples (sem aspas, o Compose interpola).
+# Endurecimento (SPEC-032 §4.4): sistema de arquivos só de leitura (read_only), com tmpfs em /tmp
+# (64m) e, no Caddy, também em /data e /config (16m, sem estado: os certificados são do proxy do
+# Coolify), e limite de processos e threads (pids_limit, padrão 256, ajustável nas variáveis do
+# recurso). Um serviço que parar depois de uma atualização com "Read-only file system" no log
+# precisa de um tmpfs novo, medido (deployment-plan).
 #
-# Endurecimento (SPEC-032 §4.4): sistema de arquivos só de leitura (read_only), com tmpfs só em
-# /tmp (64m), e limite de processos e threads (pids_limit, padrão 256, ajustável no infra/.env).
-# Os volumes caddy_data e caddy_config continuam graváveis. Um serviço que parar depois de uma
-# atualização com "Read-only file system" no log precisa de um tmpfs novo, medido (deployment-plan).
-#
-# Só o caddy publica portas. Nunca rode "docker compose down -v": apaga o volume caddy_data
-# (certificados) e pode esbarrar no limite de emissão do Let's Encrypt.
+# Sem labels do proxy (o Coolify gera as dele), sem rede própria e sem healthcheck no Caddy: um
+# contêiner unhealthy sai da rota do proxy do Coolify, e o site inteiro cairia (ADR-023).
 
 name: partqc
 
 services:
   caddy:
-    image: caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af
+    build:
+      context: ..
+      dockerfile: infra/docker/caddy.Dockerfile
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      PUBLIC_HOST: "${PUBLIC_HOST:?set PUBLIC_HOST in infra/.env}"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      partqc:
-        # O https://<subdominio> que o dashboard chama resolve, dentro da rede, para este Caddy.
-        aliases:
-          - "${PUBLIC_HOST:?set PUBLIC_HOST in infra/.env}"
+    expose:
+      - "80"
     depends_on:
       - api
       - dashboard
@@ -54,6 +49,8 @@ services:
     read_only: true
     tmpfs:
       - "/tmp:size=64m"
+      - "/data:size=16m"
+      - "/config:size=16m"
     logging:
       driver: json-file
       options:
@@ -64,12 +61,22 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/api.Dockerfile
-    env_file:
-      - .env.api
+    environment:
+      DATABASE_URL: "${DATABASE_URL:?}"
+      READ_API_KEY: "${READ_API_KEY:?}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-262144}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # Alertas da SPEC-017, opcionais e desligados por padrão (antes do merge dela, ignorados).
+      ALERTS_ENABLED: "${ALERTS_ENABLED:-false}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      ALERTS_LOT_IDLE_MINUTES: "${ALERTS_LOT_IDLE_MINUTES:-10}"
+      ALERTS_LOOKBACK_HOURS: "${ALERTS_LOOKBACK_HOURS:-24}"
+      ALERTS_CHECK_INTERVAL_S: "${ALERTS_CHECK_INTERVAL_S:-60}"
+      ALERTS_MAX_PER_HOUR: "${ALERTS_MAX_PER_HOUR:-10}"
+      ALERTS_INCLUDE_SIMULATED: "${ALERTS_INCLUDE_SIMULATED:-false}"
     expose:
       - "8000"
-    networks:
-      - partqc
     restart: unless-stopped
     cap_drop:
       - ALL
@@ -91,15 +98,13 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/dashboard.Dockerfile
-    env_file:
-      - .env.dashboard
     environment:
-      # Prevalece sobre o env_file; sempre https:// (SEC-13-01, SPEC-028).
-      API_BASE_URL: "https://${PUBLIC_HOST:?set PUBLIC_HOST in infra/.env}"
+      # Sempre https:// (SEC-13-01, SPEC-028): resolve pelo DNS e volta pelo proxy do Coolify.
+      API_BASE_URL: "https://${PUBLIC_HOST:?}"
+      READ_API_KEY: "${READ_API_KEY:?}"
+      MODEL_METRICS_PATH: "${MODEL_METRICS_PATH:-}"
     expose:
       - "8501"
-    networks:
-      - partqc
     restart: unless-stopped
     cap_drop:
       - ALL
@@ -116,12 +121,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-networks:
-  partqc:
-    # Sem "internal": a API precisa sair para o Supabase.
-    driver: bridge
-
-volumes:
-  caddy_data:
-  caddy_config:
