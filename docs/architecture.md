@@ -49,9 +49,9 @@ O acesso ao banco é feito com **psycopg 3 direto ao Postgres do Supabase** (con
 
 As **migrações** são a exceção: o `infra/migrate.py` usa um advisory lock de sessão, que não sobrevive entre transações no modo transaction. Por isso, elas rodam pela conexão direta ou pelo pooler em **modo session** (porta 5432), nunca pela porta 6543, e o executor recusa essa porta (SPEC-015 §4.7).
 
-## 3. Contrato v0 (`qc-contracts` 0.4.0, a partir da SPEC-016)
+## 3. Contrato v0 (`qc-contracts` 0.5.0, a partir da SPEC-018)
 
-Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023); 0.3.0, com os 3 campos opcionais de corte da carta p em `SpcResponse` (SPEC-026, ADR-017; vigente até a SPEC-016); 0.4.0, com as 5 ferramentas manuais no `ObjectType` e os grupos de grau (SPEC-016, ADR-021; vigente a partir da SPEC-016). O histórico completo fica em `packages/contracts/README.md`.
+Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023); 0.3.0, com os 3 campos opcionais de corte da carta p em `SpcResponse` (SPEC-026, ADR-017; vigente até a SPEC-016); 0.4.0, com as 5 ferramentas manuais no `ObjectType` e os grupos de grau (SPEC-016, ADR-021; vigente até a SPEC-018); 0.5.0, com os schemas novos `HeartbeatCreate` e `DeviceStatus` (§3.3), sem mudar nenhum schema existente (SPEC-018, minor; vigente a partir da SPEC-018). O histórico completo fica em `packages/contracts/README.md`.
 
 ### 3.1 Enums
 
@@ -94,7 +94,7 @@ A classe `other` do modelo é sempre mapeada para `unknown` no contrato.
 Campos extras são rejeitados (`extra="forbid"`).
 
 - **Coerção:** os modelos usam o modo padrão (lax) do Pydantic, sem `strict`. Depois da coerção, todas as faixas, regexes e invariantes continuam valendo. A decisão e os riscos aceitos estão na SPEC-023, §4.4.
-- **Regex fora dos schemas:** quem reusar as constantes `DEVICE_ID_PATTERN`, `LOT_ID_PATTERN`, `MODEL_VERSION_PATTERN` e `SHA256_PATTERN` (ou qualquer outra regex de validação) fora dos schemas valida com `re.fullmatch`, ou pelo próprio schema / `pydantic.TypeAdapter`. **Nunca** com `re.match` ou `re.search`: no módulo `re`, o `$` casa antes de um `\n` final, e `"edge-01\n"` passaria.
+- **Regex fora dos schemas:** quem reusar as constantes `DEVICE_ID_PATTERN`, `LOT_ID_PATTERN`, `MODEL_VERSION_PATTERN`, `SHA256_PATTERN` e, a partir da SPEC-018, `APP_VERSION_PATTERN` (ou qualquer outra regex de validação) fora dos schemas valida com `re.fullmatch`, ou pelo próprio schema / `pydantic.TypeAdapter`. **Nunca** com `re.match` ou `re.search`: no módulo `re`, o `$` casa antes de um `\n` final, e `"edge-01\n"` passaria.
 
 ### 3.3 Respostas
 
@@ -108,6 +108,8 @@ Campos extras são rejeitados (`extra="forbid"`).
   - médias: `mean_type_confidence`, `mean_grade_score`.
 - `TimeseriesPoint`: `bucket_start`, `total`, `defective`, `defect_rate`.
 - `SpcResponse`: ver a seção 3.4.
+- `HeartbeatCreate` (borda → API; a partir da SPEC-018, contrato 0.5.0; campos e limites na SPEC-018 §4.1): `sent_at` (com fuso, no máximo 5 min no futuro), `model_version` e `model_sha256` (nulos juntos quando a borda está sem modelo), `app_version` (`APP_VERSION_PATTERN = ^[0-9A-Za-z.+-]{1,40}$`), `uptime_s`, `outbox_pending` e `outbox_dead` (inteiros de 0 a `MAX_HEARTBEAT_COUNT` = 2 147 483 647). `extra="forbid"`.
+- `DeviceStatus` (resposta; a partir da SPEC-018, contrato 0.5.0): `device_id`, `last_seen_at`, `last_heartbeat_at` (hora do servidor ao receber o heartbeat), `online` (calculado no servidor, §4), os campos do último heartbeat (todos anuláveis) e `last_source` (o `source` da inspeção mais recente do dispositivo, ou `null`).
 - Erros: `{"detail": ...}` no formato padrão do FastAPI, sem stack trace.
 
 ### 3.4 SPC — carta p por lote (ADR-013)
@@ -157,13 +159,13 @@ Resposta (com os campos da 0.3.0; `points` abreviado a 1 dos 100 itens de uma hi
 | `GET /metrics/timeseries` | leitura | `bucket=minute|hour|day` e filtros | 005 |
 | `GET /metrics/spc` | leitura | `source`, `object_type` (opcional), `baseline_lots`, `min_lot_size`; `max_points` (2 a 500, padrão 100), com o corte do §3.4 | 006, 026 |
 | `GET /lots` | leitura | `Page[LotSummary]`: lotes com `n`, `defects` e período | 005 |
-| `POST /devices/{device_id}/heartbeat` | dispositivo | `HeartbeatCreate` → 204 (a partir da SPEC-018) | 018 |
-| `GET /devices` | leitura | `list[DeviceStatus]` com `online` calculado no servidor (a partir da SPEC-018) | 018 |
+| `POST /devices/{device_id}/heartbeat` | dispositivo | `HeartbeatCreate` → **204** sem corpo (a partir da SPEC-018). Um `UPDATE` da linha do dispositivo, sem histórico: grava `last_heartbeat_at = now()` e `last_seen_at = now()` (hora do servidor) e os campos do corpo; o `sent_at` da borda fica só para diagnóstico. `device_id` do caminho fora de `DEVICE_ID_PATTERN` ou corpo inválido → 422, sem o corpo no log | 018 |
+| `GET /devices` | leitura | **200** `list[DeviceStatus]`, em ordem de `device_id`, no máximo 500 itens (a partir da SPEC-018). `online = last_heartbeat_at is not null and now() − last_heartbeat_at < 180 s`, pela hora do servidor em UTC; `last_source` pela inspeção de maior `received_at` | 018 |
 
 A partir da SPEC-017, a API tem um laço em segundo plano, desligado por padrão (`ALERTS_ENABLED`), que avisa no Telegram quando um lote concluído fica fora de controle (tabela `alerts_sent`; sem rota nova).
 
 **Autenticação** (header `X-API-Key`):
-- **Dispositivo:** a chave é gerada por `scripts/register_device.py`. Só o hash SHA-256 fica na tabela `devices`, e a comparação usa `secrets.compare_digest`. O `device_id` do corpo precisa ser o dono da chave; caso contrário, retorna 403. A cada escrita, atualiza `devices.last_seen_at`.
+- **Dispositivo:** a chave é gerada por `scripts/register_device.py`. Só o hash SHA-256 fica na tabela `devices`, e a comparação usa `secrets.compare_digest`. O `device_id` do corpo precisa ser o dono da chave; caso contrário, retorna 403. No heartbeat (a partir da SPEC-018), a mesma regra vale para o `device_id` do caminho. A cada escrita, atualiza `devices.last_seen_at`.
 - **Leitura:** chave única `READ_API_KEY` (variável de ambiente da API), usada pelo dashboard.
 - Sem chave ou com chave inválida: 401.
 
@@ -196,6 +198,7 @@ inspections(
 - **Restrições** (SPEC-003 §4.1): os `check` espelham os enums, as faixas e as regexes do contrato (defesa em profundidade). `inspections.device_id` é `not null`, porque o contrato o exige (SPEC_ISSUE-02 da SPEC-003, ratificado).
 - **Restrições da `002`** (SPEC-027; a partir do merge dela): `model_version` com a regex do contrato; `inspection_id` com versão 4 e variante RFC 4122 (`UUID4` do pydantic); `inspected_at` e `received_at` na faixa do `datetime` do Python em UTC (`>= 0001-01-01 00:00:00+00` e `< 10000-01-01 00:00:00+00`, o que recusa `infinity`). Sem elas, uma linha gravada fora da API (SQL Editor, migração manual) derrubava a leitura com 500. A migração confere antes as linhas existentes e recusa, só com contagens na mensagem, se alguma violar as regras.
 - **Restrições da `003`** (SPEC-016 §4.2, ADR-021; a partir da SPEC-016): o `check` de `object_type` aceita os 8 valores do `ObjectType` 0.4.0, e o `check ((object_type = 'unknown') = (grade is null))` do esquema acima é trocado pela invariante dos grupos de grau (§3.1): `screw`/`nut` com grau, `unknown` sem grau e as ferramentas manuais com ou sem grau. `is_defective` não muda.
+- **Colunas da `004`** (`004_device_heartbeat.sql`, SPEC-018 §4.2; a partir da SPEC-018): `devices` ganha, todas anuláveis, `last_heartbeat_at timestamptz` (hora do servidor; decide o `online` do §4), `hb_sent_at timestamptz` (relógio da borda, só diagnóstico), `hb_model_version text`, `hb_model_sha256 text` e `hb_app_version text` (`check` com as regexes do contrato 0.5.0), `hb_uptime_s`, `hb_outbox_pending` e `hb_outbox_dead` (`integer`, `check (>= 0)`) e `check ((hb_model_version is null) = (hb_model_sha256 is null))`. Só o último heartbeat de cada dispositivo fica guardado (sem histórico).
 - **Colunas `real` (`float4`):** arredondam (ex.: `0.97` vira `0.9700000286`) e recusam com `22003` todo valor diferente de zero que arredonde para zero (abaixo de cerca de `7e-46`). A API converte esse erro em 422 (§4); a borda legítima não produz esses valores.
 - **Grants do Supabase:** o RLS não cobre `TRUNCATE`, `REFERENCES` e `TRIGGER`. Projetos novos do Supabase deixaram de dar grants automáticos a `anon`/`authenticated` nas tabelas novas do `public` (changelog 45329, <https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically>, consultado em 2026-10-12), mas isso depende da opção escolhida na criação. A SPEC-015 (CA-14) confere os grants em produção e os revoga se existirem; o `revoke` não vai para uma migração, porque esses papéis não existem no Postgres local nem no do CI.
 
@@ -262,7 +265,7 @@ O pipeline (SPEC-011) lê o manifest só com `csv`/`pandas`, acusa linha sem arq
 
 ### 6.4 Configuração (`.env` da borda)
 
-`EDGE_HOST` (0.0.0.0; só IPv4 literal, SPEC-025), `EDGE_PORT` (8000), `EDGE_DATA_DIR` (padrão `edge/data`, no `.gitignore`), `EDGE_SESSION_TOKEN` (opcional), `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` (os três últimos são opcionais e sobrescrevem o `decision.json`).
+`EDGE_HOST` (0.0.0.0; só IPv4 literal, SPEC-025), `EDGE_PORT` (8000), `EDGE_DATA_DIR` (padrão `edge/data`, no `.gitignore`), `EDGE_SESSION_TOKEN` (opcional), `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` (os três últimos são opcionais e sobrescrevem o `decision.json`). A partir da SPEC-018, `HEARTBEAT_INTERVAL_S` (padrão 60; inteiro de 10 a 3.600; `0` desliga; fora disso, a borda não sobe e sai com código 2): o `HeartbeatLoop` envia um `HeartbeatCreate` pelo `HttpPublisher` a cada intervalo, sem passar pelo outbox, e só é registrado nas mesmas condições do laço de publicação (sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL`; R-06).
 
 ## 7. Modelo (`qc-ml`) — artefatos
 
@@ -350,7 +353,7 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
   - "O outro pacote não mudou" não vira teste de aceite. O reviewer confere no diff (`pyproject.toml`, `__init__.py` e `uv.lock`).
   - As docstrings de módulo dos testes citam no máximo a versão que a própria SPEC introduziu, nunca "a versão verificada agora".
   - **Quando uma SPEC aumenta a versão de um pacote:** o CA dela fixa a versão nova (exata). A §3.1 dela autoriza o tester a converter para a forma acima as asserções exatas desse pacote no arquivo de aceite da SPEC vigente anterior (um arquivo por pacote), e nada mais. Enquanto existir o CA-28 da SPEC-004 (`test_ca28_version_expectations_migrated`, em `api/tests/acceptance/test_spec_004.py`), que fixa em `ALLOWED_EXACT` o par arquivo/versão vigente de cada pacote e exige essas asserções em funções `test_ca01_*`, a mesma §3.1 autoriza trocar nesse conjunto o par do pacote pelo do arquivo novo, e o CA de versão da SPEC nova é o CA-01 (precedente: SPEC-026).
-  - Implementação: migração única pelo tester da SPEC-004 (§3.1 e CA-28 dela). **Arquivos vigentes** (atualizado em 2026-10-17, RV-01 de `reviews/SPEC-026/r1-review-report.md`, e em 2026-10-24, observação de `reviews/SPEC-016/r1-test-report.md`): as asserções exatas ficam só em `packages/preprocess/tests/acceptance/test_spec_024.py` (`qc-preprocess` 0.3.0) e, a partir da SPEC-016, em `packages/contracts/tests/acceptance/test_spec_016.py` (`qc-contracts` 0.4.0; até a SPEC-016, `test_spec_026.py` com 0.3.0). A fonte de verdade é o conjunto `ALLOWED_EXACT` do CA-28 da SPEC-004: quando ele muda, esta linha muda junto. O reviewer confere a regra em toda SPEC.
+  - Implementação: migração única pelo tester da SPEC-004 (§3.1 e CA-28 dela). **Arquivos vigentes** (atualizado em 2026-10-17, RV-01 de `reviews/SPEC-026/r1-review-report.md`, em 2026-10-24, observação de `reviews/SPEC-016/r1-test-report.md`, e em 2026-10-25, observação de `reviews/SPEC-018/r1-test-report.md`): as asserções exatas ficam só em `packages/preprocess/tests/acceptance/test_spec_024.py` (`qc-preprocess` 0.3.0) e, a partir da SPEC-018, em `packages/contracts/tests/acceptance/test_spec_018.py` (`qc-contracts` 0.5.0; da SPEC-016 até a SPEC-018, `test_spec_016.py` com 0.4.0; até a SPEC-016, `test_spec_026.py` com 0.3.0). A fonte de verdade é o conjunto `ALLOWED_EXACT` do CA-28 da SPEC-004: quando ele muda, esta linha muda junto. O reviewer confere a regra em toda SPEC.
   - O ajuste do `ALLOWED_EXACT` vai **no mesmo commit** do tester que cria o arquivo de aceite que ele passa a citar; senão, o CA-28 falha num checkout isolado do commit intermediário e atrapalha o `git bisect` (RV-03 de `reviews/SPEC-026/r1-review-report.md`).
 - **Testes de aceite de SPECs anteriores** (aprovada pelo humano em 2026-10-17; motivada pelo SPEC_ISSUE-01 de `reviews/SPEC-005/r1-dev-report.md` e pelo SPEC_ISSUE-01 de `reviews/SPEC-010/r1-dev-report.md`). Sem esta regra, toda SPEC que substitui de propósito um comportamento provisório de outra (um 501, uma opção desabilitada, uma rota ainda inexistente) trava o loop num SPEC_ISSUE só para autorizar o tester a mexer no arquivo de aceite antigo.
   - **Quando vale:** uma SPEC nova muda **de propósito** um comportamento que um teste de aceite de uma SPEC anterior verifica, e a mudança decorre de um requisito ou CA escrito na SPEC nova (por exemplo, "substitui o 501 da SPEC-007" ou "coleta habilitado").
