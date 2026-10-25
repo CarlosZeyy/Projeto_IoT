@@ -226,7 +226,7 @@ Cada imagem externa é, em geral, uma "peça" própria (`XS-0001`, `XS-0002`…)
 
 ### 10.6 Passo a passo da importação
 
-1. Salve os arquivos recebidos numa **pasta de entrada fora de `ml/data/`** (ex.: `~/partqc-entrada/`). A importação recusa uma pasta de entrada dentro do dataset.
+1. Salve os arquivos recebidos numa **pasta de entrada fora de `ml/data/` e fora do repositório** (ex.: `~/partqc-entrada/`), com o plano CSV junto. O repositório é público, e o `.gitignore` não cobre todos os formatos de celular nem o plano (SEC-36-02, SEC-32-02). A importação recusa uma pasta de entrada dentro do dataset e, a partir da SPEC-038, uma pasta de entrada ou um plano dentro de um repositório Git.
 2. Olhe cada foto (§10.5). Uma foto com pessoa, documento ou endereço não é importada: apague-a.
 3. Preencha o plano CSV (`file,item_id,object_type,grade,labeler,angle,origin,contributor,source_id,source_ref,notes`, exemplo no `edge/README.md`). Se usar planilha, exporte como CSV UTF-8 e confira as células de `notes` e `source_ref` que começam com `=`, `+`, `-` ou `@` (§5).
 4. `uv run --package qc-edge python -m qc_edge.importer --dataset-dir ml/data --inbox <pasta> --plan <plano> --privacy-checked --dry-run` e confira as linhas `failed`.
