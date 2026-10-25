@@ -603,7 +603,8 @@ def test_extra_smoke_metrics_json_is_complete(smoke: SimpleNamespace) -> None:
     env = smoke.a
     _assert_ok(env)
     metrics = _read_json(env.model_dir / "metrics.json")
-    assert set(metrics) == METRIC_KEYS
+    # SPEC-016 section 4.8: new top-level key tool_grade_metrics.
+    assert set(metrics) == METRIC_KEYS | {"tool_grade_metrics"}
     assert metrics["model_sha256"] == (env.model_dir / "model.sha256").read_text().strip()
     assert metrics["decision"] == _read_json(env.model_dir / "decision.json")
     assert set(_read_json(env.model_dir / "decision.json")) == DECISION_KEYS
@@ -837,7 +838,9 @@ def _test_images_with_grade(dataset_dir: Path, split_file: Path) -> int:
 
 
 def _check_metrics(metrics: dict[str, Any], dataset_dir: Path, split_file: Path) -> None:
-    assert set(metrics) == METRIC_KEYS, set(metrics) ^ METRIC_KEYS
+    # SPEC-016 section 4.8: new top-level key tool_grade_metrics.
+    expected_keys = METRIC_KEYS | {"tool_grade_metrics"}
+    assert set(metrics) == expected_keys, set(metrics) ^ expected_keys
     for key in ("grade_qwk_ci95", "unusable_recall_ci95", "defective_recall_ci95"):
         ci = metrics[key]
         if ci is not None:
@@ -1383,7 +1386,8 @@ def test_extra_corn_smoke_pipeline_exports_probabilities(tmp_path: Path) -> None
     assert grade_probs.shape == (2, 5)
     assert np.allclose(grade_probs.sum(axis=1), 1.0, atol=1e-5)
     assert (grade_probs >= 0).all()
-    assert set(_read_json(env.model_dir / "metrics.json")) == METRIC_KEYS
+    # SPEC-016 section 4.8: new top-level key tool_grade_metrics.
+    assert set(_read_json(env.model_dir / "metrics.json")) == METRIC_KEYS | {"tool_grade_metrics"}
 
 
 @pytest.mark.slow
