@@ -23,16 +23,20 @@ from qc_contracts.labels import (
     SOURCE_LABELS_PT,
 )
 from qc_contracts.schemas import (
+    APP_VERSION_PATTERN,
     DEVICE_ID_PATTERN,
     LOT_ID_PATTERN,
     MAX_BATCH_SIZE,
     MAX_FUTURE_SKEW,
+    MAX_HEARTBEAT_COUNT,
     MAX_LATENCY_MS,
     MODEL_VERSION_PATTERN,
     SHA256_PATTERN,
     BatchCreate,
     BatchResult,
+    DeviceStatus,
     HealthResponse,
+    HeartbeatCreate,
     InspectionCreate,
     InspectionCreated,
     InspectionRead,
@@ -45,9 +49,10 @@ from qc_contracts.schemas import (
     TimeseriesPoint,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
+    "APP_VERSION_PATTERN",
     "CAPTURE_MODE_LABELS_PT",
     "DEVICE_ID_PATTERN",
     "GRADE_FORBIDDEN_OBJECT_TYPES",
@@ -58,6 +63,7 @@ __all__ = [
     "LOT_ID_PATTERN",
     "MAX_BATCH_SIZE",
     "MAX_FUTURE_SKEW",
+    "MAX_HEARTBEAT_COUNT",
     "MAX_LATENCY_MS",
     "MODEL_VERSION_PATTERN",
     "OBJECT_TYPE_LABELS_PT",
@@ -66,8 +72,10 @@ __all__ = [
     "BatchCreate",
     "BatchResult",
     "CaptureMode",
+    "DeviceStatus",
     "Grade",
     "HealthResponse",
+    "HeartbeatCreate",
     "InspectionCreate",
     "InspectionCreated",
     "InspectionRead",
