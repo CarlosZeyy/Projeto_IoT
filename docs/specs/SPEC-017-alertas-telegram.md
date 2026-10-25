@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-006, SPEC-026, SPEC-015 (a API publicada na VPS, para o CA manual) e SPEC-016 (SPC por `grade is not null`, ADR-021) (e SPEC-003, SPEC-004, SPEC-014) |
@@ -165,3 +165,4 @@ Nenhum teste fala com o Telegram de verdade.
 | 2026-10-24 | SPEC reescrita para a aprovação. Perguntas do rascunho resolvidas pelo architect: (1) lote concluído = `ALERTS_LOT_IDLE_MINUTES` (10) sem inspeção, sem mudar o contrato; (2) gatilho = laço em segundo plano no `lifespan` da API a cada 60 s (a API fica sempre ligada na VPS); (3) avalia só lotes concluídos nas últimas 24 h, uma vez por lote; (4) `simulated` só com `ALERTS_INCLUDE_SIMULATED=true`, com `[SIMULADO]` no texto; (5) teto de 10 mensagens por hora. Também: `max_points=3` e `max_excluded=0`; uma tentativa por alerta com `delivered`; texto com acima do LSC ou abaixo do LIC; token nunca em log (inclusive `httpx`/`httpcore`); configuração inválida não derruba a API; dependência das SPECs 015 e 016; fatos do Telegram verificados em 2026-10-24; CAs CA-01 a CA-12 testáveis e CA-13 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: o aviso do topo passa a registrar a aprovação. | Status `Ready` desde o PR #45; sobrava o aviso da fase de rascunho | Architect, a pedido do orquestrador |
+| 2026-10-25 | Entra em `In Dev` encadeada na SPEC-018 (que está sobre a 016 e a 036), antes de a SPEC-016 estar `Done`, por decisão do humano de 2026-10-24; o merge desta SPEC só acontece depois dos merges da 036, da 016 e da 018. | Resposta do humano de 2026-10-24 | Orquestrador, a pedido do humano |
