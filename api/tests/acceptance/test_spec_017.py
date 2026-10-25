@@ -1143,13 +1143,11 @@ def test_extra_total_timeout_of_5_seconds(db: str, pool: Any, t_end: datetime, m
 
 @pytest.mark.db
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="T-01 of reviews/SPEC-017/r1-test-report.md: the 5 s deadline is checked only "
-    "after each body chunk, so slow headers plus a slow chunk take about 9 s",
-)
 def test_extra_total_timeout_with_slow_headers(db: str, pool: Any, t_end: datetime) -> None:
-    """Section 4.5 "timeout total de 5 s": headers after 4.5 s, one body byte 4.5 s later."""
+    """Section 4.5 "timeout total de 5 s": headers after 4.5 s, one body byte 4.5 s later.
+
+    T-01 of reviews/SPEC-017/r1-test-report.md (``xfail`` strict in r1), fixed in r2.
+    """
     add_out_lot(db, t_end)
     start = time.monotonic()
     with local_server("slow-headers") as port:
@@ -1159,6 +1157,330 @@ def test_extra_total_timeout_with_slow_headers(db: str, pool: Any, t_end: dateti
         elapsed = time.monotonic() - start
     assert sent == 0
     assert elapsed < 6.0, elapsed
+
+
+# --------------------------------------------------------------------------- extras: r2 deadline
+#
+# RV-01 of reviews/SPEC-017/r1-review-report.md: "timeout total de 5 s" (section 4.5) for the
+# whole request: name resolution, connection, status line, headers and body. Each case below
+# must end in about 5 s with ``delivered = false``, a single attempt and no token in any log
+# record. A send that misses the deadline may leave one abandoned thread behind; every test
+# releases its server (or its fake resolver) and waits for that thread before leaving, so the
+# limit of one abandoned send per process never leaks into another test.
+
+DEADLINE_MIN = 4.5
+DEADLINE_MAX = 6.0
+HEADER_DRIP = (
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Pad: " + b"a" * 100_000 + b"\r\n"
+)
+OK_BODY = b'{"ok":true,"result":{"message_id":1}}'
+OK_RESPONSE = (
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+    + f"Content-Length: {len(OK_BODY)}\r\nConnection: close\r\n\r\n".encode()
+    + OK_BODY
+)
+
+
+class DripServer:
+    """Local TCP server in ``127.0.0.1`` that holds every connection until ``release()``.
+
+    ``header-drip`` sends the status line and headers 1 byte per second; ``body-drip`` sends
+    the headers at once (``Content-Length: 100000``) and then 1 body byte per second;
+    ``silent`` never answers. After ``release()`` the held connections are closed and any new
+    connection gets a valid ``{"ok": true}`` answer. ``connections`` counts every attempt.
+    """
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.connections = 0
+        self.released = threading.Event()
+        self.stopped = threading.Event()
+        self.handlers: list[threading.Thread] = []
+        self.sock = socket.socket()
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(8)
+        self.sock.settimeout(0.1)
+        self.port = self.sock.getsockname()[1]
+        self.acceptor = threading.Thread(target=self._accept, name="tester-drip-accept")
+        self.acceptor.daemon = True
+
+    def _accept(self) -> None:
+        while not self.stopped.is_set():
+            try:
+                conn, _ = self.sock.accept()
+            except (TimeoutError, OSError):
+                continue
+            self.connections += 1
+            handler = threading.Thread(
+                target=self._handle, args=(conn,), name="tester-drip-conn", daemon=True
+            )
+            self.handlers.append(handler)
+            handler.start()
+
+    def _hold(self, conn: socket.socket, chunks: Iterator[bytes]) -> None:
+        for chunk in chunks:
+            if self.released.wait(1.0) or self.stopped.is_set():
+                return
+            conn.sendall(chunk)
+
+    def _handle(self, conn: socket.socket) -> None:
+        with conn, suppress(OSError):
+            conn.settimeout(0.5)
+            with suppress(TimeoutError):
+                conn.recv(65536)
+            if self.released.is_set():
+                conn.sendall(OK_RESPONSE)
+                return
+            if self.mode == "header-drip":
+                self._hold(conn, (HEADER_DRIP[i : i + 1] for i in range(len(HEADER_DRIP))))
+            elif self.mode == "body-drip":
+                conn.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                    b"Content-Length: 100000\r\n\r\n"
+                )
+                self._hold(conn, (b" " for _ in range(100_000)))
+            elif self.mode == "silent":
+                self.released.wait(60)
+            else:
+                raise AssertionError(self.mode)
+
+    def release(self) -> None:
+        self.released.set()
+
+    def __enter__(self) -> DripServer:
+        self.acceptor.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.released.set()
+        self.stopped.set()
+        self.acceptor.join(5)
+        for handler in self.handlers:
+            handler.join(5)
+        self.sock.close()
+
+
+def foreign_threads(baseline: set[threading.Thread]) -> list[threading.Thread]:
+    """Live threads started after ``baseline`` that are not the tester's own servers."""
+    return [
+        t
+        for t in threading.enumerate()
+        if t not in baseline and t.is_alive() and not t.name.startswith("tester-")
+    ]
+
+
+def wait_no_foreign_threads(baseline: set[threading.Thread], timeout: float = 20.0) -> None:
+    assert wait_for(lambda: not foreign_threads(baseline), timeout), foreign_threads(baseline)
+
+
+def assert_no_token(caplog: pytest.LogCaptureFixture, token: str) -> None:
+    secret = token.split(":", 1)[1]
+    texts = record_texts(caplog)
+    for text in texts:
+        assert token not in text
+        assert secret not in text
+
+
+@pytest.mark.db
+@pytest.mark.slow
+@pytest.mark.parametrize("mode", ["header-drip", "body-drip", "silent"])
+def test_extra_r2_total_deadline_against_a_dripping_server(
+    db: str, pool: Any, t_end: datetime, caplog: pytest.LogCaptureFixture, mode: str
+) -> None:
+    """RV-01: headers or body 1 byte per second, or a mute server: the send ends in ~5 s."""
+    capture_everything(caplog)
+    token = random_token()
+    app_settings = settings(db, TELEGRAM_BOT_TOKEN=token)
+    add_out_lot(db, t_end)
+    baseline = set(threading.enumerate())
+    with DripServer(mode) as server:
+        transport = RedirectTransport(server.port)
+        start = time.monotonic()
+        sent = run_check(pool, app_settings, now=t_end + timedelta(minutes=11), transport=transport)
+        elapsed = time.monotonic() - start
+        assert sent == 0
+        assert DEADLINE_MIN <= elapsed < DEADLINE_MAX, elapsed
+        assert alerts_rows(db) == [("L-005", "live", "out_of_control", False)]
+        assert server.connections == 1
+        assert transport.paths == [f"/bot{token}/sendMessage"]
+        # The abandoned send dies once the server lets the connection go.
+        server.release()
+        wait_no_foreign_threads(baseline)
+        # One attempt per alert: a later check (server now answering ok) sends nothing.
+        again = run_check(
+            pool, app_settings, now=t_end + timedelta(minutes=12), transport=transport
+        )
+        assert again == 0
+        assert server.connections == 1
+        assert alerts_rows(db) == [("L-005", "live", "out_of_control", False)]
+    assert_no_token(caplog, token)
+
+
+@pytest.mark.db
+@pytest.mark.slow
+def test_extra_r2_total_deadline_with_slow_name_resolution(
+    db: str,
+    pool: Any,
+    t_end: datetime,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RV-01: ``getaddrinfo`` stuck on ``api.telegram.org`` (default transport): ends in ~5 s.
+
+    Every non-local name lookup blocks and then fails, so the test never reaches the network.
+    """
+    capture_everything(caplog)
+    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.delenv(variable, raising=False)
+    real_getaddrinfo = socket.getaddrinfo
+    unblock = threading.Event()
+    looked_up: list[str] = []
+
+    def stuck_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+        name = host.decode() if isinstance(host, bytes) else str(host)
+        if name in ("127.0.0.1", "localhost", "::1"):
+            return real_getaddrinfo(host, *args, **kwargs)
+        looked_up.append(name)
+        unblock.wait(60)
+        raise socket.gaierror(socket.EAI_AGAIN, "name resolution blocked by the test")
+
+    monkeypatch.setattr(socket, "getaddrinfo", stuck_getaddrinfo)
+    token = random_token()
+    app_settings = settings(db, TELEGRAM_BOT_TOKEN=token)
+    add_out_lot(db, t_end)
+    baseline = set(threading.enumerate())
+    try:
+        start = time.monotonic()
+        sent = run_check(pool, app_settings, now=t_end + timedelta(minutes=11), transport=None)
+        elapsed = time.monotonic() - start
+        assert sent == 0
+        assert DEADLINE_MIN <= elapsed < DEADLINE_MAX, elapsed
+        assert looked_up == ["api.telegram.org"]
+        assert alerts_rows(db) == [("L-005", "live", "out_of_control", False)]
+    finally:
+        unblock.set()
+        wait_no_foreign_threads(baseline)
+    again = run_check(pool, app_settings, now=t_end + timedelta(minutes=12), transport=None)
+    assert again == 0
+    assert looked_up == ["api.telegram.org"]  # no new attempt
+    assert alerts_rows(db) == [("L-005", "live", "out_of_control", False)]
+    assert_no_token(caplog, token)
+
+
+@pytest.mark.db
+@pytest.mark.slow
+def test_extra_r2_at_most_one_abandoned_send_per_process(
+    db: str, pool: Any, t_end: datetime, caplog: pytest.LogCaptureFixture
+) -> None:
+    """RV-01 (option B): while an abandoned send is alive, a check stops before reserving.
+
+    Two candidates (``L-005`` live and simulated). The first send hangs on header drip and is
+    abandoned at 5 s; the second candidate is not reserved in that check nor in the next one,
+    each check logs the warning, and no second thread is started. Once the abandoned send
+    ends, the pending candidate goes out in a later check (it is still in the window).
+    """
+    capture_everything(caplog)
+    token = random_token()
+    app_settings = settings(db, TELEGRAM_BOT_TOKEN=token, ALERTS_INCLUDE_SIMULATED=True)
+    add_out_lot(db, t_end)
+    add_out_lot(db, t_end, source="simulated")
+    baseline = set(threading.enumerate())
+    with DripServer("header-drip") as server:
+        transport = RedirectTransport(server.port)
+        start = time.monotonic()
+        sent = run_check(pool, app_settings, now=t_end + timedelta(minutes=11), transport=transport)
+        elapsed = time.monotonic() - start
+        assert sent == 0
+        assert DEADLINE_MIN <= elapsed < DEADLINE_MAX + 1.5, elapsed  # 5 s + up to 1 s grace
+        first_rows = alerts_rows(db)
+        assert len(first_rows) == 1
+        assert first_rows[0][2:] == ("out_of_control", False)
+        assert server.connections == 1
+        assert len(foreign_threads(baseline)) == 1  # the abandoned send
+
+        def stop_warnings() -> list[logging.LogRecord]:
+            return [
+                r
+                for r in caplog.records
+                if r.levelno == logging.WARNING
+                and "previous send is still running" in r.getMessage()
+            ]
+
+        assert len(stop_warnings()) == 1
+
+        start = time.monotonic()
+        again = run_check(
+            pool, app_settings, now=t_end + timedelta(minutes=12), transport=transport
+        )
+        elapsed = time.monotonic() - start
+        assert again == 0
+        assert elapsed < 3.0, elapsed  # stops after the grace wait, no new 5 s send
+        assert alerts_rows(db) == first_rows  # nothing reserved
+        assert server.connections == 1
+        assert len(foreign_threads(baseline)) == 1
+        assert len(stop_warnings()) == 2
+
+        server.release()
+        wait_no_foreign_threads(baseline)
+        third = run_check(
+            pool, app_settings, now=t_end + timedelta(minutes=13), transport=transport
+        )
+        assert third == 1
+        assert server.connections == 2
+        rows = alerts_rows(db)
+        assert len(rows) == 2
+        assert {r[1] for r in rows} == {"live", "simulated"}
+        assert [r for r in rows if r != first_rows[0]][0][3] is True
+        assert first_rows[0] in rows  # the failed one stays undelivered, never retried
+    wait_no_foreign_threads(baseline)
+    assert_no_token(caplog, token)
+
+
+@pytest.mark.db
+def test_extra_r2_inconsistent_point_leaves_no_row(
+    db: str,
+    pool: Any,
+    t_end: datetime,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RV-03: a point flagged out of control but inside the limits never reserves a row.
+
+    Unreachable with the real chart (``out_of_control`` is ``p > ucl or p < lcl``), so the
+    SPEC-006 chart builder (a dependency, not the unit under test) is wrapped to hand the
+    ``live`` ``L-005`` back with ``p`` between the limits. The ``simulated`` alert of the same
+    check still goes out.
+    """
+    import qc_api.services.alerts as alerts_module
+
+    real_build = alerts_module.build_p_chart
+
+    def inconsistent_build(*args: Any, **kwargs: Any) -> Any:
+        chart = real_build(*args, **kwargs)
+        if kwargs.get("source") is not None and kwargs["source"].value != "live":
+            return chart
+        points = [
+            p.model_copy(update={"p": (p.ucl + p.lcl) / 2}) if p.lot_id == "L-005" else p
+            for p in chart.points
+        ]
+        return chart.model_copy(update={"points": points})
+
+    monkeypatch.setattr(alerts_module, "build_p_chart", inconsistent_build)
+    caplog.set_level(logging.DEBUG)
+    add_out_lot(db, t_end)
+    add_out_lot(db, t_end, source="simulated")
+    telegram = Telegram()
+    sent = run_check(
+        pool,
+        settings(db, ALERTS_INCLUDE_SIMULATED=True),
+        now=t_end + timedelta(minutes=11),
+        transport=telegram.transport,
+    )
+    assert sent == 1
+    assert telegram.texts() == [expected_text("simulated")]
+    assert alerts_rows(db) == [("L-005", "simulated", "out_of_control", True)]
+    assert any(r.levelno == logging.WARNING and "L-005" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.db
