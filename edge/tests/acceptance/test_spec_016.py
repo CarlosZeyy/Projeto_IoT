@@ -519,6 +519,7 @@ def ca11_rows(imp: ImportEnv) -> list[list[str]]:
 
 
 def test_ca11_t_and_xt_tool_rows_are_imported(imp: ImportEnv) -> None:
+    """CA-11 (a): a plan with only the first two rows: exit 0, both rows written."""
     rows = ca11_rows(imp)
     imp.write_plan(rows[:2])
     code, out, err = imp.run()
@@ -542,6 +543,7 @@ def test_ca11_t_and_xt_tool_rows_are_imported(imp: ImportEnv) -> None:
 
 
 def test_ca11_xt_with_screw_is_refused_with_the_prefix_problem(imp: ImportEnv) -> None:
+    """CA-11 (b): a plan with only the third row: exit 2, prefix problem, nothing written."""
     rows = ca11_rows(imp)
     imp.write_plan([rows[2]])
     before = imp.snapshot()
@@ -552,11 +554,9 @@ def test_ca11_xt_with_screw_is_refused_with_the_prefix_problem(imp: ImportEnv) -
 
 
 def test_ca11_three_line_plan_follows_the_whole_plan_rule_of_spec036(imp: ImportEnv) -> None:
-    """The literal CA-11 plan (the 3 rows together). SPEC-036 §4.2 (phase 1, unchanged by
-    SPEC-016) refuses the whole plan when any row has a problem: exit 2, nothing written.
-
-    The CA text expects the first two rows written in the same run; see SPEC_ISSUE-T1 of
-    ``reviews/SPEC-016/r1-test-report.md``. This test records the observed behaviour."""
+    """CA-11 (c): the plan with the 3 rows. SPEC-036 §4.2 (phase 1, unchanged by SPEC-016)
+    refuses the whole plan when any row has a problem: exit 2, nothing written, not even the
+    first two rows (CA-11 text after SPEC_ISSUE-T1, commit 6d25aaf)."""
     imp.write_plan(ca11_rows(imp))
     before = imp.snapshot()
     code, out, err = imp.run()

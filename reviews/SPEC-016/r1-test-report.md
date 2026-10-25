@@ -6,7 +6,7 @@
 | Rodada | r1 (Parte A do developer e Parte B do ml-engineer, com o adendo "Ajuste depois da reaprovação") |
 | Tester | tester |
 | Commit testado | `5e5745f` |
-| **Veredicto** | **FAIL**: todos os CAs automatizados têm teste e passam, a suíte inteira passa e o ruff está limpo, mas o **CA-11 não pode ser verificado como está escrito** (SPEC_ISSUE-T1, abaixo). O CA-21 é manual e fica pendente para a dupla. |
+| **Veredicto** | **PASS** depois da correção do SPEC_ISSUE-T1 (ver o adendo no fim). Veredicto original desta rodada: **FAIL**: todos os CAs automatizados têm teste e passam, a suíte inteira passa e o ruff está limpo, mas o **CA-11 não pode ser verificado como está escrito** (SPEC_ISSUE-T1, abaixo). O CA-21 é manual e fica pendente para a dupla. |
 
 Os testes foram escritos a partir do texto atual da SPEC (com as correções do architect em `83d64a1`, reaprovadas pelo humano em `be3d2ec`: §4.7, §4.8, CA-22 e CA-23), em caixa-preta, antes da leitura da implementação; a leitura veio depois, só para os exploratórios de borda.
 
@@ -138,6 +138,40 @@ Todos passam (os nomes estão nos arquivos; resumo por área):
 - **Nota da rodada no §6 da SPEC:** o texto diz "Rodada r2 (correção dos SPEC_ISSUE-1 e 2 da r1)", mas o loop registrou o ajuste dentro da r1 (adendo do dev report, cabeçalho "Rodada atual r1"). Este relatório segue a r1, como pedido pelo orquestrador.
 - **Limiar de revisão sem imagens de parafuso, porca nem `other` na validação:** com só ferramentas na val, o `grade_review_threshold` fica 0,60 sem a nota `review_adjusted` (fração indefinida, `n_images = 0` no relatório). A SPEC não trata esse caso; não é bug, mas a dupla pode querer um aviso (não acontece com dados reais, porque o `split_v1` sempre tem parafuso e porca).
 - **Metas das células de ferramenta na cobertura do console** (decisão 2 do developer: 60 imagens e 5 peças por grau): a SPEC não define a meta por célula; os testes não fixam esse valor.
+
+## Conferência depois da correção do SPEC_ISSUE-T1
+
+| Campo | Valor |
+|---|---|
+| Correção | `6d25aaf` (architect: CA-11 em casos separados (a), (b) e (c), na regra da SPEC-036 §4.2), reaprovada pelo orquestrador sob o ADR-019; `c2c337a` (architect: `docs/architecture.md` §3, §3.1 e §10 com o `qc-contracts` 0.4.0) |
+| Commit conferido | `f564584` |
+| **Veredicto final** | **PASS** |
+
+Desde o commit `d7d1810` deste relatório, só mudaram `docs/architecture.md`, `docs/plan.md` e a SPEC (`git diff --stat d7d1810 f564584`); nenhum código de produção nem teste do autor mudou. Por isso a suíte completa registrada acima (`7293 passed, 75 skipped`) continua valendo.
+
+O texto novo do CA-11 corresponde aos três testes que já existiam. Nenhuma asserção mudou: só as docstrings, para citar o caso de cada um.
+
+| Caso do CA-11 (texto novo) | Teste | O que verifica | Resultado |
+|---|---|---|---|
+| (a) plano só com as duas primeiras linhas | `edge/tests/acceptance/test_spec_016.py::test_ca11_t_and_xt_tool_rows_are_imported` | saída 0; `T-501` (`flat_screwdriver`/`good`) e `XT-0001` (`pliers`/`fair`) no manifest, com as imagens em `raw/<tipo>/<grau>/`; as duas linhas no `sources.csv` (`contributor` `c01` e `external` com a fonte registrada) | ✅ |
+| (b) plano só com a terceira | `::test_ca11_xt_with_screw_is_refused_with_the_prefix_problem` | saída 2; a linha `plan line 2: item_prefix_mismatch (object_type)` na saída de erro; `DATASET_DIR` igual (nomes e bytes) | ✅ |
+| (c) plano com as três | `::test_ca11_three_line_plan_follows_the_whole_plan_rule_of_spec036` | saída 2; a linha `plan line 4: item_prefix_mismatch (object_type)`; `DATASET_DIR` igual, sem nada das duas primeiras linhas | ✅ |
+
+```text
+$ uv run pytest -q edge/tests/acceptance/test_spec_016.py
+78 passed, 1 warning
+$ uv run pytest -q api/tests/acceptance/test_spec_004.py -k ca28
+1 passed
+$ uv run ruff check .
+All checks passed!
+$ uv run ruff format --check .
+251 files already formatted
+```
+
+- **SPEC_ISSUE-T1:** resolvido. Não há outro SPEC_ISSUE aberto.
+- **Bugs:** nenhum.
+- **Observações:** a primeira observação acima (`docs/architecture.md` §3, §3.1 e §10) foi atendida pelo `c2c337a`. A nota de rodada do §6 também foi corrigida, no `6d25aaf`.
+- **CA-21:** continua manual e pendente para a dupla; não bloqueia o merge.
 
 ## Declaração
 
