@@ -53,7 +53,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [014](specs/SPEC-014-simulador.md) | Simulador de lotes | developer | security | 004, 006 | S4 | Done |
 | [015](specs/SPEC-015-deploy.md) | Deploy na VPS pessoal (Docker Compose + Caddy), banco no Supabase e keep-alive | security-devops | deploy, security, infra | 004, 013, 026, 027, 028 (e 003, 005, 006, 014) | S4 | In Security (r2; portões PASS, aguardando os CAs manuais na VPS) |
 | [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais (contrato 0.4.0, tipos sem grau e teste estendido; ADR-021/022 `Aceito`) | developer + ml-engineer | contrato, security | 034, 035, 036, 037, 026, 028 (e 008, 010, 011, 012, 013) | S5–S6 | In Security (r1; merge depois da 036) |
-| [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006, 015, 016, 026 (e 003, 004, 014) | S6 | In Test (r2; encadeada na 018; merge depois da 036, 016 e 018) |
+| [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006, 015, 016, 026 (e 003, 004, 014) | S6 | In Review (r2; encadeada na 018; merge depois da 036, 016 e 018) |
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos (contrato 0.5.0) | developer | contrato, security | 034, 016, 030 (e 004, 009, 013, 028) | S6 | In Security (r1; encadeada na 016; merge depois da 036 e da 016) |
 | [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030 (e 007, 009, 024) | S8 | Ready |
 | [020](specs/SPEC-020-mqtt.md) | Fase 3: transporte MQTT (Mosquitto local e ponte) | developer | security | 009, 030, 034 (e 004) | S8 | Ready |
