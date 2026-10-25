@@ -296,6 +296,38 @@ def test_unusable_and_review_thresholds_ignore_the_tools() -> None:
     assert with_tools.report["grade_review_threshold"]["n_images"] == 10
 
 
+def test_review_threshold_counts_screw_nut_and_other() -> None:
+    """SPEC-016 4.8 (SPEC_ISSUE-1): other enters the review fraction, as in SPEC-012."""
+    screw, other, pliers = 0, 2, 3
+    type_probs = [_type_row(screw, 0.99)] * 10 + [_type_row(other, 0.99)] * 10
+    type_probs += [_type_row(pliers, 0.99)] * 5
+    grades = [[0.5, 0.2, 0.1, 0.1, 0.1]] * 2 + [[0.95, 0.02, 0.01, 0.01, 0.01]] * 8
+    grades += [[0.2] * 5] * 15
+    truth = [screw] * 10 + [other] * 10 + [pliers] * 5
+    preds = _predictions(type_probs, grades, truth, [0] * 10 + [-1] * 10 + [0] * 5)
+    result = choose_thresholds(preds, TOOLS_LABELS)
+    section = result.report["grade_review_threshold"]
+    assert section["n_images"] == 20  # 10 screw + 10 other; the 5 pliers left out
+    assert section["needs_review_rate_at_default"] == 0.1
+    assert result.decision.grade_review_threshold == 0.60
+    assert "review_adjusted" not in result.report["notes"]
+
+
+def test_ca22_review_threshold_example() -> None:
+    """The CA-22 example: 2/20 = 10% with screw and other; the tools are out."""
+    labels = ModelLabels(("screw", "nut", "other", "pliers"), GRADES)
+    low, high = [0.50, 0.20, 0.10, 0.10, 0.10], [0.95, 0.02, 0.01, 0.01, 0.01]
+    type_probs = [[0.97, 0.01, 0.01, 0.01]] * 10 + [[0.01, 0.01, 0.97, 0.01]] * 10
+    type_probs += [[0.01, 0.01, 0.01, 0.97]] * 20
+    grades = [low] * 2 + [high] * 8 + [high] * 10 + [low] * 20
+    truth = [0] * 10 + [2] * 10 + [3] * 20
+    preds = _predictions(type_probs, grades, truth, [0] * 10 + [-1] * 10 + [0] * 20)
+    result = choose_thresholds(preds, labels)
+    assert result.decision.type_threshold == 0.85
+    assert result.decision.grade_review_threshold == 0.60
+    assert "review_adjusted" not in result.report["notes"]
+
+
 def test_thresholds_of_the_mvp_labels_are_unchanged() -> None:
     """Without tools, FU(t) counts screw/nut exactly as SPEC-012 (other left out)."""
     type_probs = [[0.99, 0.005, 0.005]] * 10 + [[0.005, 0.005, 0.99]] * 5
@@ -368,7 +400,8 @@ def test_ca18_evaluate_with_tools(tools_config: Path) -> None:
     ]
     for entry in tool_metrics.values():
         assert list(entry) == list(TOOL_GRADE_METRIC_KEYS)
-        assert entry["n_images_test"] == 10 and entry["n_items_test"] == 5
+        # 15 items per tool, ungraded by the criterion: one stratum -> 2 test items (SPEC-016 4.7)
+        assert entry["n_images_test"] == 4 and entry["n_items_test"] == 2
     # grade metrics stay on screw/nut (ADR-022, decision 6)
     assert int(np.asarray(metrics["grade_confusion"]).sum()) == sum(
         metrics["counts"]["test"]["by_class"][t]["n_images"] for t in ("screw", "nut")
@@ -384,7 +417,7 @@ def test_few_test_items_warning_per_model_type(tools_config: Path) -> None:
     assert evaluate_mod.main(["--config", str(tools_config)]) == 0
     model_dir = tools_config.parent / "models" / "partqc-tinytools-v1"
     warnings = json.loads((model_dir / "metrics.json").read_text())["warnings"]
-    # 4 items of other -> 1 in test; every tool has 5 test items
+    # 4 items of other -> 1 in test; every tool has 2 test items
     assert "few test items for other: 1" in warnings
     assert not any(w.startswith("few test items for pliers") for w in warnings)
 

@@ -5,8 +5,10 @@
 are compared with exact integer arithmetic, never with rounded floats.
 
 SPEC-016 section 4.8: ``FU(t)`` counts the validation images of every type except ``other``
-(screw, nut and the tools of the model); ``unusable_threshold`` and ``grade_review_threshold``
-are computed on the ``screw``/``nut`` images only, so the tools never move them (ADR-022).
+(screw, nut and the tools of the model). The validation images of the tools never enter the two
+other thresholds, which keep the rule of SPEC-012 on the remaining images: ``unusable_threshold``
+on the ``screw``/``nut`` images and ``grade_review_threshold`` on the ``needs_review`` fraction of
+the ``screw``, ``nut`` and ``other`` images (the MVP data give the values of SPEC-012).
 
 No torch, no sklearn here (CA-27).
 
@@ -73,6 +75,13 @@ def _screw_nut_mask(val: Predictions, labels: ModelLabels) -> np.ndarray:
     """``True`` for the validation images whose true type is ``screw`` or ``nut``."""
     types = list(labels.object_types)
     indices = [types.index(t) for t in GRADED_OBJECT_TYPES if t in types]
+    return np.isin(val.true_type_idx, indices)
+
+
+def _mvp_mask(val: Predictions, labels: ModelLabels) -> np.ndarray:
+    """``True`` for the validation images whose true type is ``screw``, ``nut`` or ``other``."""
+    types = list(labels.object_types)
+    indices = [types.index(t) for t in (*GRADED_OBJECT_TYPES, "other") if t in types]
     return np.isin(val.true_type_idx, indices)
 
 
@@ -174,12 +183,12 @@ def _review_count(
 def _choose_review(
     val: Predictions, labels: ModelLabels, t: int, u: int
 ) -> tuple[int, dict[str, Any], list[str]]:
-    scope = _screw_nut_mask(val, labels)  # SPEC-016 4.8: screw/nut only
+    scope = _mvp_mask(val, labels)  # SPEC-016 4.8: screw, nut and other (no tool)
     n = int(scope.sum())
     count_default = _review_count(val, labels, scope, t, u, DEFAULT_REVIEW)
     section: dict[str, Any] = {
-        "rule": "0.60 if needs_review is in [5%, 15%] of the val screw/nut images; else the r "
-        "closest to 10%",
+        "rule": "0.60 if needs_review is in [5%, 15%] of the val screw/nut/other images; else the "
+        "r closest to 10%",
         "n_images": n,
         "needs_review_rate_at_default": _rate(count_default, n),
     }
