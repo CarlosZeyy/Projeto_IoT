@@ -30,8 +30,9 @@ Since SPEC-030 (sections 4.4 and 4.5):
   not counted and makes the exit code 1.
 
 The output (stdout) shows paths relative to ``<D>`` and the fixed finding names, never the
-content of a segment (GPS, device, date) nor an absolute path. Errors go to ``logging``. Nothing
-here opens a network connection (R-02).
+content of a segment (GPS, device, date) nor an absolute path. Errors go to ``logging``, with the
+``PIL`` logger at ``INFO`` at least, so a root logger in ``DEBUG`` does not show the EXIF tags
+(SPEC-038 section 4.4). Nothing here opens a network connection (R-02).
 """
 
 from __future__ import annotations
@@ -227,9 +228,22 @@ def _configure_logging() -> None:
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 
 
+def limit_pil_logging() -> None:
+    """The ``PIL`` logger at ``INFO`` at least (SPEC-038 section 4.4).
+
+    In ``DEBUG``, ``PIL.TiffImagePlugin`` logs the values of the EXIF tags (``Make``,
+    ``Artist``) it reads for the orientation. A level above ``INFO`` is kept. Only the CLIs call
+    this, never ``qc_edge.jpeg``, which the collect route also uses.
+    """
+    pil = logging.getLogger("PIL")
+    if pil.getEffectiveLevel() < logging.INFO:
+        pil.setLevel(logging.INFO)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point; returns the exit code (0, 1 or 2)."""
     _configure_logging()
+    limit_pil_logging()
     arguments = resolve_argv(argv)
     try:
         args, unknown = _parser().parse_known_args(arguments)
