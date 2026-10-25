@@ -6,7 +6,8 @@ Histórico do arquivo:
 
 - 2026-10-18: estrutura reescrita pelo architect para o ADR-018;
 - 2026-10-19: comandos, valores finais e datas completados pelo autor da SPEC-015;
-- 2026-10-25: reescrita pelo architect para o Coolify (ADR-023). O autor da SPEC-039 confere e completa as versões e as datas.
+- 2026-10-25: reescrita pelo architect para o Coolify (ADR-023). O autor da SPEC-039 confere e completa as versões e as datas;
+- 2026-10-25: decisão do humano: deploy automático por webhook a cada merge na `main` (passo 7A) e variáveis opcionais de alertas da SPEC-017 no compose.
 
 > **Estado em 2026-10-25:** o ADR-023 está `Proposto`, e a SPEC-039, em `Draft`. Os passos da §4 descrevem o deploy pelo Coolify e **só podem ser executados depois do merge da SPEC-039**. O `infra/compose.yaml` da `main` até lá publica as portas 80 e 443, que o proxy do Coolify já ocupa, e o deploy falharia.
 
@@ -103,6 +104,8 @@ Regra para os segredos no painel: **build desligado (só runtime)**, **Locked** 
 | `MAX_BODY_BYTES`, `LOG_LEVEL` (opcionais) | Environment Variables do recurso (padrões `262144` e `INFO` no compose) | `qc-api` |
 | `API_BASE_URL` | Definida pelo próprio `infra/compose.yaml` como `https://${PUBLIC_HOST}`; localmente, em `.streamlit/secrets.toml` | `qc-dashboard` |
 | `MODEL_METRICS_PATH` (opcional) | Environment Variables do recurso, vazia (vale o padrão `ml/models/partqc-mnv3-v1/metrics.json`, relativo a `/app`) | `qc-dashboard` |
+| `ALERTS_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e os demais `ALERTS_*` (opcionais, SPEC-017) | Environment Variables do recurso; sem valor, valem os padrões do compose, com os alertas desligados. O `TELEGRAM_BOT_TOKEN` é segredo (só runtime, Locked, Literal). Instruções completas quando a SPEC-017 for mergeada | `qc-api` |
+| Segredo do webhook de deploy | Só no campo Webhook secret do Coolify e no webhook do repositório no GitHub (passo 7A) | Coolify (confere a assinatura do GitHub) |
 | `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL` (`https://<subdominio>`) | `.env` do notebook da borda | `qc-edge` |
 | `SIM_DEVICE_ID`, `SIM_DEVICE_API_KEY` | `.env` local de quem roda o simulador e o smoke test (lido com `uv run --env-file`) | `scripts/simulate.py`, `scripts/smoke_test.py` |
 | `KEEPALIVE_URL` (`https://<subdominio>`) | GitHub → Settings → Secrets and variables → Actions | workflow `keepalive.yml` |
@@ -193,7 +196,7 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
    - o modo de deploy do compose fica no padrão (nunca Raw: nele, o Coolify não gera as rotas do proxy);
    - **Connect to predefined network**: desligado;
    - **Preserve repository during deployment**: desligado (nenhum arquivo do repositório é montado; o Caddyfile vai dentro da imagem);
-   - deploy automático por webhook: não configurar (ADR-023, decisão 5).
+   - deploy automático: ainda não. O webhook é configurado no passo 7A, depois do primeiro deploy pelo botão.
 5. Não clicar em Deploy ainda.
 
 ### Passo 5. Variáveis do recurso
@@ -221,6 +224,28 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
 3. Conferir o certificado com o CA-13, passo 5, da SPEC-015.
 4. CA-43, passo 1: `docker exec <contêiner da api> find /app -maxdepth 2 -name '.env*'` e o mesmo com o `<contêiner do dashboard>` → nenhuma linha, ou só `/app/.env.example`. Se aparecer outro `.env*`, parar, apagar as imagens (`docker image rm`), parar o recurso no painel e registrar `SPEC_ISSUE` (o build não respeitou o `.dockerignore` por Dockerfile).
 5. CA-16 e CA-17 da SPEC-039 (endurecimento preservado e segredos).
+
+### Passo 7A. Deploy automático por webhook (ADR-023, decisão 5; SPEC-039 §4.8)
+
+Decisão do humano de 2026-10-25: cada merge na `main` publica sozinho. Fontes (2026-10-25): <https://coolify.io/docs/applications/deployments/manual-webhooks> e <https://coolify.io/docs/applications/ci-cd/github/auto-deploy>.
+
+1. Gerar o segredo do webhook com o gerador do campo no Coolify ou com `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` (mínimo de 16 caracteres).
+2. No Coolify, **Webhooks > Manual Git Webhooks**, seção GitHub: colar o valor em **Webhook secret**, clicar em **Save changes** e copiar a URL GitHub mostrada ali.
+3. No GitHub, no repositório: **Settings > Webhooks > Add webhook**, com:
+   - Payload URL igual à URL copiada e content type `application/json`;
+   - o mesmo valor em Secret e **Enable SSL verification** ligado;
+   - **Just the push event** e **Active**.
+4. No recurso do Coolify: **Advanced > Deployment > Auto deploy** = **Deploy on push (webhooks)**, com a branch `main`. Sem Watch Paths.
+5. O segredo do webhook fica só no campo do Coolify e no webhook do GitHub. Nunca no Git, nos Secrets do Actions, em issue, PR, print ou log. A URL do webhook tem o endereço do painel do Coolify e também não entra no repositório (R-13). Se o segredo do webhook vazar, gerar outro e trocá-lo no Coolify e no GitHub na mesma sessão.
+6. Conferir com o CA-18 da SPEC-039 no próximo merge.
+
+**O que isso exige do processo:**
+
+- a `main` fica sempre publicável, porque um merge é um deploy em produção. O merge continua só pelo portão da R-09 (CI `ci` e `docker` verdes, PASS, APPROVED e o security-report quando há a tag `security`/`deploy`);
+- uma variável obrigatória nova no compose só é mergeada depois de criada no painel; senão, o Coolify bloqueia o deploy;
+- nenhum merge na véspera nem no dia da apresentação (§5).
+
+Se um deploy falhar, a documentação do Coolify não diz o que acontece com a versão em execução. Pelo código, um erro de build para antes de recriar os contêineres. Em qualquer caso: conferir o painel, fazer o rollback da §6 se o site não estiver respondendo, e corrigir por PR.
 
 ### Passo 8. Dispositivos
 
@@ -257,7 +282,7 @@ Seguir a §8, item 1 (CA-26).
 
 ### Passo 13. CAs manuais
 
-Executar os CAs manuais da SPEC-039 (CA-14 a CA-17), da SPEC-015 (CA-13 a CA-19, CA-26, CA-40, CA-42 e CA-43) e o CA-09 da SPEC-032, e registrar o resultado na §9 e no dev-report, sem o subdomínio real, o IP nem o UUID do recurso.
+Executar os CAs manuais da SPEC-039 (CA-14 a CA-18; o CA-18 no primeiro merge depois do passo 7A), da SPEC-015 (CA-13 a CA-19, CA-26, CA-40, CA-42 e CA-43) e o CA-09 da SPEC-032, e registrar o resultado na §9 e no dev-report, sem o subdomínio real, o IP nem o UUID do recurso.
 
 ### Conferência local da composição (opcional, na máquina da dupla)
 
@@ -287,10 +312,10 @@ Antes de um deploy que mude `infra/`, a dupla pode conferir o mesmo compose loca
 
 ### Atualização (SPEC-015 §4.16, ADR-023)
 
-Depois de cada merge que afete a API, o dashboard, `infra/`, `ml/models/**/*.json` ou `ml/reports/`:
+Cada merge na `main` dispara o deploy pelo webhook (passo 7A), inclusive os merges só de documentação. Depois de cada merge, quem mergeou:
 
-1. no painel, abrir o recurso e clicar em **Deploy** (o Coolify busca o último commit da `main`); acompanhar o log até o fim
-2. conferir no painel que o deploy terminou com sucesso e que o recurso está em execução
+1. confere no painel que apareceu o deploy do webhook com o commit do merge, e acompanha o log até o fim (sem o webhook, ou depois de voltar de um rollback, clicar em **Deploy**)
+2. confere no painel que o deploy terminou com sucesso e que o recurso está em execução; se falhou, vale o fim do passo 7A
 3. listar os contêineres (convenções acima): os 3 `Up`; `api` e `dashboard` `(healthy)`
 4. smoke test (passo 11, item 2)
 5. na VPS, `docker image prune -f --filter label=partqc.component` (remove só as imagens órfãs do PartQC)
@@ -304,7 +329,7 @@ A imagem do dashboard leva o `metrics.json` e os PNGs de `ml/reports/` **do comm
 **Na véspera:**
 
 - [ ] Abrir o projeto Supabase (não pode estar pausado) e chamar `https://<subdominio>/api/v1/health` (deve retornar `db: ok`).
-- [ ] No painel do Coolify, o recurso em execução e, na VPS, os 3 contêineres `Up`, com `api` e `dashboard` `(healthy)`. Não fazer atualização no dia.
+- [ ] No painel do Coolify, o recurso em execução e, na VPS, os 3 contêineres `Up`, com `api` e `dashboard` `(healthy)`. Não fazer atualização no dia: nenhum merge na `main` na véspera nem no dia, porque cada merge dispara um deploy (passo 7A).
 - [ ] Carregar o `model.onnx` congelado no notebook e conferir que o `sha256` bate com o `metrics.json`.
 - [ ] Conferir as baterias e o carregador do celular e do notebook.
 - [ ] Gravar o vídeo de backup da demo (S7) e deixá-lo offline no notebook.
@@ -329,6 +354,8 @@ A imagem do dashboard leva o `metrics.json` e os PNGs de `ml/reports/` **do comm
   2. `git push origin <sha anterior>:refs/heads/deploy/rollback` (com a conta CarlosZeyy);
   3. no recurso do Coolify, trocar a branch para `deploy/rollback` e clicar em **Deploy**;
   4. com a correção mergeada na `main`, trocar a branch do recurso de volta para `main`, clicar em **Deploy** e apagar a branch (`git push origin --delete deploy/rollback`).
+
+  Enquanto o recurso aponta para `deploy/rollback`, os merges na `main` não disparam deploy (o webhook só publica a branch configurada). Por isso, ao voltar para a `main`, o deploy é pelo botão.
 
   As migrações são só aditivas no MVP: um rollback não desfaz migração.
 - **Parar:** o botão **Stop** do recurso no painel. Nunca apague o recurso nem rode `docker compose down -v` nos contêineres do PartQC. O Caddy não guarda mais certificados, mas apagar o recurso perde as variáveis do painel.
@@ -501,9 +528,10 @@ Esperado: nenhuma linha nos três `git grep` (código de saída 1) e nenhum avis
 | CA | O que | Resultado | Data |
 |---|---|---|---|
 | SPEC-039 CA-14 | Antes do primeiro deploy: versão do Coolify, `coolify-proxy` com imagem `traefik` nas portas 80/443, `StartedAt` anotado fora do repositório | pendente | — |
-| SPEC-039 CA-15 | Recurso (Public Repository, Docker Compose, `/infra`, `/compose.yaml`, modo de deploy não Raw, sem rede predefinida, sem Preserve repository, sem webhook), domínio só no `caddy`, deploy com sucesso, 3 contêineres sem portas | pendente | — |
+| SPEC-039 CA-15 | Recurso (Public Repository, Docker Compose, `/infra`, `/compose.yaml`, modo de deploy não Raw, sem rede predefinida, sem Preserve repository, primeiro deploy pelo botão), domínio só no `caddy`, deploy com sucesso, 3 contêineres sem portas | pendente | — |
 | SPEC-039 CA-16 | `docker inspect`: limites, `read_only`, `tmpfs`, capacidades, `no-new-privileges`, sem `PortBindings`, `unless-stopped` | pendente | — |
 | SPEC-039 CA-17 | Segredos só em runtime, Locked e Literal; `docker history` sem os nomes; `.env*` fora das imagens; modo do `.env` do Coolify (§7, item 7) | pendente | — |
+| SPEC-039 CA-18 | Webhook: o merge de teste dispara o deploy (entrega `push` 2xx no GitHub), a branch do PR não dispara, o deploy termina com sucesso e o smoke passa, e o log não mostra segredos (registrar o SHA curto, sem a URL do webhook) | pendente | — |
 | CA-13 | API na VPS: health, redirecionamento HTTP → HTTPS, 401 sem chave, HSTS sem `includeSubDomains`, emissor do certificado, `/docs` e `/openapi.json` não publicados | pendente | — |
 | CA-14 | RLS e grants em produção (passo 1, item 4) | pendente | — |
 | CA-15 | Smoke em produção: 8 × `PASS` (passo 11) | pendente | — |

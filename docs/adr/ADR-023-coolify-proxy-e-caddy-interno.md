@@ -27,6 +27,10 @@ Fatos do Coolify, conferidos pelo architect em **2026-10-25** na documentação 
 | O `-p` da linha de comando prevalece sobre o `name:` do arquivo; um `build.context` relativo é resolvido a partir do diretório do projeto | <https://docs.docker.com/compose/how-tos/project-name/>, <https://docs.docker.com/reference/compose-file/build/> |
 | A pasta do recurso é definida por **Base Directory** e **Docker Compose Location** (relativa à primeira). Para um arquivo do repositório montado por bind, é preciso ligar "Preserve repository during deployment" e o arquivo tem de existir antes do deploy ("If Docker receives a missing file source, it can create a directory at that path"). No código, um bind curto sem configuração salva é tratado como diretório por padrão | <https://coolify.io/docs/applications/build-packs/docker-compose>; `parsers.php` |
 | Repositório público: basta a URL HTTPS, sem credencial; "Connecting a public repository by URL does not configure automatic deployments" (exige webhook) | <https://coolify.io/docs/applications/ci-cd/github/public-repository> |
+| **Deploy automático (webhook manual):** vale para aplicações criadas por URL pública. No Coolify: **Webhooks > Manual Git Webhooks**, seção GitHub, **Webhook secret** (mínimo de 16 caracteres, com gerador) e **Save changes**; copiar a URL GitHub mostrada ali. No GitHub: **Settings > Webhooks > Add webhook**, com essa URL como Payload URL, content type `application/json`, o mesmo segredo, **Enable SSL verification** ligado e **Just the push event**. No recurso: **Advanced > Deployment > Auto deploy = Deploy on push (webhooks)**. Só um push na branch configurada no recurso dispara o deploy. A URL do Coolify tem de ser alcançável pela internet. Falhas repetidas de assinatura são limitadas por endereço, e a resposta do webhook não revela quais aplicações casam | <https://coolify.io/docs/applications/deployments/manual-webhooks>, <https://coolify.io/docs/applications/ci-cd/github/auto-deploy> |
+| **GitHub App** (alternativa): registra um app na conta do GitHub, com leitura de conteúdo, metadados e e-mails, e o Coolify guarda o App ID, as credenciais, o segredo do webhook e a chave privada | <https://coolify.io/docs/applications/sources/github/app> |
+| **Watch Paths** filtram os deploys por arquivos alterados (um padrão por linha, `!` para negar), só nos eventos de webhook com a lista de arquivos. A documentação não diz se os caminhos são relativos à raiz ou ao Base Directory | <https://coolify.io/docs/applications/deployments/automatic-deployments> |
+| A documentação **não diz** o que acontece com a versão em execução quando um deploy falha, nem se deploys simultâneos entram em fila. No código, o build (`docker compose ... build`) roda antes do `up -d`, então um erro de build para antes de recriar os contêineres | mesmas páginas; `ApplicationDeploymentJob.php` |
 | Atualização gradual (rolling update) não é suportada em Compose; o rollback do painel usa imagens antigas guardadas e a documentação não diz como se aplica a Compose | <https://coolify.io/docs/knowledge-base/rolling-updates>, <https://coolify.io/docs/applications/deployments/rollbacks> |
 | Licença Apache-2.0; auto-hospedado: "Free and open source" | <https://github.com/coollabsio/coolify> |
 | O Caddy não ativa o HTTPS automático sem nenhum nome de host na configuração ou quando escuta só na porta HTTP | <https://caddyserver.com/docs/automatic-https> |
@@ -40,6 +44,7 @@ Fatos do Coolify, conferidos pelo architect em **2026-10-25** na documentação 
 5. Onde fica o `.env` com os segredos e com que permissão. Teste: `stat` no diretório do recurso (SPEC-039, CA-17).
 6. Se o log de deploy do Coolify mostra valores de variáveis. Teste: o humano lê o log no painel e nunca o cola em lugar público sem conferir (SPEC-039, CA-15).
 7. Se o contêiner do dashboard alcança a URL pública da própria VPS (hairpin). Teste: CA-17 da SPEC-015 (o painel carrega dados).
+8. O que acontece com a versão em execução quando um deploy falha. Teste: o log de deploy de cada merge e o smoke da atualização. Uma falha vira rollback por branch (decisão 5). O CA-18 da SPEC-039 confere o disparo pelo webhook.
 
 ## Opções consideradas
 
@@ -72,16 +77,26 @@ Regras que passam a valer (detalhadas na SPEC-039; as demais regras do ADR-018 c
    - **sem healthcheck**, porque o Traefik tira da rota um contêiner `unhealthy`, e a falha da API (por exemplo, com o Supabase pausado) derrubaria também o painel;
    - sem estado persistente: `/data` e `/config` em `tmpfs`, porque os certificados agora ficam no proxy do Coolify. Os volumes `caddy_data` e `caddy_config` saem.
 3. **Segredos e variáveis (R-03):**
-   - ficam nas variáveis do recurso no Coolify: `PUBLIC_HOST`, `DATABASE_URL` e `READ_API_KEY`, e os opcionais (limites, `MAX_BODY_BYTES`, `LOG_LEVEL`, `MODEL_METRICS_PATH`);
+   - ficam nas variáveis do recurso no Coolify: `PUBLIC_HOST`, `DATABASE_URL` e `READ_API_KEY`, e os opcionais (limites, `MAX_BODY_BYTES`, `LOG_LEVEL`, `MODEL_METRICS_PATH` e, por decisão do humano de 2026-10-25, as variáveis `ALERTS_*` e `TELEGRAM_*` da SPEC-017, com os padrões dela, que deixam os alertas desligados);
    - os segredos ficam com escopo **só de runtime** (fora do build), **Locked** e interpolação **Literal**;
    - nenhum `.env` é criado à mão na VPS, e nenhum checkout manual é feito nela;
    - o compose referencia cada segredo como `${NOME:?}` no `environment` do serviço que o usa, nunca com valor;
    - o `.dockerignore` por Dockerfile passa a proteger também o `.env` que o Coolify grava no diretório do recurso (`infra/.env` dentro do contexto de build).
 4. **Dashboard → API:** `API_BASE_URL=https://${PUBLIC_HOST}` continua, e a recusa de `http://` da SPEC-028 também. Sem o alias, o nome resolve pelo DNS público, e a conexão volta à própria VPS pelo proxy do Coolify, com TLS verificado.
-5. **Deploy e rollback:**
-   - o deploy é manual, pelo botão **Deploy** do recurso, depois de cada merge que afete `infra/`, a API, o dashboard, `ml/models/**/*.json` ou `ml/reports/`;
-   - nenhum segredo da VPS ou do Coolify vai para o GitHub, e não há webhook (decisão 8 do ADR-018, mantida);
-   - rollback: uma branch temporária `deploy/rollback` no commit anterior, selecionada no recurso, e a volta para a `main` depois. O rollback por imagens do painel não está documentado para Compose.
+5. **Deploy automático e rollback** (decisão do humano de 2026-10-25, que substitui o deploy manual proposto na primeira versão e a decisão 8 do ADR-018):
+   - **cada merge na `main` dispara o deploy**, por **webhook manual** com segredo do GitHub para o Coolify (Auto deploy = Deploy on push). O GitHub App foi descartado: daria ao Coolify um app com acesso à conta do GitHub e uma chave privada, para um repositório que já é público;
+   - sem Watch Paths: todo merge publica (o cache do build deixa barato o merge só de documentação), porque a documentação não diz se os caminhos são relativos à raiz ou ao Base Directory, e um padrão errado deixaria de publicar em silêncio;
+   - **o segredo do webhook (R-03)** fica só em dois lugares: o campo Webhook secret do Coolify e as configurações de webhook do repositório no GitHub. Nunca no Git, nos Secrets do Actions, em issue, PR ou log. Gerado com o gerador do Coolify ou com `secrets.token_urlsafe(32)`. Se vazar: um segredo novo nos dois lugares, na mesma sessão;
+   - a URL do webhook contém o endereço do painel do Coolify, que também não entra no repositório (R-13);
+   - **o que isso exige do processo:**
+     - a `main` precisa estar sempre publicável. Um merge é um deploy em produção;
+     - o merge continua só com o portão da R-09: CI verde (`ci` e `docker`, que constrói as imagens), PASS e APPROVED (e o security-report, quando a SPEC tem a tag `security`/`deploy`). PRs só de `docs/` também disparam um deploy, sem efeito no comportamento;
+     - uma SPEC que acrescente variável obrigatória (`${NOME:?}`) ao compose só é mergeada depois de o humano criar a variável no painel. Senão, o Coolify bloqueia o deploy (ADR-023, Contexto);
+     - mudanças de contrato seguem "API primeiro": o merge da API vai à produção sozinho, e a borda só é atualizada depois;
+     - nenhum merge na véspera nem no dia da apresentação (`docs/deployment-plan.md` §5);
+   - **deploy com falha:** a documentação não diz o que acontece com a versão em execução. Pelo código, um erro de build para antes do `up -d`. Depois de cada merge, quem mergeou confere o log de deploy e roda o smoke. Se falhou ou se o smoke reprovar, faz o rollback por branch e abre uma correção por PR;
+   - **rollback:** uma branch temporária `deploy/rollback` no commit anterior, selecionada no recurso, e a volta para a `main` depois. Enquanto o recurso aponta para `deploy/rollback`, os pushes na `main` não disparam deploy (a branch não casa). Ao voltar para a `main`, clicar em Deploy. O rollback por imagens do painel não está documentado para Compose;
+   - nenhum segredo de acesso à VPS (SSH, token da API do Coolify) vai para o GitHub, e o Actions não entra na VPS.
 6. **Coexistência:** nunca reiniciar, parar nem reconfigurar o `coolify-proxy` nem as configurações do servidor no Coolify por causa do PartQC. As proibições de firewall e de `prune` do ADR-018 continuam.
 7. **Identidade (R-13):** o subdomínio fica só no painel do Coolify (campo de domínio e `PUBLIC_HOST`). A documentação continua com `<subdominio>`.
 
@@ -103,21 +118,31 @@ A R-01 não muda: o Coolify é software livre auto-hospedado, já estava instala
   - os erros gerados pelo próprio proxy do Coolify (contêiner do Caddy parado ou removido da rota) e o redirecionamento HTTP → HTTPS saem sem os nossos headers;
   - os segredos ficam no banco do Coolify e num `.env` gravado por ele no disco da VPS, legível pelo `root`. A VPS é de um único usuário (o humano);
   - o rollback por branch temporária é mais lento que o `git checkout` na VPS;
+  - com o deploy automático, um merge é um deploy em produção: um erro que passe pelo CI chega ao painel sem passo humano no meio, e o GitHub precisa alcançar a URL do painel do Coolify pela internet;
   - a VPS e o proxy do Coolify continuam sendo um ponto único de falha, compartilhado com o portfólio. A mitigação continua a mesma: outbox na borda e reserva no Render;
   - os testes de aceite das SPECs 015, 032 e 038 que descrevem o compose e o Caddyfile antigos são ajustados pelo tester da SPEC-039 (regra de `docs/architecture.md` §10).
 - **O que passa a ser obrigatório:**
   - a SPEC-039 (manutenção do deploy para o Coolify, `security-devops`) `Done` **antes** dos CAs manuais da SPEC-015 e do CA-09 da SPEC-032;
   - a SPEC-015 com os passos humanos e os CAs manuais refeitos para o Coolify, e o `docs/deployment-plan.md` reescrito (feito junto com este ADR, aguardando aprovação);
   - a SPEC-038, Parte B, ajustada ao Caddy em `:80` e aos comandos do Coolify (nota na própria SPEC), e mergeada depois da SPEC-039;
-  - uma SPEC que acrescente variáveis à API ou ao dashboard (a SPEC-017, por exemplo) também as declara no `environment` do compose como `${NOME}` (a mudança do compose é do `security-devops`), em vez de citar o `infra/.env.api`;
+  - uma SPEC que acrescente variáveis à API ou ao dashboard também as declara no `environment` do compose como `${NOME}` (a mudança do compose é do `security-devops`), em vez de citar o `infra/.env.api`. As da SPEC-017 já entram pela SPEC-039, como opcionais e desligadas por padrão;
+  - o webhook com segredo configurado no Coolify e no GitHub, e o CA-18 da SPEC-039 (um merge de teste dispara o deploy, e o log não mostra segredos);
   - depois do aceite: o status do ADR-018 vira "Substituído em parte por ADR-023", e a N-05 recebe o texto acima (pelo orquestrador);
   - `docs/architecture.md` §1, §2, §8 e §9 anotados "a partir da SPEC-039".
 
 ## Quando revisitar
 
 - Se a SPEC-039 mostrar que o Coolify não respeita o compose (build com `context: ..`, limites ou endurecimento descartados): avaliar o layout com Base Directory `/` ou a opção C, com ADR novo.
-- Se o humano quiser deploy automático a cada merge (webhook do Coolify): emenda deste ADR (o segredo do webhook ficaria no GitHub).
+- Se um merge com CI verde quebrar a produção mais de uma vez, ou perto da apresentação: avaliar desligar o Auto deploy (voltar ao botão) ou adotar Watch Paths, com emenda deste ADR.
+- Se o segredo do webhook vazar ou o GitHub registrar entregas não assinadas aceitas.
 - Se o humano tirar o Coolify da VPS ou trocar o proxy dele (por exemplo, para o Caddy do Coolify).
 - Se o Traefik do Coolify passar a acrescentar headers que conflitem com os do Caddy (HSTS com `includeSubDomains`, por exemplo).
 - Se for preciso um caminho público novo fora de `/api/*` e do Streamlit (por exemplo, publicar o `/docs`, decisão 4 do ADR-018).
 - Os gatilhos do ADR-018 sobre a VPS (upgrade pago, queda de mais de 24 h, pergunta 8 ao professor, pausa do Supabase) continuam.
+
+## Histórico
+
+| Data | Mudança | Quem decidiu |
+|---|---|---|
+| 2026-10-25 | ADR redigido (`Proposto`): Coolify, TLS no proxy dele, Caddy como roteador interno, deploy manual pelo botão | Architect, a pedido do humano |
+| 2026-10-25 | Decisões do humano sobre o PR #55: (1) **opção A aprovada** (Caddy como roteador interno); (2) **deploy automático por webhook a cada merge na `main`**, no lugar do deploy manual: webhook manual com segredo (só no painel do Coolify e nas configurações do repositório no GitHub, R-03), sem GitHub App e sem Watch Paths; a `main` sempre publicável, merge só pelo portão da R-09, rollback por branch mantido (decisão 5, fontes de 2026-10-25 no Contexto); (3) as variáveis `ALERTS_*` e `TELEGRAM_*` da SPEC-017 entram já pela SPEC-039 como opcionais, com os padrões da 017 (alertas desligados), para a 017 não precisar mudar o compose (decisão 3); (4) o 502 com headers (`handle_errors`) fica na SPEC-038, e a SPEC-039 entra agora, direto na `main`. O status continua `Proposto` até o aceite formal | Humano (Carlos) |

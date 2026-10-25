@@ -7,7 +7,7 @@
 | Autor da implementação | security-devops |
 | Tags | deploy, security, infra |
 | Depende de | ADR-023 `Aceito`; SPEC-015 e SPEC-032 (código mergeado; faltam os CAs manuais, que esperam esta SPEC) |
-| Semana alvo | S2–S3: logo que aprovada, antes dos CAs manuais da SPEC-015 (a `main` atual não sobe na VPS) e antes da Parte B da SPEC-038 |
+| Semana alvo | Agora (decisão do humano de 2026-10-25): entra no loop logo que aprovada e vai direto para a `main`, antes dos CAs manuais da SPEC-015 (a `main` atual não sobe na VPS) e antes da Parte B da SPEC-038 |
 | Requisitos cobertos | RNF-01, RNF-06, RNF-10, RF-15; R-01, R-02, R-03, R-13, R-14 (R-02 e R-14 pelos contextos de build, CA-13) |
 | ADRs relevantes | ADR-023, ADR-018, ADR-008, ADR-006, ADR-016, ADR-019 |
 
@@ -32,7 +32,8 @@ O mesmo commit da `main` sobe na VPS como recurso Docker Compose do Coolify:
 
 - nenhuma porta publicada pelo PartQC;
 - `https://<subdominio>` servido pelo proxy do Coolify até o Caddy interno, que mantém as rotas, o bloqueio de `/docs` e os headers;
-- os segredos só nas variáveis do Coolify, nunca no Git, num arquivo editado à mão ou numa imagem (R-03).
+- os segredos só nas variáveis do Coolify, nunca no Git, num arquivo editado à mão ou numa imagem (R-03);
+- cada merge na `main` publicado automaticamente pelo webhook do Coolify, com o segredo do webhook fora do Git.
 
 ## 3. Escopo
 
@@ -70,11 +71,11 @@ Se outro teste de aceite antigo falhar por causa de um requisito desta SPEC, val
 
 - Configurar o recurso no Coolify, o domínio, as variáveis e o deploy: passos humanos, descritos no `docs/deployment-plan.md` §4 e verificados pelos CAs manuais desta SPEC e da SPEC-015.
 - **`handle_errors` do Caddy (Parte B da SPEC-038, §4.9):** continua na SPEC-038, que entra depois desta e escreve o bloco dentro do site `:80` (nota no topo da SPEC-038). Esta SPEC não muda o comportamento do 502.
-- Deploy automático (webhook do Coolify, Actions entrando na VPS) e registro de imagens: continuam proibidos (ADR-023, decisão 5).
+- O webhook do deploy automático é configurado pelo humano no painel do Coolify e no GitHub (§4.8, CA-18). Nenhum arquivo do repositório o referencia. Continuam proibidos o Actions entrando na VPS, um token da API do Coolify nos Secrets e o registro de imagens (ADR-023, decisão 5).
 - Mudanças no proxy do Coolify, nas configurações do servidor no Coolify, no firewall ou no Docker da VPS: fora (ADR-023, decisão 6).
 - Código da API e do dashboard: nenhuma mudança. A recusa de `http://` da SPEC-028 continua.
 - `infra/render.yaml`, os Dockerfiles da API e do dashboard, os `.dockerignore` deles, os workflows e o `infra/migrate.py`: sem mudança. A §4.6 só confere que os `.dockerignore` cobrem o `.env` que o Coolify grava.
-- As variáveis da SPEC-017 (alertas) entram no `environment` do compose quando ela for implementada. Isso é do `security-devops` e precisa de emenda na SPEC-017, que hoje cita o `infra/.env.api`.
+- As variáveis da SPEC-017 (alertas) **já entram aqui** (§4.1, item 6), por decisão do humano de 2026-10-25. Fica fora o texto do `deployment-plan.md` sobre como ligar os alertas (bot, `chat_id`, CA-13 da 017), ajustado quando a SPEC-017 for mergeada.
 - Rate limit no Caddy ou no Traefik, CSP completa e publicação do `/docs`: continuam fora (SPEC-015 §3.2, SPEC-032 §3.2).
 
 ## 4. Requisitos detalhados
@@ -100,9 +101,21 @@ Substitui a SPEC-015 §4.12, itens 2, 3, 5, 6, 7 e 8, e a tabela dos arquivos da
    READ_API_KEY: "${READ_API_KEY:?}"
    MAX_BODY_BYTES: "${MAX_BODY_BYTES:-262144}"
    LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+   ALERTS_ENABLED: "${ALERTS_ENABLED:-false}"
+   TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+   TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+   ALERTS_LOT_IDLE_MINUTES: "${ALERTS_LOT_IDLE_MINUTES:-10}"
+   ALERTS_LOOKBACK_HOURS: "${ALERTS_LOOKBACK_HOURS:-24}"
+   ALERTS_CHECK_INTERVAL_S: "${ALERTS_CHECK_INTERVAL_S:-60}"
+   ALERTS_MAX_PER_HOUR: "${ALERTS_MAX_PER_HOUR:-10}"
+   ALERTS_INCLUDE_SIMULATED: "${ALERTS_INCLUDE_SIMULATED:-false}"
    ```
 
-   Os padrões são os do código (`qc_api.config`).
+   - Os padrões de `MAX_BODY_BYTES` e `LOG_LEVEL` são os do código (`qc_api.config`).
+   - As 8 variáveis de alertas são as da SPEC-017 §4.6, com os mesmos padrões. Com `ALERTS_ENABLED=false`, os alertas ficam desligados, e as duas variáveis do Telegram vazias não são validadas. Assim, a SPEC-017, já implementada noutra branch, não precisa mudar o compose (decisão do humano de 2026-10-25).
+   - Antes do merge da SPEC-017, a API ignora essas variáveis (`extra="ignore"` em `qc_api.config`).
+   - Se a implementação da 017 usar outro nome ou outro padrão, o autor para e registra `SPEC_ISSUE`.
+   - `TELEGRAM_BOT_TOKEN` é segredo: quando preenchida no painel, fica só em runtime, Locked e Literal, como `DATABASE_URL`.
 7. **`dashboard`:** `build` como hoje, sem `env_file` e com `environment` exatamente igual a:
 
    ```yaml
@@ -147,7 +160,7 @@ Substitui a SPEC-015 §4.13, primeiro item:
 
 - O título do bloco `# ---------- infra/.env (VPS, infra/compose.yaml) ----------` passa a ser `# ---------- Coolify (variáveis do recurso) e infra/.env (conferência local) ----------`.
 - O comentário do bloco passa a dizer, no lugar do texto sobre os três arquivos da VPS:
-  - na VPS, estas variáveis, as do bloco `qc-api` (`DATABASE_URL` do pooler em modo transaction, `READ_API_KEY` e os opcionais `MAX_BODY_BYTES` e `LOG_LEVEL`) e o `MODEL_METRICS_PATH` opcional ficam nas **variáveis do recurso no Coolify**, com os segredos só em runtime, Locked e Literal, e nunca num arquivo criado à mão;
+  - na VPS, estas variáveis, as do bloco `qc-api` (`DATABASE_URL` do pooler em modo transaction, `READ_API_KEY` e os opcionais `MAX_BODY_BYTES` e `LOG_LEVEL`), as opcionais de alertas `ALERTS_*` e `TELEGRAM_*` (desligadas por padrão, SPEC-017) e o `MODEL_METRICS_PATH` opcional ficam nas **variáveis do recurso no Coolify**, com os segredos só em runtime, Locked e Literal, e nunca num arquivo criado à mão;
   - `API_BASE_URL` não é variável: o compose a monta a partir de `PUBLIC_HOST`;
   - localmente, um `infra/.env` com valores fictícios de todas elas serve só para `docker compose -f infra/compose.yaml config --quiet`.
 - As linhas `PUBLIC_HOST=<subdominio>`, os limites e os `*_PIDS_LIMIT` continuam iguais. A frase "rode \"up -d\"" do comentário dos `*_PIDS_LIMIT` passa a dizer "ajuste a variável no Coolify e faça Redeploy".
@@ -165,7 +178,7 @@ O architect reescreveu o plano para o Coolify junto com o ADR-023 (estrutura e p
 
 O plano tem de conter (CA-07):
 
-- os nomes da interface `Base Directory`, `Docker Compose Location`, `Domains`, `Environment Variables`, `Preserve repository`, `Raw` e `Connect to predefined network`, com a instrução de cada um;
+- os nomes da interface `Base Directory`, `Docker Compose Location`, `Domains`, `Environment Variables`, `Preserve repository`, `Raw`, `Connect to predefined network`, `Manual Git Webhooks`, `Deploy on push` e `Just the push event`, com a instrução de cada um;
 - o seletor `com.docker.compose.project=<uuid>` nos comandos da VPS;
 - `coolify-proxy` só em frases de proibição ou de conferência sem alteração.
 
@@ -186,6 +199,30 @@ O CA-09 da SPEC-032 foi escrito com `docker compose -f infra/compose.yaml`. No C
 | 5 (registro) | igual |
 
 O `<uuid>` é o UUID do recurso no Coolify (está na URL da página do recurso no painel), e não vai para o repositório.
+
+### 4.8 Deploy automático por webhook (decisão do humano de 2026-10-25; ADR-023, decisão 5)
+
+Passo humano. O autor escreve o roteiro no `deployment-plan.md` §4 (passo 7A) e na "Atualização" (fontes com data no ADR-023):
+
+1. **Coolify:** **Webhooks > Manual Git Webhooks**, seção GitHub:
+   - em **Webhook secret**, um segredo de pelo menos 16 caracteres (o gerador do painel, ou `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`), salvo com **Save changes**;
+   - copiar a URL GitHub mostrada ali.
+2. **GitHub:** no repositório, **Settings > Webhooks > Add webhook**, com:
+   - Payload URL igual à URL copiada e content type `application/json`;
+   - o mesmo segredo em Secret e **Enable SSL verification** ligado;
+   - **Just the push event** e **Active**.
+3. **Recurso:**
+   - **Advanced > Deployment > Auto deploy = Deploy on push (webhooks)**, com a branch `main`;
+   - sem Watch Paths (ADR-023, decisão 5).
+4. **Segredo (R-03):** só no campo do Coolify e no webhook do GitHub. Nunca no Git, nos Secrets do Actions, em issue, PR, print ou log. A URL do webhook (endereço do painel do Coolify) também não entra no repositório (R-13). Se o segredo vazar, troca-se nos dois lugares na mesma sessão.
+5. **Processo:**
+   - a `main` fica sempre publicável: o merge, feito pelo portão da R-09, é o deploy;
+   - depois de cada merge, quem mergeou confere no painel o deploy disparado pelo webhook (o commit do merge) e roda o smoke;
+   - se o deploy falhar ou o smoke reprovar, vale o rollback por branch (`deployment-plan.md` §6), e a correção vem por PR;
+   - variável obrigatória nova no compose só é mergeada depois de criada no painel;
+   - nenhum merge na véspera nem no dia da apresentação.
+
+O CA-07 confere o roteiro no plano, e o CA-18 confere o webhook na prática.
 
 ## 5. Critérios de aceite
 
@@ -224,11 +261,12 @@ Os CAs marcados `docker` rodam só com `PARTQC_DOCKER_TESTS=1` (SPEC-015 §4.14)
   *Dado* `infra/docker/caddy.Dockerfile.dockerignore`, *então* as linhas não vazias e não comentadas são exatamente `["*", "!infra/Caddyfile"]`. E o compose não contém a string `caddy:2.` (a versão do Caddy só existe no Dockerfile).
 - **CA-06 (§4.4)** — *Dado* `.env.example`, *então*:
   - existe a linha de título do item 1 da §4.4;
-  - o bloco que ela abre (até a próxima linha que começa com `# ----------`) contém `Coolify`, `Locked`, `Literal` e `config --quiet`, as linhas `PUBLIC_HOST=<subdominio>`, os 6 limites e os 3 `*_PIDS_LIMIT=256`;
+  - o bloco que ela abre (até a próxima linha que começa com `# ----------`) contém `Coolify`, `Locked`, `Literal`, `ALERTS_` e `config --quiet`, as linhas `PUBLIC_HOST=<subdominio>`, os 6 limites e os 3 `*_PIDS_LIMIT=256`;
   - o arquivo não contém `infra/.env.api`, `infra/.env.dashboard` nem `rode "up -d"`;
   - as condições do CA-39 da SPEC-015 e do CA-05 da SPEC-015 sobre o `.env.example` continuam valendo.
 - **CA-07 (§4.5)** — *Dado* `docs/deployment-plan.md`, *então*:
-  - ele contém `Base Directory`, `` `/infra` ``, `Docker Compose Location`, `` `/compose.yaml` ``, `https://<subdominio>:80`, `Environment Variables`, `Locked`, `Literal`, `Preserve repository`, `Connect to predefined network` e `com.docker.compose.project=<uuid>`;
+  - ele contém `Base Directory`, `` `/infra` ``, `Docker Compose Location`, `` `/compose.yaml` ``, `https://<subdominio>:80`, `Environment Variables`, `Locked`, `Literal`, `Preserve repository`, `Connect to predefined network`, `com.docker.compose.project=<uuid>`, `Manual Git Webhooks`, `Deploy on push`, `Just the push event` e `Enable SSL verification`;
+  - toda linha que contém `Webhook secret` ou `segredo do webhook` contém também `Coolify` ou `GitHub`, e nenhuma linha do arquivo contém `secrets.` seguido de um nome com `WEBHOOK` (o segredo nunca vai para os Secrets do Actions);
   - toda linha que contém `coolify-proxy` e uma das palavras `restart`, `reinici`, `stop`, `parar` ou `editar` contém também `Nunca` ou `nunca`;
   - toda linha que contém `Raw` contém também `Nunca`, `nunca` ou `não`;
   - as condições dos CAs 25, 27, 38 e 41 da SPEC-015 continuam valendo.
@@ -237,6 +275,7 @@ Os CAs marcados `docker` rodam só com `PARTQC_DOCKER_TESTS=1` (SPEC-015 §4.14)
   - `services.dashboard.environment.API_BASE_URL == "https://partqc.example.org"`;
   - `services.api.environment.DATABASE_URL` é a URL fictícia, e `READ_API_KEY` é igual na `api` e no `dashboard`;
   - `MAX_BODY_BYTES == "262144"`, `LOG_LEVEL == "INFO"` e `MODEL_METRICS_PATH == ""`;
+  - na `api`, `ALERTS_ENABLED == "false"`, `TELEGRAM_BOT_TOKEN == ""`, `TELEGRAM_CHAT_ID == ""`, `ALERTS_LOT_IDLE_MINUTES == "10"`, `ALERTS_LOOKBACK_HOURS == "24"`, `ALERTS_CHECK_INTERVAL_S == "60"`, `ALERTS_MAX_PER_HOUR == "10"` e `ALERTS_INCLUDE_SIMULATED == "false"`; nenhuma variável `ALERTS_*` ou `TELEGRAM_*` aparece no `dashboard` nem no `caddy`;
   - nenhum serviço resolvido tem `ports`;
   - o `mem_limit` da `api` corresponde a 512 MiB.
 
@@ -281,7 +320,7 @@ Antes de colar qualquer saída, troque o subdomínio por `<subdominio>`, o IP po
   3. `docker inspect -f '{{.State.StartedAt}}' coolify-proxy` é anotado (fora do repositório) para o CA-40 da SPEC-015.
 - **CA-15 (manual; ADR-023, itens 1 e 6 do Contexto)** — Recurso e primeiro deploy, pelos passos 4 a 7 do `deployment-plan.md` §4:
   1. o recurso foi criado como **Public Repository**, com a URL HTTPS do repositório, branch `main`, build pack **Docker Compose**, Base Directory `/infra` e Docker Compose Location `/compose.yaml`;
-  2. em Advanced, o modo de deploy do compose **não** é Raw; "Connect to predefined network" e "Preserve repository during deployment" estão desligados; o deploy automático (webhook) não está configurado;
+  2. em Advanced, o modo de deploy do compose **não** é Raw, e "Connect to predefined network" e "Preserve repository during deployment" estão desligados. O primeiro deploy é pelo botão **Deploy**; o webhook é configurado depois e conferido no CA-18;
   3. em Domains, só o serviço `caddy` tem domínio, igual a `https://<subdominio>:80`;
   4. o deploy termina com sucesso, e o log mostra o build das três imagens. O humano lê o log no painel e confirma que nenhum valor de segredo aparece; se aparecer, não colar o log em lugar nenhum e registrar `SPEC_ISSUE`;
   5. `docker ps --filter label=com.docker.compose.project=<uuid> --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'` mostra 3 contêineres `Up`, com a `api` e o `dashboard` `(healthy)`, e a coluna de portas sem nenhum `0.0.0.0:` nem `[::]:`.
@@ -298,6 +337,14 @@ Antes de colar qualquer saída, troque o subdomínio por `<subdominio>`, o IP po
   2. para cada imagem dos 3 contêineres, `docker history --no-trunc <imagem> | grep -c -e DATABASE_URL -e READ_API_KEY` → `0`;
   3. `docker exec <contêiner da api> find /app -maxdepth 2 -name '.env*'` e o mesmo no `dashboard` → nenhuma linha, ou só `/app/.env.example` (o CA-43, passo 1, da SPEC-015);
   4. `sudo find /data/coolify/applications/<uuid> -maxdepth 2 -name .env -exec stat -c '%a %U:%G %n' {} \;` → registrar os modos e donos no `deployment-plan.md` §7, item 7, sem o caminho completo. Se algum modo permitir leitura a "outros" (último dígito diferente de 0), registrar isso no mesmo item e avisar o humano. Não mudar a permissão à mão, porque o Coolify reescreve o arquivo a cada deploy.
+- **CA-18 (manual, R-03; §4.8)** — Deploy automático por webhook:
+  1. com o webhook configurado pela §4.8 e o Auto deploy em **Deploy on push (webhooks)**, mergear na `main` um PR de teste pelo portão da R-09 (por exemplo, o PR que registra os CAs 14 a 17 no `deployment-plan.md`);
+  2. em até 5 min, a lista de deploys do recurso mostra um deploy novo disparado pelo webhook, com o commit do merge. Em **Settings > Webhooks > Recent Deliveries** do GitHub, a entrega `push` desse commit tem resposta 2xx;
+  3. os commits da branch do PR, enviados antes do merge, não geraram nenhum deploy (só a `main` dispara);
+  4. o deploy termina com sucesso, a listagem do CA-15 (passo 5) mostra os 3 contêineres `Up`, com a `api` e o `dashboard` `(healthy)`, e o smoke (CA-15 da SPEC-015) dá 8 × `PASS`;
+  5. no log desse deploy, uma busca no navegador pelos 8 primeiros caracteres do segredo do webhook, da `DATABASE_URL` (a parte da senha), da `READ_API_KEY` e, se preenchida, da `TELEGRAM_BOT_TOKEN` → 0 ocorrências. Se houver alguma, não copiar o log, trocar o segredo afetado e registrar `SPEC_ISSUE`;
+  6. `git grep -n -i "webhook"` no checkout local mostra só documentação: nenhuma linha com uma URL do painel do Coolify nem com um valor de segredo (o CA-42 da SPEC-015 confere o host do painel, se o humano o informar como mais um valor);
+  7. registrar no dev-report e no `deployment-plan.md` §9 o resultado, o SHA curto do commit e a data, sem a URL do webhook nem o UUID.
 
 ## 6. Plano de testes
 
@@ -305,7 +352,7 @@ Antes de colar qualquer saída, troque o subdomínio por `<subdominio>`, o IP po
 |---|---|---|
 | Unitário (autor) | Compose como YAML; Caddyfile e Dockerfile como texto; `.dockerignore`; `.env.example` e plano como texto; `config` local e na forma do Coolify (docker); `adapt`, imagem e execução do Caddy (docker); ajustes nos próprios testes das SPECs 015, 032 e 038 | `infra/tests/` |
 | Aceite (tester) | CA-01 a CA-13 (CA-08 a CA-13 marcados `docker`) e os ajustes da tabela da §3.1 | `infra/tests/acceptance/test_spec_039.py` |
-| Manual (humano) | CA-14 a CA-17 e, depois deles, os CAs manuais da SPEC-015 e o CA-09 da SPEC-032 (§4.7) | VPS e painel do Coolify; registro no dev-report e no `deployment-plan.md` §9 |
+| Manual (humano) | CA-14 a CA-18 e, depois deles, os CAs manuais da SPEC-015 e o CA-09 da SPEC-032 (§4.7) | VPS, painel do Coolify e GitHub; registro no dev-report e no `deployment-plan.md` §9 |
 
 - Nenhum teste usa a VPS, o Coolify, o DNS, o Supabase ou a rede externa. As imagens base vêm do Docker Hub e do GHCR no build, como na SPEC-015.
 - Os testes `docker` seguem a SPEC-015 §4.14: contextos em `tmp_path`, imagens removidas no fim da sessão. Um test-report com os testes `docker` só pulados não vale como PASS desses CAs.
@@ -320,6 +367,7 @@ Antes de colar qualquer saída, troque o subdomínio por `<subdominio>`, o IP po
 - **Sem `PUBLIC_HOST` no Caddy:** o site `:80` aceita qualquer `Host`. Só o `coolify-proxy` (pela regra `Host(...)` que o Coolify gera) e os contêineres da rede do recurso alcançam o Caddy, que não tem porta publicada.
 - **Domínios em comentários:** nada de `coolify.io`, `sslip.io` ou outro domínio nos arquivos de `infra/` (o `test_extra_no_real_host_hints_in_deploy_files` da SPEC-015 recusa). As fontes ficam no ADR-023 e no `deployment-plan.md`.
 - **Variáveis com padrão:** o Coolify cria no painel as variáveis com `${NOME:-padrão}`, com o padrão do arquivo (ADR-023, Contexto). Se o humano apagar o valor no painel, o compose usa o padrão.
+- **Deploy automático:** o merge desta SPEC na `main` já dispara o deploy, se o webhook existir. Na primeira publicação, o webhook é configurado só depois do CA-15 (primeiro deploy pelo botão), para que um deploy falho não aconteça antes de as variáveis estarem no painel. Uma mudança futura que torne obrigatória uma variável nova (`${NOME:?}`) bloqueia o deploy automático até o humano criá-la no painel.
 - **Ordem com a SPEC-038:** a Parte B da 038 escreve o `handle_errors` dentro do bloco `:80` deste Caddyfile. Esta SPEC precisa estar mergeada antes de a 038 entrar em `In Dev`.
 - Nunca rode `docker compose down -v`, `prune` amplo, nem mexa no `ufw` ou no `coolify-proxy` (ADR-023, decisão 6).
 
@@ -329,7 +377,7 @@ Antes de colar qualquer saída, troque o subdomínio por `<subdominio>`, o IP po
 - [ ] review-report APPROVED + o portão de segurança feito pelo reviewer (autor `security-devops`)
 - [ ] CI verde (`ci` e `docker`); `ruff` limpo
 - [ ] `.env.example` e `docs/deployment-plan.md` atualizados
-- [ ] CA-14 a CA-17 (manuais) registrados no dev-report e no `deployment-plan.md` §9. Eles só podem ser feitos depois do merge, como na SPEC-015 e na SPEC-032; até lá, a SPEC fica `In Security`
+- [ ] CA-14 a CA-18 (manuais) registrados no dev-report e no `deployment-plan.md` §9. Eles só podem ser feitos depois do merge, como na SPEC-015 e na SPEC-032; até lá, a SPEC fica `In Security`
 - [ ] PR aberto com os relatórios; merge conforme R-09 (delegado ao orquestrador, ADR-016)
 
 ## Histórico
@@ -337,3 +385,4 @@ Antes de colar qualquer saída, troque o subdomínio por `<subdominio>`, o IP po
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-10-25 | SPEC criada (`Draft`). Decisões do architect, com o ADR-023 (`Proposto`): (a) nenhum serviço com `ports`, nenhuma label `traefik.*`/`coolify.*`, sem a rede própria e sem o alias; (b) Caddy em `:80`, sem TLS e sem healthcheck, com `tmpfs` em `/data` e `/config` no lugar dos volumes; (c) Caddyfile embutido numa imagem própria (`caddy.Dockerfile`, contexto só com o Caddyfile), em vez de bind com "Preserve repository"; (d) segredos por `${NOME:?}` no `environment`, sem `env_file`, e os opcionais com o padrão do código; (e) Base Directory `/infra` e Docker Compose Location `/compose.yaml`, com o CA-09 simulando a invocação do Coolify; (f) o `handle_errors` continua na SPEC-038; (g) equivalência dos comandos do CA-09 da SPEC-032 (§4.7). | Fato novo do humano em 2026-10-25: a VPS é gerenciada pelo Coolify, cujo proxy ocupa 80/443 | Orquestrador, a pedido do humano |
+| 2026-10-25 | Decisões do humano sobre o PR #55: (1) opção A do ADR-023 aprovada (Caddy como roteador interno); (2) **deploy automático por webhook** a cada merge na `main`: §3.2 ajustada, §4.8 nova (webhook manual com segredo só no Coolify e no GitHub, sem Watch Paths, processo com a `main` sempre publicável e rollback por branch), CA-07 com os nomes da interface do webhook, CA-15 com o primeiro deploy pelo botão, **CA-18 novo** (manual: um merge de teste dispara o deploy, só a `main` dispara, e o log não mostra segredos); (3) as 8 variáveis de alertas da SPEC-017 (`ALERTS_*`, `TELEGRAM_*`), com os padrões dela (alertas desligados), entram já no `environment` da `api` (§4.1, item 6; CA-08); o `.env.example` as cita no comentário, e o texto do plano sobre os alertas fica para o merge da 017; (4) o `handle_errors` fica na SPEC-038, e esta SPEC entra agora, direto na `main` (Semana alvo). Fontes novas no ADR-023 (consultadas em 2026-10-25). A SPEC continua `Draft` até a aprovação formal. | Decisão do humano | Humano (Carlos) |
