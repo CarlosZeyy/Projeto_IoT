@@ -81,3 +81,5 @@ htmlcov/
 docs/
 reviews/
 **/tests
+# infra/: o compose que o Coolify reescreve antes do build, com as labels do proxy (SEC-39-02)
+infra/

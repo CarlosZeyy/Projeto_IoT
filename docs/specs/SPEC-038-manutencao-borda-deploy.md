@@ -9,7 +9,28 @@
 | Depende de | SPEC-036 e SPEC-032 **mergeadas antes de esta entrar em `In Dev`** (a Parte A muda o `importer.py` da 036; a Parte B muda o `Caddyfile`, o `.gitignore`, os `.dockerignore` e o plano de deploy da 032); SPEC-034 (`Done`); e SPEC-009, 015, 025 e 030 |
 | Semana alvo | S6–S7: depois da Fase 2 (logo depois da SPEC-017) e antes do ensaio da apresentação (M4, 29/11). Decisão do humano de 2026-10-24 |
 | Requisitos cobertos | RF-06, RF-07, RNF-04, RNF-05, RNF-06, RNF-10; R-02, R-03, R-05, R-14 |
-| ADRs relevantes | ADR-009, ADR-018, ADR-020, ADR-016 |
+| ADRs relevantes | ADR-009, ADR-018, ADR-020, ADR-016, ADR-023 (`Proposto`; só a Parte B) |
+
+> **Reaprovada pelo humano em 2026-10-25** (nota de 2026-10-25, pelo ADR-023, `Aceito`). A Parte A não muda. A Parte B continua, mas passa a valer sobre o Caddyfile e o compose da **SPEC-039** (Caddy como roteador interno em `:80`, atrás do proxy do Coolify). Leia-se:
+>
+> - **Depende de:** também a SPEC-039 mergeada antes de esta entrar em `In Dev`.
+> - **§4.9:**
+>   - o bloco `handle_errors` fica dentro do bloco do site `:80` (não `{$PUBLIC_HOST}`). Ele continua necessário, porque o 502 com a API ou o dashboard fora do ar ainda é gerado pelo Caddy e passa pelo proxy do Coolify até o cliente;
+>   - no texto do risco do `deployment-plan.md` (hoje o item 9 da §7), "o 308 da porta 80 continua sem eles (servidor automático, HSTS ignorado em HTTP)" passa a ser "o redirecionamento HTTP → HTTPS e os erros gerados pelo próprio proxy do Coolify (por exemplo, com o contêiner do Caddy parado) continuam sem eles".
+> - **§4.10:** o `.dockerignore` do Caddy da SPEC-039 (`*` e `!infra/Caddyfile`) já exclui todas as extensões. As 9 linhas entram só nos dois `.dockerignore` da API e do dashboard, como está.
+> - **CA-12:** "dentro do bloco `{$PUBLIC_HOST}`" passa a ser "dentro do bloco do site `:80`", e "as condições do CA-30 da SPEC-015" passa a ser "as condições do CA-04 da SPEC-039".
+> - **CA-13:** "a imagem do Caddy fixada no compose" passa a ser "a imagem construída de `infra/docker/caddy.Dockerfile` (SPEC-039 §4.3)", sem `PUBLIC_HOST` no ambiente.
+> - **CA-14:**
+>   - a imagem é a da SPEC-039 §4.3, executada com as opções do CA-12 da SPEC-039: `--read-only`, `tmpfs` em `/tmp`, `/data` e `/config` (no lugar dos volumes temporários), `--cap-drop ALL`, `--cap-add NET_BIND_SERVICE`, `--pids-limit 256` e `--network none`;
+>   - sai o `PUBLIC_HOST=http://partqc.example.org` "só no teste": o Caddyfile real já serve HTTP em `:80`;
+>   - as requisições a `127.0.0.1:80` com `Host: partqc.example.org` e as expectativas não mudam.
+> - **CA-18 (manual):**
+>   - passo 1: `docker stop <contêiner da api>`, com o nome pela listagem `docker ps --filter label=com.docker.compose.project=<uuid>` (SPEC-039 §4.7);
+>   - passo 3: `docker start <contêiner da api>`;
+>   - passo 4: registrar também sem o UUID do recurso.
+> - **Testes de aceite de SPECs anteriores (§3.1):** vale a mesma regra para um teste de aceite da SPEC-039 que a §4.9 invalide (por exemplo, uma contagem de handlers `headers` no JSON do `caddy adapt`).
+>
+> Ver o Histórico.
 
 ## 1. Contexto
 
@@ -262,4 +283,6 @@ Os CAs marcados `docker` rodam só com `PARTQC_DOCKER_TESTS=1` (SPEC-015 §4.14)
 |---|---|---|---|
 | 2026-10-24 | SPEC criada (`Draft`). Decisões do architect: (a) linha inválida do outbox vira `dead` no laço (`invalid outbox row`, por `rowid`) e é pulada na listagem, com aviso só de `rowid` e coluna; a CLI também captura `ValueError`/`TypeError` (§4.1); (b) `OperationalError` na abertura com mensagem própria, sem mudar o código 2 (§4.2); (c) `info` vazio antes do `save` na importação (§4.3); (d) logger `PIL` em pelo menos INFO nos `main` do importador e da varredura (§4.4); (e) rollback dos diretórios criados na linha (§4.5); (f) **RV-02 da 036 entra**: reconferência do hash sob o lock, porque o custo é pequeno (o `sources.csv` já é relido ali), o teste é determinístico e evita parar o pipeline com `duplicate_input` (§4.6); (g) pasta de entrada e plano recusados dentro de um repositório Git, no lugar de mais linhas no `.gitignore` para o plano (§4.7); (h) `handle_errors` no Caddy, com os mesmos 6 headers e corpo vazio, em vez de um segundo bloco `header` não adiado, que manteria o `Server` e poderia duplicar headers vindos da origem (§4.9); (i) 9 extensões de foto e vídeo só na forma com classes de caracteres (§4.10); (j) `0`/`-1` do `pids_limit` e o roteiro de atualização só em documentação (§4.11); (k) **RV-03 da 036 fica fora**, com a regra `PLE2502` (§3.2); (l) duas partes, developer e security-devops, com o portão de segurança dividido (§6). | SEC-34-01/02 de `reviews/SPEC-034/r1-security-report.md` e RV-01/02 de `r1-review-report.md`; O-01 a O-05 de `reviews/SPEC-036/r1-test-report.md`, RV-01 a RV-04 de `r1-review-report.md` e SEC-36-01 a 03 de `r1-security-report.md`; T-01, O-T-01 e O-T-02 de `reviews/SPEC-032/r1-test-report.md`, RV-01 a RV-03 de `r1-review-report.md` e SEC-32-01 a 03 de `r1-security-report.md`. Os relatórios das SPECs 036 e 032 foram lidos nas branches delas (`spec/SPEC-036-importacao-de-fotos` e a worktree da SPEC-032, PR #50) | Orquestrador, a pedido do humano (decisão de 2026-10-24) |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com as recomendações do §9: duas partes (developer na borda, security-devops no deploy) com o portão de segurança dividido, CA-18 manual na VPS mantido, sem pendências de outras SPECs. | Resposta do humano de 2026-10-24 (PR #51) | Orquestrador, a pedido do humano |
+| 2026-10-25 | Nota no topo (ADR-023, `Proposto`). A Parte B passa a valer sobre o Caddy da SPEC-039: (a) depende também da SPEC-039 mergeada; (b) `handle_errors` dentro do site `:80`, e o texto do risco no `deployment-plan.md` cita o redirecionamento e os erros do proxy do Coolify; (c) o `.dockerignore` do Caddy não recebe as extensões; (d) CA-12, CA-13 e CA-14 com o endereço `:80`, a imagem de `infra/docker/caddy.Dockerfile` e os `tmpfs` da SPEC-039, sem o `PUBLIC_HOST` de teste; (e) CA-18 com `docker stop`/`docker start` pelo seletor do projeto do Coolify; (f) a regra dos testes de aceite antigos vale também para os da SPEC-039. A Parte A não muda. **O `handle_errors` continua nesta SPEC**, e não na SPEC-039, que fica restrita ao necessário para subir no Coolify (a confirmar pelo humano na aprovação do ADR-023). Classificação ADR-019: exige humano (X-2: ADR novo; X-5: dependência nova, a SPEC-039). SPEC marcada como "Aguardando reaprovação humana"; o status continua `Ready`. | Fato novo do humano em 2026-10-25 (VPS gerenciada pelo Coolify) e ADR-023 | Orquestrador, a pedido do humano |
+| 2026-10-25 | Alteração pelo ADR-023 reaprovada pelo humano (deploy pelo Coolify). | Resposta do humano de 2026-10-25 (PR #55) | Orquestrador, a pedido do humano |
 | 2026-10-25 | Entra em `In Dev` encadeada na SPEC-017 (sobre a 018, a 016 e a 036), por decisão do humano de 2026-10-24: a Parte A (developer, borda) começa agora; a Parte B (security-devops, Caddy) entra depois do merge da SPEC-039 na `main` (ADR-023), trazida para esta branch. O merge desta SPEC só acontece depois dos merges da 036, 016, 018, 017 e 039. | Resposta do humano de 2026-10-24; ADR-023 | Orquestrador, a pedido do humano |

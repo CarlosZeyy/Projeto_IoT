@@ -607,7 +607,7 @@ def test_ca04_caddyfile_headers() -> None:
         if depth == 0 and stripped:
             top_level.append(stripped)
         depth += stripped.count("{") - stripped.count("}")
-    assert top_level == ["{$PUBLIC_HOST} {"], top_level
+    assert top_level == [":80 {"], top_level  # SPEC-039 section 4.2
     domain = re.compile(r"\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b")
     assert not domain.search(text.lower()), domain.search(text.lower())
     assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", text)
@@ -660,7 +660,9 @@ def _walk(node: Any) -> Iterator[Any]:
 
 
 def _caddy_image() -> str:
-    return _load_yaml(COMPOSE)["services"]["caddy"]["image"]
+    # SPEC-039 section 4.3: the FROM of infra/docker/caddy.Dockerfile (Caddyfile mounted)
+    dockerfile = _read(INFRA / "docker" / "caddy.Dockerfile")
+    return re.search(r"(?m)^FROM\s+(\S+)", dockerfile).group(1)  # type: ignore[union-attr]
 
 
 def _docker(*args: str, timeout: int = 300) -> subprocess.CompletedProcess:
@@ -679,8 +681,6 @@ def test_ca05_caddy_adapt_headers(tmp_path: Path) -> None:
         "--rm",
         "--network",
         "none",
-        "-e",
-        f"PUBLIC_HOST={TEST_HOST}",
         "-v",
         f"{caddyfile}:/etc/caddy/Caddyfile:ro",
         _caddy_image(),
@@ -720,7 +720,7 @@ def test_extra_caddy_adapt_single_header_handler_is_deferred(tmp_path) -> None:
     shutil.copy(CADDYFILE, caddyfile)
     caddyfile.chmod(0o444)
     result = _docker(
-        "run", "--rm", "--network", "none", "-e", f"PUBLIC_HOST={TEST_HOST}",
+        "run", "--rm", "--network", "none",
         "-v", f"{caddyfile}:/etc/caddy/Caddyfile:ro", _caddy_image(),
         "caddy", "adapt", "--config", "/etc/caddy/Caddyfile",
         timeout=600,
@@ -743,6 +743,12 @@ def _size_bytes(value: str) -> int:
     return int(m.group(1)) * {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[m.group(2)]
 
 
+def _all_services() -> dict[str, Any]:
+    """SPEC-039 sections 4.1 and 4.1A: ``api`` from ``compose.api.yaml``, the others from
+    ``compose.yaml``."""
+    return {**_load_yaml(INFRA / "compose.api.yaml")["services"], **_load_yaml(COMPOSE)["services"]}
+
+
 def _tmpfs_items(svc: dict[str, Any]) -> list[str]:
     tmpfs = svc.get("tmpfs")
     assert tmpfs is not None
@@ -758,7 +764,7 @@ def _tmpfs_size(item: str) -> str | None:
 
 
 def test_ca06_compose_hardening() -> None:
-    services = _load_yaml(COMPOSE)["services"]
+    services = _all_services()  # SPEC-039 section 4.1: the api in infra/compose.api.yaml
     assert set(services) == set(SERVICES)
     for name, svc in services.items():
         assert svc.get("read_only") is True, name
@@ -769,27 +775,31 @@ def test_ca06_compose_hardening() -> None:
             size = _tmpfs_size(item)
             assert size is not None, (name, item)
             assert _size_bytes(size) <= 64 * 1024**2, (name, item)
-            assert item.startswith(("/tmp", "/home/app")), (name, item)
+            assert item.startswith(("/tmp", "/home/app", "/data", "/config")), (name, item)
             if item.startswith("/home/app"):
                 assert name in ("api", "dashboard"), (name, item)
+            if item.startswith(("/data", "/config")):  # SPEC-039 section 4.1 item 5
+                assert name == "caddy" and _tmpfs_size(item) == "16m", (name, item)
 
 
 def test_extra_compose_tmpfs_mount_points_are_exact() -> None:
     """``/tmpfoo`` or ``/home/application`` would pass a bare ``startswith``."""
-    services = _load_yaml(COMPOSE)["services"]
+    services = _all_services()  # SPEC-039 section 4.1: the api in infra/compose.api.yaml
     for name, svc in services.items():
         for item in _tmpfs_items(svc):
             target = item.split(":", 1)[0]
-            assert target in ("/tmp", "/home/app"), (name, target)
+            allowed = ("/tmp", "/data", "/config") if name == "caddy" else ("/tmp", "/home/app")
+            assert target in allowed, (name, target)  # SPEC-039 section 4.1 item 5
         targets = [i.split(":", 1)[0] for i in _tmpfs_items(svc)]
         assert len(targets) == len(set(targets)), (name, targets)
 
 
-def test_extra_compose_keeps_caddy_volumes_writable() -> None:
+def test_extra_compose_keeps_caddy_state_dirs_writable_in_tmpfs() -> None:
+    """SPEC-039 section 4.1 item 5: /data and /config writable as tmpfs, no volumes."""
     caddy = _load_yaml(COMPOSE)["services"]["caddy"]
-    assert "caddy_data:/data" in caddy["volumes"]
-    assert "caddy_config:/config" in caddy["volumes"]
-    assert "./Caddyfile:/etc/caddy/Caddyfile:ro" in caddy["volumes"]
+    assert "/data:size=16m" in caddy["tmpfs"]
+    assert "/config:size=16m" in caddy["tmpfs"]
+    assert "volumes" not in caddy
 
 
 def test_extra_env_example_pids_variables_in_the_infra_block() -> None:
@@ -835,17 +845,18 @@ def compose_copy(tmp_path: Path) -> Path:
     return support.copy_tracked_tree(
         tmp_path / "compose-copy",
         {
-            "infra/.env": f"PUBLIC_HOST={TEST_HOST}\n".encode(),
-            # SPEC-015 section 4.12: env_file entries are required; fictitious values.
-            "infra/.env.api": f"DATABASE_URL={FAKE_DB_URL}\nREAD_API_KEY={read_key}\n".encode(),
-            "infra/.env.dashboard": f"READ_API_KEY={read_key}\n".encode(),
+            # SPEC-039 section 4.1: every variable in the single infra/.env; fictitious values.
+            "infra/.env": (
+                f"PUBLIC_HOST={TEST_HOST}\nDATABASE_URL={FAKE_DB_URL}\nREAD_API_KEY={read_key}\n"
+            ).encode(),
         },
     )
 
 
-def _compose(copy: Path, *args: str) -> subprocess.CompletedProcess:
+def _compose(copy: Path, *args: str, filename: str = "compose.yaml") -> subprocess.CompletedProcess:
+    # SPEC-039 section 4.1: compose.yaml (caddy, dashboard) or compose.api.yaml (api)
     return subprocess.run(
-        ["docker", "compose", "-f", str(copy / "infra" / "compose.yaml"), *args],
+        ["docker", "compose", "-f", str(copy / "infra" / filename), *args],
         env=_compose_env(),
         capture_output=True,
         text=True,
@@ -857,29 +868,37 @@ def _compose(copy: Path, *args: str) -> subprocess.CompletedProcess:
 @pytest.mark.docker
 def test_ca06_compose_config_quiet(compose_copy: Path) -> None:
     before = _git_status()
-    result = _compose(compose_copy, "config", "--quiet")
-    assert result.returncode == 0, result.stderr
+    for filename in ("compose.api.yaml", "compose.yaml"):  # SPEC-039 section 4.1: both files
+        result = _compose(compose_copy, "config", "--quiet", filename=filename)
+        assert result.returncode == 0, result.stderr
     assert _git_status() == before
     assert not (REPO_ROOT / "infra" / ".env").exists()
 
 
+def _resolved_services(copy: Path) -> dict[str, Any]:
+    """SPEC-039 section 4.1: ``config`` of both files, services merged."""
+    services: dict[str, Any] = {}
+    for filename in ("compose.api.yaml", "compose.yaml"):
+        result = _compose(copy, "config", "--format", "json", filename=filename)
+        assert result.returncode == 0, result.stderr
+        services.update(json.loads(result.stdout)["services"])
+    return services
+
+
 @pytest.mark.docker
 def test_extra_compose_config_resolves_pids_and_override(compose_copy: Path) -> None:
-    result = _compose(compose_copy, "config", "--format", "json")
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    services = _resolved_services(compose_copy)
     for name in SERVICES:
         assert int(services[name]["pids_limit"]) == 256, name
         assert services[name]["read_only"] is True, name
     env_file = compose_copy / "infra" / ".env"
-    env_file.write_text(f"PUBLIC_HOST={TEST_HOST}\nDASHBOARD_PIDS_LIMIT=512\n", encoding="utf-8")
-    result = _compose(compose_copy, "config", "--format", "json")
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    base = env_file.read_text(encoding="utf-8")  # SPEC-039 section 4.1: keep the mandatory ones
+    env_file.write_text(base + "DASHBOARD_PIDS_LIMIT=512\n", encoding="utf-8")
+    services = _resolved_services(compose_copy)
     assert int(services["dashboard"]["pids_limit"]) == 512
     assert int(services["api"]["pids_limit"]) == 256
-    env_file.write_text(f"PUBLIC_HOST={TEST_HOST}\nAPI_PIDS_LIMIT=abc\n", encoding="utf-8")
-    result = _compose(compose_copy, "config", "--quiet")
+    env_file.write_text(base + "API_PIDS_LIMIT=abc\n", encoding="utf-8")
+    result = _compose(compose_copy, "config", "--quiet", filename="compose.api.yaml")
     assert result.returncode != 0
     assert "abc" not in result.stdout
 
@@ -900,7 +919,7 @@ def dashboard_image(build_image: Callable[..., str]) -> str:
 
 
 def _tmpfs_args(service: str) -> list[str]:
-    svc = _load_yaml(COMPOSE)["services"][service]
+    svc = _all_services()[service]  # SPEC-039 section 4.1: the api in infra/compose.api.yaml
     args: list[str] = []
     for item in _tmpfs_items(svc):
         args += ["--tmpfs", item]
@@ -1069,15 +1088,11 @@ def test_extra_hardening_is_effective_inside(request, containers: Containers, co
 
 @pytest.mark.docker
 def test_ca08_caddy_runs_read_only(containers: Containers) -> None:
-    caddy = _load_yaml(COMPOSE)["services"]["caddy"]
+    # SPEC-039 sections 4.1 item 5 and 4.3: image of caddy.Dockerfile, /data and /config tmpfs
     name = containers.run(
-        caddy["image"],
+        _caddy_image(),
         "--read-only",
         *_tmpfs_args("caddy"),
-        "-v",
-        "/data",
-        "-v",
-        "/config",
         "--pids-limit",
         "256",
         "--network",
@@ -1093,12 +1108,12 @@ def test_ca08_caddy_runs_read_only(containers: Containers) -> None:
 
 
 @pytest.mark.docker
-def test_extra_caddy_with_compose_capabilities_writes_only_volumes(containers) -> None:
-    """Exploratory: same as CA-08 plus the compose ``cap_drop``/``cap_add``; /etc stays ro."""
-    caddy = _load_yaml(COMPOSE)["services"]["caddy"]
+def test_extra_caddy_with_compose_capabilities_writes_only_tmpfs(containers) -> None:
+    """Exploratory: same as CA-08 plus the compose ``cap_drop``/``cap_add``; /etc stays ro.
+    SPEC-039 section 4.1 item 5: /data and /config are tmpfs mounts (no volumes)."""
     name = containers.run(
-        caddy["image"],
-        "--read-only", *_tmpfs_args("caddy"), "-v", "/data", "-v", "/config",
+        _caddy_image(),
+        "--read-only", *_tmpfs_args("caddy"),
         "--pids-limit", "256", "--network", "none",
         "--cap-drop", "ALL", "--cap-add", "NET_BIND_SERVICE",
         "--security-opt", "no-new-privileges",
@@ -1154,8 +1169,8 @@ def _headers_via_caddy(
 def test_extra_headers_through_reverse_proxy(api_image, dashboard_image, containers) -> None:
     """The real Caddyfile in front of the real images, on an internal network.
 
-    ``PUBLIC_HOST=http://partqc.example.org`` makes the same site block plain HTTP, so the
-    response can be read without a certificate; the header block is unchanged.
+    SPEC-039 section 4.2: the site block is ``:80`` (plain HTTP), so the response can be read
+    without a certificate; the header block is unchanged.
     """
     net = containers.network()
     env = ["-e", f"DATABASE_URL={FAKE_DB_URL}", "-e", "READ_API_KEY=x" + secrets.token_hex(16)]
@@ -1168,9 +1183,8 @@ def test_extra_headers_through_reverse_proxy(api_image, dashboard_image, contain
     )  # fmt: skip
     caddy = containers.run(
         _caddy_image(), "--network", net, "--network-alias", "edge",
-        "--read-only", *_tmpfs_args("caddy"),
-        "-v", "/data", "-v", "/config", "--pids-limit", "256",
-        "-v", f"{CADDYFILE}:/etc/caddy/Caddyfile:ro", "-e", f"PUBLIC_HOST=http://{TEST_HOST}",
+        "--read-only", *_tmpfs_args("caddy"), "--pids-limit", "256",
+        "-v", f"{CADDYFILE}:/etc/caddy/Caddyfile:ro",
     )  # fmt: skip
     probe = _headers_via_caddy
     assert _wait(lambda: probe(api_image, net, "/api/v1/health")[0] in (200, 503), 90), _logs(caddy)

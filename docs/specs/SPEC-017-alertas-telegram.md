@@ -9,9 +9,11 @@
 | Depende de | SPEC-006, SPEC-026, SPEC-015 (a API publicada na VPS, para o CA manual) e SPEC-016 (SPC por `grade is not null`, ADR-021) (e SPEC-003, SPEC-004, SPEC-014) |
 | Semana alvo | S6 |
 | Requisitos cobertos | RF-17; PRD §4.2; R-01, R-02, R-03, R-06 |
-| ADRs relevantes | ADR-013, ADR-017, ADR-018, ADR-021, ADR-006 |
+| ADRs relevantes | ADR-013, ADR-017, ADR-018, ADR-021, ADR-006, ADR-023 |
 
 > **Aprovada pelo humano em 2026-10-24** (PR #45), no pacote das Fases 2 e 3, com os ADRs 021 e 022 `Aceito`. Revista pelo architect em 2026-10-24 (ver o Histórico). Sem mudança de contrato.
+>
+> **Aguardando reaprovação humana** da correção de 2026-10-26 (texto de configuração na VPS passa do `infra/.env.api` para as variáveis do recurso `partqc-api` no Coolify; ver o Histórico).
 
 ## 1. Contexto
 
@@ -30,7 +32,7 @@ Quando um lote `live` **concluído** fica fora de controle na carta p, a API env
 - `api/src/qc_api/services/alerts.py`: verificação, deduplicação, teto por hora, texto e envio (§4.1 a §4.5).
 - Laço em segundo plano no `lifespan` da API (§4.2).
 - `infra/migrations/NNN_alerts.sql` (próximo número livre): tabela `alerts_sent` (§4.3).
-- Configuração (§4.6): `.env.example`, `api/README.md` e `docs/deployment-plan.md` (as variáveis no `infra/.env.api` da VPS e o passo a passo do bot).
+- Configuração (§4.6): `.env.example`, `api/README.md` e `docs/deployment-plan.md` (as variáveis no recurso `partqc-api` do Coolify e o passo a passo do bot).
 - Testes do autor em `api/tests/` (fora de `acceptance/`).
 - **Tester:** `api/tests/acceptance/test_spec_017.py`.
 
@@ -43,8 +45,8 @@ Quando um lote `live` **concluído** fica fora de controle na carta p, a API env
 
 ### 3.3 Trabalho humano
 
-1. Criar o bot pelo `@BotFather` no Telegram (gratuito), guardar o token só no `infra/.env.api` da VPS (R-03) e descobrir o `chat_id` do chat ou grupo do supervisor.
-2. Ligar `ALERTS_ENABLED=true` na VPS e registrar o CA-13 (manual).
+1. Criar o bot pelo `@BotFather` no Telegram (gratuito), guardar o token só na variável `TELEGRAM_BOT_TOKEN` do recurso `partqc-api` no painel do Coolify, só em runtime, Locked e Literal (R-03; ADR-023, emenda 1; SPEC-039 §4.1A), e descobrir o `chat_id` do chat ou grupo do supervisor.
+2. Ligar `ALERTS_ENABLED=true` no recurso `partqc-api` do Coolify, fazer **Redeploy** desse recurso e registrar o CA-13 (manual).
 
 ## 4. Requisitos detalhados
 
@@ -110,7 +112,7 @@ alerts_sent(
 | `ALERTS_INCLUDE_SIMULATED` | `false` | booleano |
 
 - **Configuração inválida com `ALERTS_ENABLED=true`:** a API sobe normalmente, registra **um** erro `alerts disabled: invalid configuration (<nome da variável>)`, sem o valor, e não inicia o laço. Os alertas nunca impedem a ingestão.
-- As variáveis ficam no `.env.example` (sem valores reais) e no `infra/.env.api` da VPS. No painel do Render, só se a reserva estiver ativa.
+- As variáveis ficam no `.env.example` (sem valores reais) e, na VPS, nas variáveis de runtime do recurso `partqc-api` no painel do Coolify, e só nele, nunca no `partqc-web` (ADR-023, emenda 1; SPEC-039 §4.1A). O `TELEGRAM_BOT_TOKEN` fica só em runtime, Locked e Literal. O `infra/compose.api.yaml` já declara as 8 variáveis como opcionais, com os padrões desta tabela (SPEC-039 §4.1), então esta SPEC não muda o compose. No painel do Render, só se a reserva estiver ativa.
 
 ## 5. Critérios de aceite
 
@@ -128,7 +130,7 @@ Contexto comum: banco de teste do marcador `db`; inspeções inseridas pelo test
 - **CA-10 (configuração inválida)** — *Dado* `ALERTS_ENABLED=true` e, em casos separados, `TELEGRAM_BOT_TOKEN` vazio, `TELEGRAM_BOT_TOKEN="abc"` e `TELEGRAM_CHAT_ID="x"`, *quando* a app sobe, *então* `GET /api/v1/health` responde 200, o log tem exatamente um registro `alerts disabled: invalid configuration` citando o nome da variável, sem o valor, e nenhuma requisição ao Telegram é feita.
 - **CA-11 (banco)** — *Dado* as migrações aplicadas, *então* `alerts_sent` existe com `relrowsecurity = true` e nenhuma política em `pg_policies`; inserir duas vezes `(L-001, live, out_of_control)` falha na segunda com `23505`; e `kind='other'` é recusado com `23514`.
 - **CA-12 (abaixo do LIC)** — *Dado* uma linha de base com `p̄` alto (por exemplo, 4 lotes de 20 `screw` com 8 `poor`) e um lote `L-009` de 20 `screw` sem defeito, concluído, *quando* `run_check` roda, *então* o texto contém `(abaixo do LIC)` e `defeituosas = 0`.
-- **CA-13 (manual, dupla)** — 1. Criar o bot e obter o `chat_id` (§3.3); 2. configurar o `infra/.env.api` da VPS e reiniciar só a API; 3. rodar o simulador (SPEC-014) com um lote fora de controle e `ALERTS_INCLUDE_SIMULATED=true`; 4. conferir uma única mensagem `[SIMULADO] …` no celular depois de `ALERTS_LOT_IDLE_MINUTES`; 5. conferir no `docker compose logs api` que o token não aparece; 6. voltar `ALERTS_INCLUDE_SIMULATED=false`.
+- **CA-13 (manual, dupla)** — 1. Criar o bot e obter o `chat_id` (§3.3); 2. configurar as variáveis do recurso `partqc-api` no painel do Coolify (§3.3 e §4.6) e fazer **Redeploy** só desse recurso; 3. rodar o simulador (SPEC-014) com um lote fora de controle e `ALERTS_INCLUDE_SIMULATED=true`; 4. conferir uma única mensagem `[SIMULADO] …` no celular depois de `ALERTS_LOT_IDLE_MINUTES`; 5. conferir nos logs do contêiner da `api` (aba de logs do serviço no painel do Coolify, ou `docker logs --tail 200 <contêiner da api>`) que o token não aparece; 6. voltar `ALERTS_INCLUDE_SIMULATED=false` no recurso `partqc-api` e fazer **Redeploy** desse recurso.
 
 ## 6. Plano de testes
 
@@ -166,3 +168,4 @@ Nenhum teste fala com o Telegram de verdade.
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: o aviso do topo passa a registrar a aprovação. | Status `Ready` desde o PR #45; sobrava o aviso da fase de rascunho | Architect, a pedido do orquestrador |
 | 2026-10-25 | Entra em `In Dev` encadeada na SPEC-018 (que está sobre a 016 e a 036), antes de a SPEC-016 estar `Done`, por decisão do humano de 2026-10-24; o merge desta SPEC só acontece depois dos merges da 036, da 016 e da 018. | Resposta do humano de 2026-10-24 | Orquestrador, a pedido do humano |
+| 2026-10-26 | Configuração na VPS ajustada ao layout do Coolify, sem mudar requisito de código, valor, padrão, variável, CA automatizado nem escopo de código. **§3.1:** "as variáveis no `infra/.env.api` da VPS" → "as variáveis no recurso `partqc-api` do Coolify". **§3.3, item 1:** "guardar o token só no `infra/.env.api` da VPS (R-03)" → "guardar o token só na variável `TELEGRAM_BOT_TOKEN` do recurso `partqc-api` no painel do Coolify, só em runtime, Locked e Literal (R-03; ADR-023, emenda 1; SPEC-039 §4.1A)". **§3.3, item 2:** "Ligar `ALERTS_ENABLED=true` na VPS" → "… no recurso `partqc-api` do Coolify, fazer **Redeploy** desse recurso". **§4.6, último item:** "e no `infra/.env.api` da VPS" → "e, na VPS, nas variáveis de runtime do recurso `partqc-api` no painel do Coolify, e só nele, nunca no `partqc-web`", com o token só em runtime, Locked e Literal, e a nota de que o `infra/compose.api.yaml` já declara as 8 variáveis como opcionais com os padrões da tabela, então esta SPEC não muda o compose. **CA-13 (manual), passos 2, 5 e 6:** "configurar o `infra/.env.api` da VPS e reiniciar só a API" → "configurar as variáveis do recurso `partqc-api` no painel do Coolify (§3.3 e §4.6) e fazer **Redeploy** só desse recurso"; "conferir no `docker compose logs api`" → "conferir nos logs do contêiner da `api` (aba de logs do serviço no painel do Coolify, ou `docker logs --tail 200 <contêiner da api>`)"; "voltar `ALERTS_INCLUDE_SIMULATED=false`" → "… no recurso `partqc-api` e fazer **Redeploy** desse recurso". Cabeçalho: ADR-023 em "ADRs relevantes". A linha de 2026-10-18 deste Histórico continua citando o `infra/.env.api`, como registro da época. **Classificação ADR-019: exige humano** (X-7: os trechos alterados do §3.3, item 1, do §4.6 e do CA-13, passo 5, tratam de onde fica o segredo e de como se confere que ele não vaza, isto é, da R-03; X-3: o mesmo layout antigo continua em `docs/architecture.md` §4, "Configuração da API", em `api/README.md` e em `docs/deployment-plan.md`, que precisam de ajuste fora desta SPEC; E-1 não cumprido: a correção não vem de um `SPEC_ISSUE` com ID nos relatórios de `reviews/SPEC-017/`, e sim da consistência com o ADR-023). | ADR-023, emenda 1 (aceita pelo humano em 2026-10-25), decisão 3 e "O que passa a ser obrigatório" (as variáveis da SPEC-017 entram pela SPEC-039, sem citar o `infra/.env.api`); SPEC-039 §4.1 (bloco `api` do `infra/compose.api.yaml`, com as 8 variáveis opcionais) e §4.1A (tabela de variáveis por recurso), já mergeada; decisão do humano de 2026-10-25 ("para a 017 não precisar mudar o compose") | Architect, a pedido do orquestrador |
