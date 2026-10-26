@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Review |
-| Rodada atual | r1 |
+| Status | In Dev |
+| Rodada atual | r2 |
 | Autor da implementação | security-devops |
 | Tags | deploy, security, infra |
 | Depende de | ADR-023 `Aceito`, com a emenda 1 (dois recursos, SEC-39-01) aguardando aprovação humana; SPEC-015 e SPEC-032 (código mergeado; faltam os CAs manuais, que esperam esta SPEC) |
