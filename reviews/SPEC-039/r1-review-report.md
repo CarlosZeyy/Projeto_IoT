@@ -7,7 +7,7 @@
 | Reviewer | reviewer |
 | Diff revisado | `main...4bea144` (base `ff60d34`, igual à `origin/main`; branch sem conflito) |
 | Test report | r1-test-report.md (PASS) |
-| **Veredicto** | **APPROVED** |
+| **Veredicto** | **APPROVED** na primeira passada; **CHANGES_REQUESTED** depois da correção do SEC-39-01 (veja o adendo no fim) |
 
 O portão de segurança desta SPEC (autor `security-devops`, tags `deploy` e `security`) é feito pelo reviewer numa chamada separada, no `r1-security-report.md`. A seção 6 abaixo registra só o que conferi nesta revisão.
 
@@ -141,3 +141,67 @@ Nenhum. O RV-03 é uma diferença de texto sobre a localização de uma opção 
 
 - [x] Não editei código nem testes; só escrevi este relatório.
 - [x] Não sou autor de nenhum commit desta SPEC.
+
+---
+
+## Depois da correção do SEC-39-01
+
+| Campo | Valor |
+|---|---|
+| Origem | SEC-39-01 (`r1-security-report.md`, FAIL do portão de segurança depois do APPROVED acima) |
+| Diff revisado | `1e96f2e..34aaf75`: architect `4239a2f`, reaprovação humana `94282f5`, implementação `78f6ceb` e `2960059` (adendo do dev-report), testes `fe5bb12` (adendo do test-report, PASS), status `9d31e4c` e `34aaf75` |
+| **Veredicto final** | **CHANGES_REQUESTED** (um achado bloqueante, RV-05; a correção é de uma linha e só do tester) |
+
+### Achados novos
+
+| ID | Severidade | Arquivo:linha | Descrição | Sugestão |
+|---|---|---|---|---|
+| RV-05 | **bloqueante** (§10: ajuste fora da tabela) | `infra/tests/acceptance/test_spec_032.py:878-889` | Ao inserir o helper `_resolved_services`, o tester o pôs **entre** o decorador `@pytest.mark.docker` e o `def test_extra_compose_config_resolves_pids_and_override`. O marcador passou para o helper, onde não tem efeito, e o teste antigo da SPEC-032 **perdeu o marcador `docker`**. Conferi:<br>- sem `PARTQC_DOCKER_TESTS`, o teste roda (1 passed) e chama `docker compose`, contra a SPEC-015 §4.14. Numa máquina sem Docker, `uv run pytest` passa a falhar em vez de pular, e o job `ci` passa a executar Docker;<br>- com `-m docker` (o job `docker` do CI), o teste é **desmarcado** (`1 deselected`) e deixa de rodar onde deveria.<br>A tabela de ajustes do test-report (linha do `test_extra_compose_config_resolves_pids_and_override`) registra só a troca do `config` por `_resolved_services`, e não a perda do marcador. Pelo checklist §4, um ajuste em teste de aceite antigo fora da tabela é bloqueante, e este muda quando o teste roda. É o único caso: varri os testes de `infra/tests/` e `infra/tests/acceptance/`, e nenhum outro decorador `docker` está num helper nem há outro teste com Docker sem o marcador. | O tester move o `@pytest.mark.docker` da linha 878 para logo acima do `def test_extra_compose_config_resolves_pids_and_override` e confere com `uv run pytest --collect-only -q -m docker` que o teste volta a ser coletado (e que, sem a variável, ele é pulado). Não precisa de linha nova na tabela, porque o resultado volta a ser o da `main`. |
+| RV-06 | baixa | `docs/specs/SPEC-039-manutencao-deploy-coolify.md:14`; `docs/architecture.md:28` | O aviso no topo da SPEC diz "Reaprovada pelo humano [...]" e, na mesma frase, "Até a reaprovação, o status continua `Blocked`", que ficou obsoleta. A nota da arquitetura ainda diz "com a emenda 1 aguardando aprovação", mas a emenda foi aceita em `94282f5`. | O orquestrador e o architect corrigem no commit de `Done`, junto com o RV-01. |
+
+### Situação dos achados da primeira passada
+
+| ID | Situação |
+|---|---|
+| RV-01 | **Tratado em parte.** O `docs/plan.md:78` já diz "ADR-023 `Aceito`". O `docs/architecture.md:28` mudou, mas continua desatualizado (agora pela emenda 1). O resto ficou no RV-06. |
+| RV-02 | **Continua** (baixa). O `infra/docker/api.Dockerfile:3`, o `dashboard.Dockerfile:3` e o `.streamlit/config.toml:3` ainda citam o `env_file` e o `infra/.env.dashboard`. Os Dockerfiles continuam fora da §3.2. |
+| RV-03 | **Continua** (baixa). O plano (`docs/deployment-plan.md:209`) põe o "Preserve repository" em General > Build pipeline. O CA-15, passo 2 (`SPEC:392`), ainda diz "em Advanced". A instrução (desligado) é a mesma. |
+| RV-04 | **Continua** (baixa). `PUBLIC_HOST_RE` e `_env_file_paths` seguem sem uso em `test_spec_015.py:1548` e `:1564`. |
+
+### O que conferi no delta
+
+- **Coerência com a emenda 1 do ADR-023, a §4.1 e a §4.1A:**
+  - `infra/compose.api.yaml` tem `name: partqc-api`, só a `api`, o `environment` idêntico ao do item 6, `networks: [default, link]`, o mesmo endurecimento e, no topo, exatamente `link: {name: partqc-api-link, internal: true}`. O texto não contém `PUBLIC_HOST` nem `MODEL_METRICS_PATH`;
+  - `infra/compose.yaml` tem só `caddy` e `dashboard`. O `caddy` tem `networks: [default, link]` e `depends_on: [dashboard]`, e o `dashboard` não tem `networks`. No topo, exatamente `link: {name: partqc-api-link, external: true}`. O texto, inclusive os comentários, não contém `DATABASE_URL`, `TELEGRAM_` nem `ALERTS_`;
+  - nenhum valor vazio (`NOME: ""`), nenhuma porta, label, volume ou `env_file`;
+  - os cabeçalhos dos dois arquivos explicam o recurso, a Compose Location, o domínio só no `caddy`, as variáveis por recurso e a ordem do primeiro deploy;
+  - o `.env.example` e o plano trazem a divisão da §4.1A, a ordem `partqc-api` → `partqc-web`, o SEC-39-03 (injeção de `ARG` com o build ligado) e o SEC-39-04 (painel não público: só o botão; público: 2FA).
+- **SEC-39-02:** os dois `.dockerignore` ganharam só a linha `infra/`, sem exceção `!infra`. Conferi que nem a API, nem o dashboard, nem os Dockerfiles leem nada de `infra/`, e que `infra/` não é membro do workspace.
+- **CA-19:** a simulação reescreve cada arquivo como o Coolify faz (`env_file: [".env"]` em todos os serviços, gravado no mesmo caminho). O `.env` de cada recurso tem só os nomes que a regex acha no arquivo original, e o `config` roda na forma do Coolify.
+  - As asserções olham chaves **e** valores no serviço resolvido.
+  - As mensagens de falha só citam nomes. As comparações de valor na `api` usam `(... == ...) is True`, para o pytest não imprimir o segredo fictício.
+  - **O controle negativo é real.** Com os três serviços num único recurso, o layout da primeira passada, a mesma simulação mostra a `DATABASE_URL` no `caddy` e no `dashboard`. O CA-19 não passa por vacuidade.
+- **CA-13:** `test -e /app/infra` passou a falhar na `api` e no `dashboard`, além das sentinelas de `.env`. O teste do Caddy não mudou.
+- **Tabela da §10 (segunda passada):** os 14 ajustes nos aceites das SPECs 015 e 032 decorrem da última linha da tabela da §3.1 (a `api` lida de `compose.api.yaml`, `config` nos dois arquivos, a rede `link`). Eles mantêm a intenção dos CAs antigos, e nenhum `test_caNN_` foi removido. A exceção é o RV-05. O renome do `test_ca12_*` é de um teste desta própria SPEC, fora da regra da §10.
+- **R-07:** todos os commits do delta têm o trailer `Agent:` e respeitam os papéis:
+  - `architect` (`4239a2f`): só docs (SPEC, ADR, plano, arquitetura, `deployment-plan.md`);
+  - `orchestrator` (`2ff6021`, `94282f5`, `9d31e4c`, `34aaf75`): status, mais o registro da aprovação humana no ADR-023, na SPEC, no plano e na N-05 de `docs/rules.md`, com o texto aprovado pelo humano (mesmo precedente da N-05 do ADR-023);
+  - `security-devops` (`78f6ceb`, `2960059`): produção, testes do autor fora de `acceptance/`, o plano e o adendo do dev-report;
+  - `tester` (`fe5bb12`): só `infra/tests/acceptance/` e o adendo do test-report;
+  - `reviewer` (`b12e515`): só o security-report.
+- **ADR-019:** a correção foi classificada "exige humano" (X-2, X-3, X-5, X-7) e **reaprovada pelo humano** (`94282f5`, Histórico da SPEC e do ADR-023). Não houve reaprovação delegada.
+- **R-03 e R-13:** nenhum segredo no delta. A busca por URLs com senha, `eyJ`, `ghp_`, `sk-`, IPv4, UUID e caminho `/webhooks/` só achou placeholders e valores fictícios montados em tempo de execução. Os domínios são só os fictícios `*.example.org`/`example.com`, mais `github.com`, `coolify.io`, `caddyserver.com` e `docs.github.com` como fontes nos docs, e `sslip.io` em asserção negativa. Não há subdomínio, IP, UUID, URL do painel nem segredo do webhook, e nenhuma empresa é citada.
+- **Execução**, sem `TEST_DATABASE_URL`, sem `CI` e sem VPS:
+  - `ruff check` e `ruff format --check`: limpos;
+  - `uv run pytest -q infra/tests tests`: 835 passed e 385 skipped;
+  - `PARTQC_DOCKER_TESTS=1 uv run pytest -q -m docker infra/tests`: 91 passed;
+  - limpeza: não sobrou contêiner, rede (inclusive a `partqc-api-link`), imagem `partqc.test=1` nem volume novo. Os `partqc-pg*` são preexistentes e não foram tocados.
+
+### SPEC_ISSUE
+
+Nenhum. O RV-05 é um defeito de teste, corrigível pelo tester sem mudar a SPEC.
+
+### Declaração
+
+- [x] Não editei código nem testes; só acrescentei este adendo ao relatório.
+- [x] Não sou autor de nenhum commit de implementação ou de teste desta SPEC. O `b12e515` é o security-report, que também é do papel de reviewer.
