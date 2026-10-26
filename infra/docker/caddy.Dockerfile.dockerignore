@@ -1,0 +1,6 @@
+# Contexto de build da imagem do Caddy (SPEC-039 §4.3). Com o BuildKit, este arquivo, ao lado do
+# Dockerfile e com o nome dele como prefixo, tem precedência sobre um .dockerignore na raiz.
+# Tudo fica de fora, menos o Caddyfile: nem o infra/.env que o Coolify grava no diretório do
+# recurso (R-03, §4.6), nem fotos (R-02, R-14), nem o .git.
+*
+!infra/Caddyfile

@@ -1,5 +1,8 @@
 """Docker smoke tests of the deploy (SPEC-015 sections 4.10 to 4.13). Marked ``docker``.
 
+The compose and Caddy checks follow SPEC-039 (Coolify, ADR-023): every variable in one
+``infra/.env``, no alias, and the Caddy image built from ``infra/docker/caddy.Dockerfile``.
+
 They run only with ``PARTQC_DOCKER_TESTS=1`` (workflow ``docker`` in the CI). Builds use a
 temporary copy of the tracked tree (``build_image``), containers run with ``--network none``,
 and the compose project is a temporary copy too: the real working tree is never written.
@@ -151,92 +154,110 @@ def test_dashboard_repo_root_is_app(images: dict[str, str]) -> None:
 # ---------------------------------------------------------------- compose config (section 4.12)
 
 
-def _compose_copy(tmp_path: Path, env: bytes | None, with_api_env: bool = True) -> Path:
-    extra = {
-        "infra/.env.dashboard": b"READ_API_KEY=" + secrets.token_urlsafe(32).encode() + b"\n",
+def fake_database_url() -> tuple[str, str]:
+    """A fictitious ``DATABASE_URL`` (built at run time) and its password."""
+    password = secrets.token_urlsafe(18)
+    return "postgresql://" + f"partqc:{password}@db.example.org:6543/postgres", password
+
+
+def coolify_env(drop: tuple[str, ...] = (), extra: bytes = b"") -> bytes:
+    """``infra/.env`` with ``PUBLIC_HOST``, a fictitious ``DATABASE_URL`` and a generated key."""
+    values = {
+        "PUBLIC_HOST": "partqc.example.org",
+        "DATABASE_URL": fake_database_url()[0],
+        "READ_API_KEY": secrets.token_urlsafe(32),
     }
-    if env is not None:
-        extra["infra/.env"] = env
-    if with_api_env:
-        extra["infra/.env.api"] = (
-            b"DATABASE_URL=postgresql://<user>:<password>@db.example.org:6543/postgres\n"
-            b"READ_API_KEY=" + secrets.token_urlsafe(32).encode() + b"\n"
-        )
-    return support.copy_tracked_tree(tmp_path / "copy", extra) / "infra" / "compose.yaml"
+    lines = [f"{k}={v}\n" for k, v in values.items() if k not in drop]
+    return "".join(lines).encode() + extra
 
 
-def _compose_config(compose: Path) -> subprocess.CompletedProcess:
-    env = {
+COMPOSE_FILES = ("compose.api.yaml", "compose.yaml")  # partqc-api, partqc-web (SPEC-039)
+
+
+def _compose_copy(tmp_path: Path, env: bytes | None) -> Path:
+    """A copy of the tracked tree with ``infra/.env``; returns the copy's ``infra`` directory."""
+    extra = {} if env is None else {"infra/.env": env}
+    return support.copy_tracked_tree(tmp_path / "copy", extra) / "infra"
+
+
+def _clean_env() -> dict[str, str]:
+    return {
         k: v
         for k, v in os.environ.items()
-        if k != "PUBLIC_HOST" and not k.endswith(("_MEM_LIMIT", "_CPUS", "_PIDS_LIMIT"))
+        if k not in {"PUBLIC_HOST", "DATABASE_URL", "READ_API_KEY"}
+        and not k.endswith(("_MEM_LIMIT", "_CPUS", "_PIDS_LIMIT"))
     }
+
+
+def _compose_config(infra: Path, name: str, *args: str) -> subprocess.CompletedProcess:
+    cmd = ["docker", "compose", "-f", str(infra / name), "config", *(args or ("--format", "json"))]
     return subprocess.run(
-        ["docker", "compose", "-f", str(compose), "config", "--format", "json"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        check=False,
+        cmd, capture_output=True, text=True, timeout=120, env=_clean_env(), check=False
     )
 
 
+def _resolved_services(infra: Path) -> dict:
+    """The resolved services of both compose files (``config --format json``)."""
+    services: dict = {}
+    for name in COMPOSE_FILES:
+        result = _compose_config(infra, name)
+        assert result.returncode == 0, (name, result.stderr)
+        services.update(json.loads(result.stdout)["services"])
+    return services
+
+
 def test_compose_resolves_host_and_limits(tmp_path: Path) -> None:
-    result = _compose_config(_compose_copy(tmp_path, b"PUBLIC_HOST=partqc.example.org\n"))
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    services = _resolved_services(_compose_copy(tmp_path, coolify_env()))
+    assert set(services) == {"api", "caddy", "dashboard"}
     assert services["dashboard"]["environment"]["API_BASE_URL"] == "https://partqc.example.org"
-    assert services["caddy"]["networks"]["partqc"]["aliases"] == ["partqc.example.org"]
     assert int(services["api"]["mem_limit"]) == 512 * 1024**2
     assert int(services["dashboard"]["mem_limit"]) == 1024**3
     for service in services.values():  # SPEC-032 section 4.4
         assert int(service["pids_limit"]) == 256
         assert service["read_only"] is True
-        assert service["tmpfs"] == ["/tmp:size=64m"]
+    assert services["api"]["tmpfs"] == services["dashboard"]["tmpfs"] == ["/tmp:size=64m"]
+    assert services["caddy"]["tmpfs"] == ["/tmp:size=64m", "/data:size=16m", "/config:size=16m"]
 
 
-def test_compose_config_quiet_with_the_hardening(tmp_path: Path) -> None:
+@pytest.mark.parametrize("name", COMPOSE_FILES)
+def test_compose_config_quiet_with_the_hardening(tmp_path: Path, name: str) -> None:
     """CA-06 of SPEC-032: ``config --quiet`` accepts the interpolated pids_limit."""
-    compose = _compose_copy(tmp_path, b"PUBLIC_HOST=partqc.example.org\n")
-    env = {k: v for k, v in os.environ.items() if not k.endswith("_PIDS_LIMIT")}
-    env.pop("PUBLIC_HOST", None)
-    result = subprocess.run(
-        ["docker", "compose", "-f", str(compose), "config", "--quiet"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        check=False,
-    )
+    result = _compose_config(_compose_copy(tmp_path, coolify_env()), name, "--quiet")
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
 
 
 def test_compose_pids_limit_override(tmp_path: Path) -> None:
-    env = b"PUBLIC_HOST=partqc.example.org\nDASHBOARD_PIDS_LIMIT=512\n"
-    result = _compose_config(_compose_copy(tmp_path, env))
-    assert result.returncode == 0, result.stderr
-    services = json.loads(result.stdout)["services"]
+    env = coolify_env(extra=b"DASHBOARD_PIDS_LIMIT=512\n")
+    services = _resolved_services(_compose_copy(tmp_path, env))
     assert int(services["dashboard"]["pids_limit"]) == 512
     assert int(services["api"]["pids_limit"]) == 256
 
 
 def test_compose_limit_override(tmp_path: Path) -> None:
-    env = b"PUBLIC_HOST=partqc.example.org\nAPI_MEM_LIMIT=768m\n"
-    result = _compose_config(_compose_copy(tmp_path, env))
-    assert result.returncode == 0, result.stderr
-    assert int(json.loads(result.stdout)["services"]["api"]["mem_limit"]) == 768 * 1024**2
+    env = coolify_env(extra=b"API_MEM_LIMIT=768m\n")
+    services = _resolved_services(_compose_copy(tmp_path, env))
+    assert int(services["api"]["mem_limit"]) == 768 * 1024**2
 
 
-def test_compose_requires_public_host(tmp_path: Path) -> None:
-    result = _compose_config(_compose_copy(tmp_path, b"API_CPUS=1.0\n"))
+@pytest.mark.parametrize(
+    ("name", "missing"),
+    [
+        ("compose.api.yaml", "DATABASE_URL"),
+        ("compose.api.yaml", "READ_API_KEY"),
+        ("compose.yaml", "PUBLIC_HOST"),
+        ("compose.yaml", "READ_API_KEY"),
+    ],
+)
+def test_compose_requires_each_mandatory_variable(tmp_path: Path, name: str, missing: str) -> None:
+    result = _compose_config(_compose_copy(tmp_path, coolify_env(drop=(missing,))), name)
     assert result.returncode != 0
-    assert "PUBLIC_HOST" in result.stderr
+    assert missing in result.stderr
 
 
-def test_compose_requires_the_api_env_file(tmp_path: Path) -> None:
-    compose = _compose_copy(tmp_path, b"PUBLIC_HOST=partqc.example.org\n", with_api_env=False)
-    assert _compose_config(compose).returncode != 0
+def test_web_compose_does_not_need_the_database_url(tmp_path: Path) -> None:
+    infra = _compose_copy(tmp_path, coolify_env(drop=("DATABASE_URL",)))
+    assert _compose_config(infra, "compose.yaml").returncode == 0
 
 
 # ---------------------------------------------------------------- Caddyfile (section 4.13)
@@ -252,35 +273,33 @@ def _walk(node: object):
             yield from _walk(value)
 
 
-def test_caddy_adapts_the_caddyfile() -> None:
-    image = yaml.safe_load((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"))[
-        "services"
-    ]["caddy"]["image"]
-    cmd = [
-        "docker",
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "-e",
-        "PUBLIC_HOST=partqc.example.org",
-        "-v",
-        f"{ROOT / 'infra' / 'Caddyfile'}:/etc/caddy/Caddyfile:ro",
-        image,
-        "caddy",
+@pytest.fixture(scope="module")
+def caddy_image(build_image) -> str:
+    """The image of infra/docker/caddy.Dockerfile (SPEC-039 section 4.3), built from a copy."""
+    return build_image("infra/docker/caddy.Dockerfile")
+
+
+def test_caddy_adapts_the_caddyfile(caddy_image: str) -> None:
+    """The Caddyfile embedded in the image adapts with no PUBLIC_HOST: one :80 server, no host
+    matcher and no TLS app (SPEC-039 section 4.2)."""
+    cmd = support.docker_run_args(
+        caddy_image,
         "adapt",
         "--config",
         "/etc/caddy/Caddyfile",
         "--adapter",
         "caddyfile",
-    ]
+        entrypoint="caddy",
+    )
     result = _run(cmd)
     assert result.returncode == 0, result.stderr
     assert "formatted" not in result.stderr.lower()
     config = json.loads(result.stdout)
     nodes = list(_walk(config))
-    hosts = {h for n in nodes for m in n.get("match", []) for h in m.get("host", [])}
-    assert hosts == {"partqc.example.org"}
+    assert not [m for n in nodes for m in n.get("match", []) if "host" in m]
+    (server,) = config["apps"]["http"]["servers"].values()
+    assert server["listen"] == [":80"]
+    assert "tls" not in config["apps"]
     dials = [
         u["dial"] for n in nodes if n.get("handler") == "reverse_proxy" for u in n["upstreams"]
     ]
@@ -302,18 +321,15 @@ def test_caddy_adapts_the_caddyfile() -> None:
     }
 
 
-def _caddy_image() -> str:
-    compose = yaml.safe_load((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"))
-    return compose["services"]["caddy"]["image"]
-
-
 def _site_header_block() -> str:
     text = (ROOT / "infra" / "Caddyfile").read_text(encoding="utf-8")
     start = text.index("\theader {")
     return text[start : text.index("\n\t}\n", start) + len("\n\t}\n")]
 
 
-def test_caddy_header_block_strips_server_and_via_behind_the_proxy(tmp_path: Path) -> None:
+def test_caddy_header_block_strips_server_and_via_behind_the_proxy(
+    tmp_path: Path, caddy_image: str
+) -> None:
     """The real header block of infra/Caddyfile, behind a reverse_proxy whose upstream answers
     with ``Server: uvicorn`` (SPEC-032 section 4.3): no Server, no Via, and the 4 headers."""
     caddyfile = tmp_path / "Caddyfile"
@@ -340,7 +356,7 @@ def test_caddy_header_block_strips_server_and_via_behind_the_proxy(tmp_path: Pat
             f"{caddyfile}:/etc/caddy/Caddyfile:ro",
             "--entrypoint",
             "sh",
-            _caddy_image(),
+            caddy_image,
             "-c",
             script,
         ]
@@ -366,9 +382,9 @@ RUN_TIMEOUT_S = 90
 
 
 def _service(name: str) -> dict:
-    return yaml.safe_load((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"))[
-        "services"
-    ][name]
+    """The service ``name`` from its compose file (the api is in ``compose.api.yaml``)."""
+    path = ROOT / "infra" / ("compose.api.yaml" if name == "api" else "compose.yaml")
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["services"][name]
 
 
 def _hardening_args(name: str) -> list[str]:
@@ -491,20 +507,10 @@ def test_api_runs_read_only(images: dict[str, str]) -> None:
         _remove(container)
 
 
-def test_caddy_runs_read_only() -> None:
-    """CA-08 of SPEC-032: Caddy with --read-only, /tmp tmpfs, temporary /data and /config."""
-    container = _start(
-        "caddy-ro",
-        _service("caddy")["image"],
-        *_hardening_args("caddy"),
-        "-v",
-        "/data",
-        "-v",
-        "/config",
-        "-v",
-        f"{ROOT / 'infra' / 'Caddyfile'}:/etc/caddy/Caddyfile:ro",
-        env={"PUBLIC_HOST": "partqc.example.org"},
-    )
+def test_caddy_runs_read_only(caddy_image: str) -> None:
+    """CA-08 of SPEC-032 with SPEC-039 section 4.1, item 5: Caddy with --read-only and the three
+    compose tmpfs (/tmp, /data, /config), no volume and no PUBLIC_HOST."""
+    container = _start("caddy-ro", caddy_image, *_hardening_args("caddy"))
     try:
         time.sleep(10)
         assert _inspect(container, "{{.State.Status}}") == "running", _logs(container)[-2000:]
@@ -512,6 +518,8 @@ def test_caddy_runs_read_only() -> None:
         assert _exec(container, "touch", "/tmp/x").returncode == 0
         assert _exec(container, "touch", "/etc/x").returncode != 0
         assert _exec(container, "touch", "/data/x").returncode == 0
+        assert _exec(container, "touch", "/config/x").returncode == 0
+        assert _inspect(container, "{{json .Mounts}}") == "[]"
         assert _exec(container, "cat", "/sys/fs/cgroup/pids.max").stdout.strip() == "256"
     finally:
         _remove(container)
