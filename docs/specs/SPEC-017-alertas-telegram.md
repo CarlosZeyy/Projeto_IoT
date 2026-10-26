@@ -11,7 +11,7 @@
 | Requisitos cobertos | RF-17; PRD §4.2; R-01, R-02, R-03, R-06 |
 | ADRs relevantes | ADR-013, ADR-017, ADR-018, ADR-021, ADR-006 |
 
-> **Pronta para a aprovação humana.** Revista pelo architect em 2026-10-24 (ver o Histórico). Sem mudança de contrato.
+> **Aprovada pelo humano em 2026-10-24** (PR #45), no pacote das Fases 2 e 3, com os ADRs 021 e 022 `Aceito`. Revista pelo architect em 2026-10-24 (ver o Histórico). Sem mudança de contrato.
 
 ## 1. Contexto
 
@@ -164,3 +164,4 @@ Nenhum teste fala com o Telegram de verdade.
 | 2026-10-18 | §3.1 e §6, pergunta 2: variáveis no `infra/.env.api` da VPS e o gatilho reavaliado com a API sempre ligada. A SPEC continua `Draft`. | ADR-018 (hospedagem na VPS pessoal) | Orquestrador, a pedido do humano |
 | 2026-10-24 | SPEC reescrita para a aprovação. Perguntas do rascunho resolvidas pelo architect: (1) lote concluído = `ALERTS_LOT_IDLE_MINUTES` (10) sem inspeção, sem mudar o contrato; (2) gatilho = laço em segundo plano no `lifespan` da API a cada 60 s (a API fica sempre ligada na VPS); (3) avalia só lotes concluídos nas últimas 24 h, uma vez por lote; (4) `simulated` só com `ALERTS_INCLUDE_SIMULATED=true`, com `[SIMULADO]` no texto; (5) teto de 10 mensagens por hora. Também: `max_points=3` e `max_excluded=0`; uma tentativa por alerta com `delivered`; texto com acima do LSC ou abaixo do LIC; token nunca em log (inclusive `httpx`/`httpcore`); configuração inválida não derruba a API; dependência das SPECs 015 e 016; fatos do Telegram verificados em 2026-10-24; CAs CA-01 a CA-12 testáveis e CA-13 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
+| 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: o aviso do topo passa a registrar a aprovação. | Status `Ready` desde o PR #45; sobrava o aviso da fase de rascunho | Architect, a pedido do orquestrador |

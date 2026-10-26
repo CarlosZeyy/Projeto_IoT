@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Aceito (aprovado pelo humano em 2026-10-18; a decisão 4, `/docs` não publicado, confirmada pelo humano em 2026-10-18) |
+| Status | Aceito (aprovado pelo humano em 2026-10-18; a decisão 4, `/docs` não publicado, confirmada pelo humano em 2026-10-18). Substituído em parte por ADR-023 (aceito pelo humano em 2026-10-25: Coolify, TLS no proxy dele e Caddy só como roteador interno) |
 | Data | 2026-10-18 |
 | Decisores | Humano (Carlos) (redigido pelo agente architect) |
 | Relacionados | ADR-008 (substituído em parte), ADR-006, ADR-007, ADR-010, ADR-015, ADR-016 (precedente de mudança de regra inegociável por decisão do humano), ADR-017, SPEC-015, SPEC-028, R-01, R-02, R-03, R-12, R-13, N-05 |

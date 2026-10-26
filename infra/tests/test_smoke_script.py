@@ -238,6 +238,38 @@ def test_unknown_argument_is_never_echoed(smoke, keys, capsys, form) -> None:
     assert cloud.requests == []
 
 
+@pytest.mark.parametrize("form", ["empty_name", "api_prefix", "dash_prefix", "help_prefix"])
+def test_abbreviations_are_unknown_arguments_never_echoed(smoke, keys, capsys, form) -> None:
+    """SPEC-032 section 4.1 (RV-05/T-04): no prefix matching, so no "ambiguous option" echo."""
+    marker = "m" + secrets.token_hex(12)
+    argv = {
+        "empty_name": ["--=" + marker],
+        "api_prefix": ["--api=https://" + marker + ".example.org"],
+        "dash_prefix": ["--dash", "https://" + marker + ".example.org"],
+        "help_prefix": ["--he", marker],
+    }[form]
+    cloud = FakeCloud(keys)
+    code, _, output = _run(smoke, cloud, capsys, argv=argv)
+    assert code == 2
+    assert cloud.requests == []
+    assert marker not in output
+    assert "ambiguous" not in output
+    assert "value(s) (not shown)" in output
+
+
+def test_parser_has_no_prefix_matching(smoke) -> None:
+    assert smoke._build_parser().allow_abbrev is False
+
+
+def test_full_option_names_win_over_the_environment(smoke, keys, capsys, monkeypatch) -> None:
+    """The long names keep working even when CLOUD_API_URL and DASHBOARD_URL are set."""
+    monkeypatch.setenv("CLOUD_API_URL", "https://partqc.example.org")
+    monkeypatch.setenv("DASHBOARD_URL", "https://partqc.example.org")
+    code, lines, _ = _run(smoke, FakeCloud(keys), capsys)
+    assert code == 0
+    assert lines == [f"PASS {name}" for name in EXPECTED_ORDER]
+
+
 def test_redaction_keeps_the_count_and_hides_quoted_values(smoke) -> None:
     redact = smoke.redact_usage_error
     assert redact("unrecognized arguments: a b") == "unrecognized arguments: 2 value(s) (not shown)"

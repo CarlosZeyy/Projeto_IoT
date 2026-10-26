@@ -162,6 +162,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = NoEchoArgumentParser(
         prog="smoke_test.py",
         description="Smoke test of the published PartQC API and dashboard (SPEC-015).",
+        # No prefix matching (SPEC-032 section 4.1): "--api", "--dash" or "--=<value>" are
+        # unknown arguments, counted and never echoed, as in scripts/simulate.py.
+        allow_abbrev=False,
     )
     parser.add_argument("--api-url", help="API base URL (default: CLOUD_API_URL)")
     parser.add_argument("--dashboard-url", help="dashboard URL (default: DASHBOARD_URL)")

@@ -9,11 +9,21 @@
 | Depende de | SPEC-004, SPEC-013, SPEC-026 (teto da carta p; sem ele, a rota SPC pode passar dos 512 MB da API), SPEC-027 (migração `002` e simulador corrigido), SPEC-028 (recusa de `API_BASE_URL` sem `https://`) (e, por elas, SPEC-003, SPEC-005, SPEC-006, SPEC-014) |
 | Semana alvo | S4 |
 | Requisitos cobertos | RNF-01, RNF-06, RNF-10, RF-15; R-01, R-02, R-03, R-12, R-13, R-14 |
-| ADRs relevantes | ADR-006, ADR-007, ADR-008 (banco e keep-alive), ADR-010, ADR-015, ADR-016, ADR-017, ADR-018 |
+| ADRs relevantes | ADR-006, ADR-007, ADR-008 (banco e keep-alive), ADR-010, ADR-015, ADR-016, ADR-017, ADR-018, ADR-023 (`Proposto`; Coolify) |
 
 > **Reaprovada pelo humano em 2026-10-19**: correção do SPEC_ISSUE-01 de `reviews/SPEC-015/r1-dev-report.md` (escopo e lista de permissão do CA-05). Classificação ADR-019: exige humano (X-7). Ver o Histórico.
+>
+> **Reaprovada pelo humano em 2026-10-25** (alteração de 2026-10-25, pelo ADR-023, `Aceito`). A VPS é gerenciada pelo Coolify. Mudam os passos humanos (§4.6, §4.9 item 2, §4.15, §4.16) e os CAs manuais CA-13, CA-17, CA-18, CA-40, CA-42 e CA-43. O compose e o Caddyfile mudam pela SPEC-039 (`Draft`). Classificação ADR-019: exige humano (X-2: ADR novo; X-7: os CAs 13, 40, 42 e 43 verificam a R-03 e a R-13). Ver o Histórico.
 
 ## 1. Contexto
+
+**Alteração pelo ADR-023 (2026-10-25).** A VPS é gerenciada pelo Coolify, cujo proxy (Traefik, contêiner `coolify-proxy`) ocupa as portas 80 e 443 e já publica o portfólio do humano. A premissa "portas 80/443 livres" do ADR-018 não vale, e o compose desta SPEC não sobe nessa VPS. Assim:
+
+- a publicação passa a ser feita pelo Coolify, como recurso Docker Compose a partir do repositório público. O TLS e o domínio ficam no proxy do Coolify, e o Caddy fica só como roteador interno;
+- os passos humanos (§4.6, §4.9 item 2, §4.15, §4.16) e os CAs manuais CA-13, CA-17, CA-18, CA-40, CA-42 e CA-43 foram refeitos para o Coolify, mantendo a intenção de cada um. Os CAs manuais CA-14, CA-15, CA-16, CA-19 e CA-26 não mudam;
+- o código entregue por esta SPEC (o `infra/compose.yaml`, o `infra/Caddyfile` e os testes) muda pela **SPEC-039**, de manutenção. O texto das §4.12 e §4.13 fica como registro do que foi entregue, e valem os requisitos da SPEC-039 onde ela os substitui;
+- toda menção a `infra/.env`, `infra/.env.api` e `infra/.env.dashboard` nesta SPEC (inclusive nas §4.3, §4.4 e §4.9) passa a significar as **variáveis do recurso no Coolify** (SPEC-039 §4.1). Na VPS não há arquivo de ambiente editado à mão nem checkout manual;
+- os CAs manuais só podem ser executados **depois do merge da SPEC-039**.
 
 Publica a nuvem descrita em `docs/architecture.md` §1, §4, §5 e §8 conforme o **ADR-018**. A `qc-api` e o `qc-dashboard` rodam na VPS pessoal do humano, com Docker Compose, atrás de um Caddy que publica só as portas 80 e 443 de um único subdomínio pessoal. O banco continua no Supabase (ADR-006, ADR-008), e o Render vira a reserva fria da API. O Streamlit Community Cloud e o Koyeb saem do plano. O guia de operação é o `docs/deployment-plan.md`, mantido por este autor.
 
@@ -153,28 +163,50 @@ Saída e código:
 
 ### 4.6 Passos humanos da primeira publicação (o autor escreve as instruções exatas no `deployment-plan.md` §4)
 
+Refeitos para o Coolify em 2026-10-25 (ADR-023). Pré-requisito: a SPEC-039 mergeada na `main`. Nos comandos da VPS, `<uuid>` é o UUID do recurso no Coolify (está na URL da página do recurso), que nunca entra no repositório. Os contêineres do PartQC são listados com `docker ps --filter label=com.docker.compose.project=<uuid> --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'`.
+
 1. **Supabase:**
    - usar o projeto já existente (conta pessoal, sem cartão);
    - seguir o CA-19: conferir o `search_path` e aplicar as migrações pelo pooler em **modo session**, nunca pela 6543;
    - rodar as consultas do CA-14 (RLS e grants);
-   - copiar a connection string do pooler em **modo transaction** (6543) para a `DATABASE_URL` do `infra/.env.api` (passo 5).
-2. **Conferência da VPS** (§4.15): `docker version` (a versão do Engine), `docker compose version` (v2) e `docker buildx version`; `free -h`, `nproc` e `df -h /`; portas 80 e 443 livres; `sudo ufw status verbose` salvo num arquivo **fora** do repositório. Registrar no `deployment-plan.md` as versões, a RAM, as CPUs e o disco livre (sem IP nem nome de host).
-3. **DNS:** criar no provedor de DNS do humano um registro `A` de `<subdominio>` para o IPv4 da VPS. Criar `AAAA` só se o humano confirmar que o Docker da VPS publica as portas em IPv6. Esperar `dig +short <subdominio> A` devolver o IP antes do passo 7.
-4. **Checkout:** `git clone https://github.com/CarlosZeyy/Projeto_IoT.git <dir>` (repositório público, sem credencial na VPS) e `cd <dir>`, na branch `main`.
-5. **Arquivos de ambiente** (§4.12):
-   - criar `infra/.env`, `infra/.env.api` e `infra/.env.dashboard` **com um editor** (nunca com `echo ... >`, que deixa o valor no histórico do shell) e rodar `chmod 600 infra/.env infra/.env.api infra/.env.dashboard`;
-   - a `READ_API_KEY` é gerada na VPS com `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` e colada nos dois arquivos que a usam;
-   - valores com `$` vão entre aspas simples;
-   - ajustar os limites de recursos do `infra/.env` conforme o `free -h` e o `nproc` do passo 2 (§4.12, item 4);
-   - conferir com `git status --short` que nenhum dos três aparece.
-6. **Validação:** `docker compose -f infra/compose.yaml config --quiet` → código 0. **Nunca** rodar `config` sem `--quiet` num terminal compartilhado ou gravado, porque ele imprime os valores dos `env_file`.
-7. **Subida:** `docker compose -f infra/compose.yaml up -d --build`. Depois, `docker compose -f infra/compose.yaml ps`: os 3 serviços `running`, com `api` e `dashboard` `healthy`. Em `docker compose -f infra/compose.yaml logs caddy`, conferir a obtenção do certificado.
+   - copiar a connection string do pooler em **modo transaction** (6543) para a variável `DATABASE_URL` do recurso no Coolify (passo 5).
+2. **Conferência da VPS e do Coolify** (§4.15):
+   - a versão do Coolify, `docker version` (a versão do Engine), `docker compose version` (v2) e `docker buildx version`;
+   - `free -h`, `nproc` e `df -h /`;
+   - `docker ps --filter name=coolify-proxy --format '{{.Image}} {{.Ports}}'` mostra o proxy do Coolify (imagem `traefik`) nas portas 80 e 443;
+   - `sudo ufw status verbose` salvo num arquivo **fora** do repositório.
+
+   Registrar no `deployment-plan.md` as versões, a RAM, as CPUs e o disco livre (sem IP nem nome de host).
+3. **DNS:** criar no provedor de DNS do humano um registro `A` de `<subdominio>` para o IPv4 da VPS. Criar `AAAA` só se o humano confirmar que o proxy do Coolify atende em IPv6. Esperar `dig +short <subdominio> A` devolver o IP antes do passo 7, porque o proxy só obtém o certificado com o DNS apontando para a VPS.
+4. **Recurso no Coolify:**
+   - **+ New** → **Public Repository**, com `https://github.com/CarlosZeyy/Projeto_IoT.git` (repositório público, sem credencial) e a branch `main`;
+   - build pack **Docker Compose**, Base Directory `/infra` e Docker Compose Location `/compose.yaml`;
+   - em Advanced: o modo de deploy do compose fica no padrão (nunca Raw), e "Connect to predefined network" e "Preserve repository during deployment" ficam desligados;
+   - o deploy automático por webhook (ADR-023, decisão 5) é configurado depois do primeiro deploy, pela SPEC-039 §4.8 (passo 7A do `deployment-plan.md`).
+
+   Não há checkout manual na VPS.
+5. **Variáveis do recurso** (Environment Variables; SPEC-039 §4.1):
+   - `PUBLIC_HOST` (o subdomínio, sem esquema nem barra), `DATABASE_URL` (passo 1) e `READ_API_KEY`, gerada com `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`;
+   - opcionais: os limites de recursos, conforme o `free -h` e o `nproc` do passo 2 (§4.12, item 4), `MAX_BODY_BYTES`, `LOG_LEVEL` e `MODEL_METRICS_PATH` (vazia);
+   - `DATABASE_URL` e `READ_API_KEY` com o build desligado (só runtime), **Locked** e interpolação **Literal** (mantém o `$`);
+   - nenhum arquivo de ambiente é criado à mão na VPS.
+6. **Domínio:**
+   - em Domains, só o serviço `caddy` recebe domínio: `https://<subdominio>:80` (o `:80` é a porta interna do contêiner);
+   - a `api` e o `dashboard` ficam sem domínio;
+   - se o recurso tiver a opção "Force HTTPS", ela fica ligada.
+
+   O antigo passo de validação (`config --quiet` na VPS) sai: o Coolify bloqueia o deploy se uma variável `${NOME:?}` estiver vazia, e a conferência local continua no `deployment-plan.md` §4.
+7. **Deploy:**
+   - botão **Deploy** do recurso, com o log acompanhado até o fim no painel (nunca colado em lugar público sem conferência);
+   - a listagem acima mostra os 3 contêineres `Up`, a `api` e o `dashboard` `(healthy)`, e nenhuma porta publicada;
+   - o certificado é conferido pelo CA-13, passo 5;
+   - em seguida, o CA-43, passo 1, e os CAs 14 a 17 da SPEC-039.
 8. **Dispositivos:** na máquina do humano (não na VPS), rodar `register_device.py` para `edge-01` e `sim-01`, com a URL lida do arquivo `.env.migrate` (pooler em modo session, criado no passo 1): `uv run --env-file .env.migrate --package qc-api python scripts/register_device.py --device-id edge-01` (e o mesmo para `sim-01`). **Nunca** passar a URL de produção por `--database-url`, que a deixaria no `argv` e no histórico do shell (SEC-04-03). As chaves vão para os `.env` locais.
 9. **Borda:** no `.env` do notebook, `CLOUD_API_URL=https://<subdominio>`.
 10. **GitHub:** secret `KEEPALIVE_URL=https://<subdominio>`; disparar o workflow manualmente (CA-16).
 11. **Smoke:** rodar `scripts/smoke_test.py` e `scripts/simulate.py --lots 3` contra produção, este sempre com `uv run --env-file <arquivo> ...` e dentro dos limites da §4.9, item 4.
 12. **Banco:** configurar e conferir o `statement_timeout` do papel da API (§4.9, item 1; CA-26).
-13. **CAs manuais:** executar os CAs manuais da §5 e registrar no dev-report e no `deployment-plan.md`, sem o subdomínio real nem o IP.
+13. **CAs manuais:** executar os CAs manuais da §5 (e os da SPEC-039) e registrar no dev-report e no `deployment-plan.md`, sem o subdomínio real, o IP nem o UUID do recurso.
 
 ### 4.7 Executor de migrações em produção (`infra/migrate.py`)
 
@@ -205,7 +237,7 @@ O autor acrescenta ao `docs/deployment-plan.md` uma seção `## 7. Riscos aceito
 3. **Consulta cancelada pelo `statement_timeout`**, com o código `57014` (§4.9, item 1).
 4. **Subdomínio nos logs de Certificate Transparency.** Todo certificado do Let's Encrypt vai para os logs públicos (<https://letsencrypt.org/docs/ct-logs/>), e o nome do subdomínio fica descobrível. A R-13 exige manter o nome fora do repositório, e não escondê-lo.
 5. **VPS como ponto único de falha, compartilhada com outros projetos.** Mitigação: outbox na borda, limites por serviço e reserva fria no Render (§4.16, item 5).
-6. **Limite de emissão de certificados.** São no máximo 5 certificados por conjunto exato de nomes a cada 7 dias (<https://letsencrypt.org/docs/rate-limits/>). Perder o volume `caddy_data` força uma emissão nova. Por isso, nunca usar `docker compose down -v`.
+6. **Limite de emissão de certificados.** São no máximo 5 certificados por conjunto exato de nomes a cada 7 dias (<https://letsencrypt.org/docs/rate-limits/>). Perder o volume `caddy_data` força uma emissão nova. Por isso, nunca usar `docker compose down -v`. (A partir da SPEC-039, ADR-023: o certificado fica no proxy do Coolify, e o que força emissões novas é trocar o domínio do recurso ou recriar o recurso repetidamente; os riscos 4 e 6 continuam, e o item 7 do `deployment-plan.md` passa a tratar dos segredos gravados pelo Coolify.)
 
 E toda menção a `register_device.py` no `deployment-plan.md` segue o passo 8 da §4.6: o comando completo com `--env-file .env.migrate`, nunca `--database-url` com a URL de produção.
 
@@ -228,7 +260,7 @@ O autor registra no `docs/deployment-plan.md`, com fonte e data de verificação
    - Gerada só com `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`, nunca reaproveitando uma chave do `register_device.py`.
    - **Troca:**
      - gerar a nova chave;
-     - na VPS, atualizar o valor no `infra/.env.api` e no `infra/.env.dashboard` e rodar `docker compose -f infra/compose.yaml up -d`, que recria os dois serviços; durante a recriação, o painel fica indisponível por alguns segundos;
+     - no painel do Coolify, atualizar a variável `READ_API_KEY` do recurso (uma só, que o compose entrega à API e ao dashboard) e fazer **Redeploy** (ou **Restart**, que basta para variável só de runtime); durante a recriação, o painel fica indisponível por alguns segundos (alterado em 2026-10-25, ADR-023);
      - se a reserva no Render estiver ativa, atualizar também a variável no painel dele, na mesma sessão;
      - conferir com o `scripts/smoke_test.py` (checagens `read_requires_key` e `read`), que lê a chave do ambiente. **Nunca** conferir com `curl -H "X-API-Key: ..."`, que deixa a chave no `argv`.
 3. **Limites da reserva (Render).** A linha do Render na §2 do `deployment-plan.md` diz **512 MB de RAM e 0,1 CPU**, com a fonte <https://render.com/docs/compute-plans> e a data da conferência do autor, e nunca "não confirmado".
@@ -287,6 +319,14 @@ Regras:
 
 ### 4.12 `infra/compose.yaml` e os arquivos de ambiente da VPS
 
+> **Substituída em parte pela SPEC-039 (ADR-023).** Os itens 2, 3, 5, 6, 7 e 8 e a tabela dos arquivos da VPS valem como registro do que esta SPEC entregou. A partir da SPEC-039:
+>
+> - nenhum serviço tem `ports`, e não há rede própria nem alias;
+> - o `caddy` é construído de `infra/docker/caddy.Dockerfile`, com `tmpfs` em `/data` e `/config`;
+> - os segredos chegam por `${NOME:?}` no `environment`, a partir das variáveis do recurso no Coolify, sem `env_file`.
+>
+> O item 4 (limites e endurecimento) continua.
+
 1. **Projeto e serviços:** `name: partqc` no topo (volumes e redes ganham o prefixo `partqc_` e não colidem com os outros projetos da VPS). Os serviços são exatamente `caddy`, `api` e `dashboard`, com `container_name` não fixado.
 2. **Portas:** só o `caddy` tem `ports`, exatamente `"80:80"`, `"443:443"` e `"443:443/udp"` (HTTP/3). A `api` e o `dashboard` **não** têm `ports` e usam só `expose` (`"8000"` e `"8501"`). Nenhum serviço usa `network_mode: host`, `privileged`, `pid: host` ou um volume com `docker.sock`.
 3. **Rede:** uma rede `partqc` (bridge, **sem** `internal: true`, porque a API precisa sair para o Supabase), da qual os três participam. No `caddy`, a rede tem `aliases: ["${PUBLIC_HOST:?…}"]`. Assim, o `https://<subdominio>` que o dashboard chama resolve, dentro da rede, para o próprio Caddy, e o tráfego não sai da VPS.
@@ -334,6 +374,8 @@ As linhas de comentário acima de `API_BASE_URL=` continuam citando `.streamlit/
 
 ### 4.13 `infra/Caddyfile`
 
+> **Substituída em parte pela SPEC-039 (ADR-023).** A partir dela, o endereço do site é `:80`, sem nome de host e sem TLS, porque o TLS fica no proxy do Coolify, e não há HTTPS automático nem redirecionamento no Caddy. As rotas, a ausência de `/docs` e os headers continuam.
+
 - **Sem bloco de opções globais** (sem `email`, `acme_ca`, `local_certs` ou `debug`). O endereço do site é exatamente `{$PUBLIC_HOST}`, sem valor padrão e sem domínio literal no arquivo.
 - **Rotas:**
   - `handle /api/* { reverse_proxy api:8000 }`: o prefixo **não** é removido (nada de `handle_path`), porque as rotas da API já começam em `/api/v1`;
@@ -364,8 +406,13 @@ As linhas de comentário acima de `API_BASE_URL=` continuam citando `.streamlit/
 
 ### 4.15 Rede e firewall da VPS (passos humanos; o autor escreve os comandos exatos no `deployment-plan.md`)
 
-1. **Antes do primeiro `up`:** `ss -tlnp '( sport = :80 or sport = :443 )'` não mostra nenhum processo; `sudo ufw status verbose` é salvo num arquivo fora do repositório (`~/ufw-antes-partqc.txt`).
-2. **O Docker publica as portas do Caddy por fora do `ufw`** (§1): nenhuma regra do `ufw` é necessária para o Caddy funcionar. Se o humano quiser que o `ufw status` documente as portas, ele **só acrescenta** `sudo ufw allow 80/tcp`, `sudo ufw allow 443/tcp` e `sudo ufw allow 443/udp`. Se o provedor da VPS tiver um firewall no painel, conferir que 80/tcp, 443/tcp e 443/udp estão liberadas na entrada.
+Refeita para o Coolify em 2026-10-25 (ADR-023).
+
+1. **Antes do primeiro deploy:**
+   - `docker ps --filter name=coolify-proxy --format '{{.Image}} {{.Ports}}'` mostra o proxy do Coolify (imagem `traefik`) nas portas 80 e 443;
+   - o `StartedAt` dele (`docker inspect -f '{{.State.StartedAt}}' coolify-proxy`) é anotado fora do repositório;
+   - `sudo ufw status verbose` é salvo num arquivo fora do repositório (`~/ufw-antes-partqc.txt`).
+2. **O PartQC não publica nenhuma porta:** as portas 80 e 443 são do proxy do Coolify, que já atende o portfólio. Nenhuma regra nova do `ufw` nem do firewall do provedor é necessária.
 3. **Proibido**, porque afeta os outros projetos da VPS:
    - `ufw reset`, `ufw default ...`, `ufw delete ...` e `ufw --force ...`;
    - ativar ou desativar o `ufw`;
@@ -373,28 +420,38 @@ As linhas de comentário acima de `API_BASE_URL=` continuam citando `.streamlit/
    - editar `/etc/docker/daemon.json`;
    - reiniciar o Docker;
    - `docker system prune`, `docker volume prune` e `docker network prune`;
-   - `docker compose down -v`.
+   - `docker compose down -v`;
+   - reiniciar, parar ou editar o `coolify-proxy` ou a configuração do proxy no painel;
+   - mudar as configurações do servidor no Coolify por causa do PartQC.
 
-   Toda menção a esses comandos no `deployment-plan.md` vem numa frase que começa com "Nunca".
-4. **Depois do `up`:** `sudo ufw status verbose` é comparado com o arquivo do item 1 (nenhuma regra a menos), e os outros projetos do humano continuam respondendo. As portas 8000 e 8501 não aparecem no `ss -tlnp` do host, e uma conexão externa a `<IP>:8000` e `<IP>:8501` falha.
+   Toda menção a esses comandos e ações no `deployment-plan.md` vem numa frase com "Nunca".
+4. **Depois do deploy:**
+   - a listagem dos contêineres do recurso (§4.6) não mostra nenhuma porta publicada;
+   - `sudo ufw status verbose` é comparado com o arquivo do item 1, sem nenhuma regra a menos;
+   - o `StartedAt` do proxy é igual ao anotado (o proxy não foi reiniciado);
+   - os outros projetos do humano continuam respondendo;
+   - as portas 8000 e 8501 não aparecem no `ss -tlnp` do host, e uma conexão externa a `<IP>:8000` e `<IP>:8501` falha.
 
 ### 4.16 Atualização, logs, rollback e reserva (no `deployment-plan.md` §4 e §6)
 
+Refeita para o Coolify em 2026-10-25 (ADR-023).
+
 1. **Atualização** (depois de cada merge que afete a API, o dashboard, `infra/` ou `ml/models/**/*.json` e `ml/reports/`):
-   1. `cd <dir> && git pull --ff-only`;
-   2. `docker compose -f infra/compose.yaml up -d --build`;
-   3. `docker compose -f infra/compose.yaml ps`;
+   1. cada merge na `main` dispara o deploy pelo webhook (SPEC-039 §4.8). Quem mergeou confere no painel o deploy com o commit do merge e acompanha o log até o fim. Sem o webhook, ou ao voltar de um rollback, usa o botão **Deploy**;
+   2. o deploy termina com sucesso, e o recurso fica em execução;
+   3. a listagem dos contêineres (§4.6) mostra os 3 `Up`, com a `api` e o `dashboard` `(healthy)`;
    4. smoke (§4.5);
-   5. `docker image prune -f --filter label=partqc.component`, que remove só as imagens órfãs do PartQC.
-2. **Logs:** `docker compose -f infra/compose.yaml logs --tail 200 <serviço>`. Nunca colar logs da API em lugar público (SEC-04-05, §4.8).
-3. **Rollback:**
-   1. `git log --oneline -10`;
-   2. `git checkout <sha anterior>` e `docker compose -f infra/compose.yaml up -d --build`;
-   3. com a correção mergeada, `git checkout main && git pull --ff-only` e o mesmo `up`.
+   5. na VPS, `docker image prune -f --filter label=partqc.component`, que remove só as imagens órfãs do PartQC.
+2. **Logs:** a aba de logs de cada serviço no painel, ou `docker logs --tail 200 <contêiner>`. Nunca colar logs da API, do Caddy ou do deploy em lugar público sem editá-los (SEC-04-05, §4.8).
+3. **Rollback** (o rollback do painel não está documentado para Compose, ADR-023):
+   1. na máquina do humano, `git log --oneline -10` e escolher o `<sha anterior>`;
+   2. `git push origin <sha anterior>:refs/heads/deploy/rollback`;
+   3. no recurso, trocar a branch para `deploy/rollback` e clicar em **Deploy**;
+   4. com a correção mergeada, trocar a branch de volta para `main`, clicar em **Deploy** e apagar a branch `deploy/rollback`.
 
    As migrações são só aditivas no MVP. Um rollback não desfaz migração.
-4. **Parar:** `docker compose -f infra/compose.yaml down`, sem `-v`. Nunca `docker compose down -v`, que apaga o volume `caddy_data` (§4.8, item 6).
-5. **Ativar a reserva** (VPS fora do ar por mais tempo, ou no dia da demo):
+4. **Parar:** o botão **Stop** do recurso no painel. Nunca apagar o recurso (perde as variáveis) nem rodar `docker compose down -v`.
+5. **Ativar a reserva** (VPS ou Coolify fora do ar por mais tempo, ou no dia da demo):
    1. no Render, "New → Blueprint" com `infra/render.yaml`, e definir `DATABASE_URL` e `READ_API_KEY`;
    2. na borda, `CLOUD_API_URL=https://<servico>.onrender.com`;
    3. o dashboard roda no notebook com `.streamlit/secrets.toml` apontando para essa URL (SPEC-028 §4.6);
@@ -431,14 +488,14 @@ Os CAs marcados `docker` só rodam com `PARTQC_DOCKER_TESTS=1` (§4.14) e usam c
   - os valores de `READ_API_KEY` e `SIM_DEVICE_API_KEY` não aparecem no stdout nem no stderr;
   - `host-secreto-15` também não aparece;
   - o código-fonte de `scripts/smoke_test.py` não contém `verify=False`.
-- **CA-13 (manual)** — API na VPS:
+- **CA-13 (manual)** — API na VPS, atrás do proxy do Coolify (refeito em 2026-10-25, ADR-023):
   1. `curl -fsS https://<subdominio>/api/v1/health` → 200, com `"db":"ok"` e o `contract_version` atual;
-  2. `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' http://<subdominio>/api/v1/health` → `301` ou `308`, com o destino `https://<subdominio>/api/v1/health`;
+  2. `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' http://<subdominio>/api/v1/health` → `301`, `302`, `307` ou `308`, com o destino `https://<subdominio>/api/v1/health`. O redirecionamento agora é do proxy do Coolify, e o código depende da configuração dele. Se não houver redirecionamento, ligar "Force HTTPS" no recurso e repetir; se a opção não existir ou o resultado continuar igual, registrar `SPEC_ISSUE`;
   3. `curl -i https://<subdominio>/api/v1/inspections` sem chave → 401;
-  4. `curl -sI https://<subdominio>/api/v1/health` tem o header `strict-transport-security` com `max-age=31536000` e sem `includesubdomains`;
-  5. `echo | openssl s_client -connect <subdominio>:443 -servername <subdominio> 2>/dev/null | openssl x509 -noout -issuer -enddate` → emissor do Let's Encrypt (ou da ZeroSSL, a CA alternativa do Caddy) e validade futura;
+  4. `curl -sI https://<subdominio>/api/v1/health` tem exatamente um header `strict-transport-security` (`curl -sI ... | grep -ci '^strict-transport-security:'` → `1`), com `max-age=31536000` e sem `includesubdomains`. Um segundo HSTS indicaria um header acrescentado pelo proxy do Coolify;
+  5. `echo | openssl s_client -connect <subdominio>:443 -servername <subdominio> 2>/dev/null | openssl x509 -noout -issuer -enddate -serial` → emissor do Let's Encrypt (o resolvedor do Coolify) e validade futura. Anotar o `serial` (fora do repositório) para o CA-43;
   6. `curl -s https://<subdominio>/docs | grep -ci swagger` → `0`, e `curl -s https://<subdominio>/openapi.json | grep -c '"openapi"'` → `0`;
-  7. registrar as saídas no dev-report, trocando o subdomínio por `<subdominio>`.
+  7. registrar as saídas no dev-report, trocando o subdomínio por `<subdominio>` (sem o `serial`).
 - **CA-14 (manual, R-03/RNF-06)** — RLS e grants em produção, no SQL Editor:
   1. `select relname, relrowsecurity, relforcerowsecurity from pg_class where relname in ('devices','inspections','schema_migrations');` → as 3 linhas com `relrowsecurity = true` e `relforcerowsecurity = false`;
   2. `select count(*) from pg_policies where tablename in ('devices','inspections','schema_migrations');` → `0`;
@@ -454,19 +511,20 @@ Os CAs marcados `docker` só rodam com `PARTQC_DOCKER_TESTS=1` (§4.14) e usam c
   1. disparar o `keepalive` por `workflow_dispatch`;
   2. o job termina verde em ≤ 10 min;
   3. o próximo agendamento aparece na aba Actions.
-- **CA-17 (manual)** — Dashboard na VPS:
-  1. abrir `https://<subdominio>/` num navegador de desktop e num celular pelos dados móveis: a Visão geral carrega;
+- **CA-17 (manual)** — Dashboard na VPS (passos 1 e 6 refeitos em 2026-10-25, ADR-023):
+  1. abrir `https://<subdominio>/` num navegador de desktop e num celular pelos dados móveis: a Visão geral carrega com os dados da API, sem o aviso de API indisponível. Isso confirma que o dashboard alcança a API pela URL pública, sem o alias (ADR-023, decisão 4); se o aviso aparecer com a API saudável, registrar `SPEC_ISSUE` (SPEC-039 §7);
   2. nas ferramentas do navegador (aba Rede), a conexão `wss://<subdominio>/_stcore/stream` tem status 101 e continua aberta por 5 min sem recarregar a página;
   3. trocar um filtro da barra lateral atualiza os gráficos;
   4. depois de `simulate.py --lots 3`, com a origem `Todos`, aparece o selo "Contém dados simulados";
   5. em "Sobre o modelo":
      - se a `main` publicada tiver o `metrics.json` do modelo, a tabela "Métricas × metas do PRD" aparece;
      - se não tiver, a mensagem "Nenhum modelo avaliado ainda" cita `ml/models/partqc-mnv3-v1/metrics.json` (relativo, SPEC-028), nunca um caminho sob `site-packages` (RV-06);
-  6. `docker compose -f infra/compose.yaml exec dashboard printenv API_BASE_URL` começa com `https://`;
+  6. `docker exec <contêiner do dashboard> printenv API_BASE_URL` (nome pela listagem da §4.6) começa com `https://`;
   7. registrar o resultado e a data no `deployment-plan.md`, com a nota de repetir o passo 5 depois do merge do primeiro `metrics.json` (SPEC-012) e da atualização da §4.16.
 - **CA-18 (manual, R-01)** — Para cada recurso, a dupla registra no `deployment-plan.md` §2 a fonte e o "Verificado em" com a data desta SPEC:
   - **Supabase e GitHub Actions:** a conta e o recurso estão em uso **sem cartão**;
   - **VPS:** é preexistente e pessoal, e o projeto não mudou o plano nem contratou nada (o humano confirma por escrito);
+  - **Coolify** (acrescentado em 2026-10-25, ADR-023): auto-hospedado, já instalado na VPS antes do projeto, software livre (Apache-2.0), sem plano pago nem conta na nuvem do Coolify;
   - **domínio:** o subdomínio é de um domínio que o humano já tinha, sem custo novo;
   - **Render (reserva):** a conta existe sem cartão e, se a reserva for ativada, o serviço é `free`.
 - **CA-19 (manual, SEC-04 e SPEC_ISSUE-01 da SPEC-003)** — Migração em produção:
@@ -591,22 +649,28 @@ Os CAs marcados `docker` só rodam com `PARTQC_DOCKER_TESTS=1` (§4.14) e usam c
   - a linha que começa com `CLOUD_API_URL=` é `CLOUD_API_URL=https://<subdominio>`;
   - o arquivo não contém `onrender.com` nem `Streamlit Community Cloud`;
   - as linhas de comentário imediatamente acima de `API_BASE_URL=` contêm `.streamlit/secrets.toml` (CA-11 da SPEC-028, preservado).
-- **CA-40 (manual, §4.15)** — Rede e coexistência na VPS:
-  1. antes do primeiro `up`, o `ss` do item 1 da §4.15 não mostra processo nas portas 80 e 443, e o `ufw status verbose` está salvo;
-  2. depois do `up`, `docker compose -f infra/compose.yaml ps` mostra portas publicadas só no `caddy`;
+- **CA-40 (manual, §4.15)** — Rede e coexistência na VPS com o Coolify (refeito em 2026-10-25, ADR-023):
+  1. antes do primeiro deploy, o `docker ps --filter name=coolify-proxy ...` do item 1 da §4.15 mostra o proxy do Coolify nas portas 80 e 443, e o `StartedAt` dele e o `ufw status verbose` estão salvos fora do repositório;
+  2. depois do deploy, `docker ps --filter label=com.docker.compose.project=<uuid> --format '{{.Names}}\t{{.Ports}}'` mostra os 3 contêineres do PartQC e nenhum `0.0.0.0:` nem `[::]:` na coluna de portas;
   3. `ss -tlnp` do host não tem `:8000` nem `:8501`, e, de outra máquina, `curl --connect-timeout 5 http://<IP>:8000/` e `curl --connect-timeout 5 http://<IP>:8501/` falham;
   4. `sudo ufw status verbose` comparado com o arquivo salvo não tem nenhuma regra a menos;
-  5. cada um dos outros projetos do humano na VPS responde como antes (o humano lista quais conferiu, sem nomes de host);
-  6. registrar no dev-report sem o IP nem o subdomínio.
+  5. `docker inspect -f '{{.State.StartedAt}}' coolify-proxy` é igual ao valor do passo 1 (o proxy não foi reiniciado por causa do PartQC);
+  6. cada um dos outros projetos do humano na VPS (o portfólio, pelo menos) responde como antes (o humano lista quais conferiu, sem nomes de host);
+  7. registrar no dev-report sem o IP, o subdomínio nem o UUID do recurso.
 - **CA-41 (automatizado, R-13)** — *Dado* `infra/compose.yaml`, `infra/Caddyfile`, `infra/docker/*`, `infra/render.yaml`, `.github/workflows/docker.yml`, `.github/workflows/keepalive.yml` e `.env.example`, *então* nenhum contém IPv4 literal (`\b\d{1,3}(\.\d{1,3}){3}\b`) diferente de `0.0.0.0` e `127.0.0.1`. *Dado* `docs/deployment-plan.md` e `.env.example`, *então* toda ocorrência de `PUBLIC_HOST=` é seguida exatamente de `<subdominio>`, e todo `CLOUD_API_URL=`, `DASHBOARD_URL=` e `KEEPALIVE_URL=` com valor não vazio tem o valor começando por `https://<subdominio>` ou por `https://<servico>.onrender.com` (a reserva).
-- **CA-42 (manual, R-13)** — Na VPS, com o `infra/.env` preenchido: `git grep -nF -e "$(grep '^PUBLIC_HOST=' infra/.env | cut -d= -f2-)"` → nenhuma linha; o mesmo com o IPv4 público da VPS → nenhuma linha; e os dev-reports e security-reports da SPEC-015 em `reviews/SPEC-015/` também não têm nenhum dos dois (o reviewer confere com o mesmo `git grep`, a partir dos valores que o humano informa fora do repositório).
-- **CA-43 (manual, §4.16, R-03)** — Atualização e rollback ensaiados na VPS:
-  1. depois do primeiro `up`, `docker compose -f infra/compose.yaml run --rm --no-deps --entrypoint find api /app -maxdepth 2 -name '.env*'` e o mesmo com `dashboard` → nenhuma linha, ou só `/app/.env.example`;
+- **CA-42 (manual, R-13)** — Refeito em 2026-10-25 (ADR-023): sem `infra/.env` na VPS, o comando roda na máquina do humano, num checkout local atualizado (`git pull --ff-only`), com os valores lidos por `read -r` (fora do histórico do shell; comando completo no `deployment-plan.md` §9):
+  - `git grep -nF` com o subdomínio → nenhuma linha;
+  - o mesmo com o IPv4 público da VPS → nenhuma linha;
+  - o mesmo com o UUID do recurso no Coolify → nenhuma linha.
+
+  Os dev-reports e security-reports da SPEC-015 e da SPEC-039 em `reviews/` também não têm nenhum dos três. O reviewer confere com o mesmo `git grep`, a partir dos valores que o humano informa fora do repositório.
+- **CA-43 (manual, §4.16, R-03)** — Atualização e rollback ensaiados no Coolify (refeito em 2026-10-25, ADR-023):
+  1. depois do primeiro deploy, `docker exec <contêiner da api> find /app -maxdepth 2 -name '.env*'` e o mesmo com o contêiner do `dashboard` → nenhuma linha, ou só `/app/.env.example`;
   2. fazer o ciclo da §4.16, item 1, com um commit novo da `main` → health 200 e smoke `PASS`;
-  3. rollback para o commit anterior pela §4.16, item 3 → health 200;
-  4. voltar para a `main` → health 200;
-  5. `docker volume ls` mostra `partqc_caddy_data` o tempo todo, e `docker compose -f infra/compose.yaml logs caddy` não mostra uma nova emissão de certificado no ciclo;
-  6. registrar no dev-report.
+  3. rollback para o commit anterior pela §4.16, item 3 (branch `deploy/rollback`) → o log de deploy mostra o commit escolhido, e o health responde 200;
+  4. voltar para a `main` pela mesma §4.16, item 3 → health 200, e a branch `deploy/rollback` apagada;
+  5. o `serial` do certificado (CA-13, passo 5) é o mesmo antes do passo 2 e depois do passo 4: o ciclo não emitiu certificado novo;
+  6. registrar no dev-report, sem o `serial`, o subdomínio nem o UUID.
 
 ## 6. Plano de testes
 
@@ -614,7 +678,7 @@ Os CAs marcados `docker` só rodam com `PARTQC_DOCKER_TESTS=1` (§4.14) e usam c
 |---|---|---|
 | Unitário (autor) | YAML/TOML; Dockerfiles, compose e Caddyfile como texto; busca de segredos e de IPs; smoke com `MockTransport`; `docker_support`; ajustes do executor (§4.7); um teste `docker` de fumaça que constrói as duas imagens | `infra/tests/` |
 | Aceite (tester) | CA-01, CA-02, CA-05…CA-12, CA-20…CA-25, CA-27…CA-39 e CA-41. CA-21 a CA-24 marcados `db`; CA-33 a CA-37 marcados `docker` | `infra/tests/acceptance/test_spec_015.py` |
-| Manual (dupla + autor) | CA-13…CA-19, CA-26, CA-40, CA-42 e CA-43 | VPS e produção; resultado no dev-report e no `deployment-plan.md`, sem o subdomínio nem o IP |
+| Manual (dupla + autor) | CA-13…CA-19, CA-26, CA-40, CA-42 e CA-43, depois do merge da SPEC-039 (ADR-023) | VPS (Coolify) e produção; resultado no dev-report e no `deployment-plan.md`, sem o subdomínio, o IP nem o UUID do recurso |
 
 - Nenhum teste automatizado acessa a internet, a VPS ou os serviços reais. As imagens base são baixadas do Docker Hub e do GHCR no build, o que não conta como serviço do projeto.
 - O smoke é importado por `importlib.util.spec_from_file_location`.
@@ -624,6 +688,7 @@ Os CAs marcados `docker` só rodam com `PARTQC_DOCKER_TESTS=1` (§4.14) e usam c
 
 ## 7. Riscos e notas para o implementador
 
+- **A partir do ADR-023 e da SPEC-039**, as notas abaixo sobre o alias do subdomínio, o HTTP/3, as capacidades do Caddy para abrir 443, o `docker compose config` na VPS e a interpolação no `env_file` deixam de se aplicar à VPS. As notas que valem estão na SPEC-039 §7.
 - A allowlist do `security-devops` (`.claude/hooks/guard_paths.py`) cobre todos os caminhos desta SPEC: `infra/**` (inclusive `infra/docker/` e `infra/tests/`, menos `acceptance/`), `.github/**`, `.streamlit/**`, `scripts/smoke_test.py`, `.env.example`, `.gitignore`, `pyproject.toml`, `uv.lock` e `docs/deployment-plan.md`. Um `.dockerignore` na raiz **não** está coberto (§4.11).
 - **`README.md` da raiz e `.claude/agents/security-devops.md`** ainda citam o Render e o Streamlit CC como caminho principal. Ficam fora desta SPEC e são atualizados pelo orquestrador. O `description` do agente é conferido literalmente pelo CA de agentes da SPEC-001 (`tests/acceptance/test_spec_001.py`) e não deve ser mudado sem ajustar esse teste.
 - **Dockerfile por arquivo `.dockerignore`:** depende do BuildKit, o builder padrão. Se o `docker compose build` da VPS não respeitar o arquivo, o CA-43, passo 1, mostra o `.env*` dentro da imagem. Nesse caso, parar, remover as imagens (`docker image rm`), não publicar e registrar `SPEC_ISSUE`.
@@ -644,7 +709,7 @@ Os CAs marcados `docker` só rodam com `PARTQC_DOCKER_TESTS=1` (§4.14) e usam c
 
 ## 8. Definição de pronto
 
-- [ ] Todos os CAs automatizados com teste de aceite passando (test-report PASS, com os testes `docker` executados e não só pulados), e os CAs CA-13…CA-19, CA-26, CA-40, CA-42 e CA-43 registrados
+- [ ] Todos os CAs automatizados com teste de aceite passando (test-report PASS, com os testes `docker` executados e não só pulados), e os CAs CA-13…CA-19, CA-26, CA-40, CA-42 e CA-43 registrados (no Coolify, depois do merge da SPEC-039)
 - [ ] review-report APPROVED + security-report PASS (feito pelo **reviewer**)
 - [ ] CI verde (`ci` e `docker`); `ruff` limpo
 - [ ] `docs/deployment-plan.md` com os valores finais e as datas, sem o subdomínio real nem o IP (só `<subdominio>`); `.env.example` atualizado
@@ -666,3 +731,6 @@ Os CAs marcados `docker` só rodam com `PARTQC_DOCKER_TESTS=1` (§4.14) e usam c
 | 2026-10-18 | Reescrita reaprovada pelo humano, junto com a confirmação da decisão 4 do ADR-018 (`/docs` e `/openapi.json` não publicados). | Aprovação humana | Humano (Carlos) |
 | 2026-10-19 | **Correção do SPEC_ISSUE-01 (r1): só o CA-05.** **Texto antigo:** "*Dado* os arquivos de `git ls-files` fora de `docs/`, *quando* busco `postgres(ql)?://[^\s:/@]+:[^\s@]+@`, `eyJ…`, `-----BEGIN [A-Z ]*PRIVATE KEY-----` e `service_role…`, *então* não há ocorrência, exceto os marcadores e as credenciais de teste conhecidos da lista de permissão (`<user>:<password>`, `postgres:postgres@localhost`, `u:pw@127.0.0.1`, `u:s3cr3t-pw@127.0.0.1`); e, em `.env.example`, [...]". **Texto novo:** (a) o escopo fica explícito: todo arquivo de `git ls-files` fora de `docs/`, inclusive `reviews/` e as suítes de teste, decodificado com `errors="replace"`, sem pular arquivo; (b) os padrões de JWT, chave privada e `service_role` ficam sem exceção; (c) no padrão de URL do Postgres (o mesmo de antes, com os grupos `user` e `password`), a lista de permissão vira três regras fechadas: marcador de documentação (`password` igual a `<minúsculas>`, `…` ou `...`), valor montado em tempo de execução (`password` igual a `{NOME}` ou `${NOME}`) e cinco credenciais fictícias exatas (as três de antes com host, mais `postgres:postgres@...` e `u:senha@…`, que só aparecem como exemplo em relatórios); (d) a cláusula do `.env.example` não muda. **Evidência:** a varredura literal casava, fora da lista antiga, as f-strings `u:{SECRET}@127.0.0.1` de `infra/tests/acceptance/test_spec_003.py` (linhas 640, 1008, 1010 e 1023) e os marcadores de `reviews/SPEC-009/r1-review-report.md:46`, `reviews/SPEC-022/r1-review-report.md:22 e 29` e `reviews/checklist.md:42`; nenhum é segredo, e o architect conferiu que, com as regras novas, todas as ocorrências atuais do repositório fora de `docs/` são aceitas. **Efeito na R-03:** não enfraquece. O escopo não diminui (`reviews/` continua dentro, e nenhum arquivo é pulado), nenhum padrão sai, e cada forma aceita ou não tem valor de senha (marcador, reticências, nome de variável) ou tem um valor fictício fixo e público. Uma senha real numa URL continua reprovando o CA. Classificação ADR-019: exige humano (X-7: o CA-05 verifica a R-03, regra inegociável). Nenhuma outra exclusão se aplica (o escopo, os padrões e os casos de erro não mudam; X-6 não se aplica). SPEC marcada como "Aguardando reaprovação humana"; o status continua `Blocked` (r1) até a reaprovação. | SPEC_ISSUE-01 de `reviews/SPEC-015/r1-dev-report.md` | Orquestrador |
 | 2026-10-19 | Correção do SPEC_ISSUE-01 (CA-05) reaprovada pelo humano; `Blocked` → `In Dev`, retomada na r1. O humano também pediu que o autor volte a montar em tempo de execução as credenciais fictícias de `infra/tests/test_cli.py` (commit `b067b85`), como manda o `reviews/checklist.md`. | Fluxo do loop (§4 da skill `features`) | Humano (Carlos) |
+| 2026-10-25 | **Passos humanos e CAs manuais refeitos para o Coolify (ADR-023, `Proposto`).** Mudanças: (a) aviso no topo e nota na §1: a VPS é gerenciada pelo Coolify; o código (compose, Caddyfile, testes) muda pela SPEC-039; toda menção aos arquivos `infra/.env*` da VPS passa a significar as variáveis do recurso no Coolify; os CAs manuais só depois do merge da SPEC-039; (b) §4.6: o checkout, os arquivos de ambiente e a validação na VPS dão lugar ao recurso Docker Compose no Coolify (Public Repository, Base Directory `/infra`, Docker Compose Location `/compose.yaml`, sem Raw, sem rede predefinida, sem Preserve repository, sem webhook), às variáveis do recurso (segredos só em runtime, Locked e Literal) e ao domínio só no `caddy` (`https://<subdominio>:80`); (c) §4.9, item 2: troca da `READ_API_KEY` pela variável do Coolify; (d) §4.15: o proxy do Coolify ocupa 80/443, o PartQC não publica portas, e reiniciar, parar ou editar o `coolify-proxy` fica proibido; (e) §4.16: atualização pelo botão Deploy, logs no painel, rollback por branch temporária `deploy/rollback`, parada pelo botão Stop; (f) notas de substituição nas §4.8 (item 6), §4.12, §4.13 e §7; (g) CAs: **CA-13**: passo 2 aceita `301`, `302`, `307` ou `308` (o redirecionamento é do proxy do Coolify, antes só `301`/`308` do Caddy); passo 4 exige um único header HSTS; passo 5 sem a ZeroSSL e com o `serial` anotado; **CA-17**: passo 1 confirma os dados da API (o caminho sem alias), passo 6 com `docker exec`; **CA-18**: item do Coolify; **CA-40**: proxy do Coolify em vez de portas livres, nenhuma porta publicada pelo PartQC, proxy sem reinício; **CA-42**: na máquina do humano, com subdomínio, IPv4 e UUID lidos por `read -r`; **CA-43**: `docker exec` no passo 1, rollback por branch no passo 3 e certificado conferido pelo `serial` no passo 5 (antes, pelo volume `caddy_data`); CA-14, CA-15, CA-16, CA-19 e CA-26 sem mudança; §6 e §8 atualizadas. Nenhum CA automatizado muda nesta SPEC: os ajustes nos testes de aceite vêm da SPEC-039 §3.1. A intenção de cada CA manual continua a mesma. Classificação ADR-019: exige humano (X-2: ADR novo; X-3: `docs/architecture.md` e `docs/deployment-plan.md` também mudam; X-7: os CAs 13, 40, 42 e 43 verificam a R-03 e a R-13). SPEC marcada como "Aguardando reaprovação humana"; o status continua `In Security`. | Fato novo do humano em 2026-10-25: a VPS é gerenciada pelo Coolify, cujo proxy ocupa as portas 80/443 (ADR-023) | Orquestrador, a pedido do humano |
+| 2026-10-25 | Decisão do humano: deploy automático por webhook a cada merge na `main` (ADR-023, decisão 5). §4.6, passo 4, e §4.16, item 1, passam a citar o webhook da SPEC-039 §4.8; o rollback por branch não muda. Nenhum CA desta SPEC muda (o CA do webhook é o CA-18 da SPEC-039). Continua "Aguardando reaprovação humana". | Decisão do humano | Humano (Carlos) |
+| 2026-10-25 | Alteração pelo ADR-023 reaprovada pelo humano (deploy pelo Coolify). | Resposta do humano de 2026-10-25 (PR #55) | Orquestrador, a pedido do humano |

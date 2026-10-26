@@ -9,9 +9,9 @@
 | Depende de | SPEC-034 (`Done` antes de esta entrar em `In Dev`: primeira mudança de contrato com a borda em operação), SPEC-035, SPEC-036, SPEC-037, SPEC-026, SPEC-028 (e SPEC-008, SPEC-010, SPEC-011, SPEC-012, SPEC-013) |
 | Semana alvo | S5–S6. O modelo com ferramentas precisa estar treinado até o congelamento do modelo (M3, 22/11), então a Parte A tem de estar mergeada cedo o bastante para a coleta humana (§3.3) |
 | Requisitos cobertos | RF-16; PRD §4.2; R-04, R-06, R-11, R-12, R-14 |
-| ADRs relevantes | ADR-021 (`Proposto`: tipos sem grau), ADR-022 (`Proposto`: teste estendido para tipos novos), ADR-020, ADR-014, ADR-013, ADR-001, ADR-004, ADR-005 |
+| ADRs relevantes | ADR-021 (`Aceito`: tipos sem grau), ADR-022 (`Aceito`: teste estendido para tipos novos), ADR-020, ADR-014, ADR-013, ADR-001, ADR-004, ADR-005 |
 
-> **Pronta para a aprovação humana**, junto com os ADRs 021 e 022, que precisam estar `Aceito` antes de esta SPEC virar `Ready`. Revista pelo architect em 2026-10-24 (ver o Histórico).
+> **Aprovada pelo humano em 2026-10-24** (PR #45), com os ADRs 021 e 022 `Aceito`. Revista pelo architect em 2026-10-24 (ver o Histórico).
 
 ## 1. Contexto
 
@@ -73,7 +73,7 @@ O contrato 0.4.0, o banco, a API, a borda e o dashboard aceitam e mostram as 5 f
 
 | Quando | Tarefa |
 |---|---|
-| Na aprovação | Conferir quantas unidades de cada ferramenta a dupla tem ou consegue com conhecidos (pergunta do §9). Um tipo com menos de 3 peças físicas não pode ter teste (ADR-022) e fica fora do modelo |
+| Na aprovação (respondida em 2026-10-24, §9) | Conferir quantas unidades de cada ferramenta a dupla tem ou consegue com conhecidos (pergunta do §9). Um tipo com menos de 3 peças físicas não pode ter teste (ADR-022) e fica fora do modelo |
 | Depois do merge da Parte A (o merge da SPEC) | Fotografar as ferramentas pelo modo coleta (`T-001`…), com a rubrica do §4.11 para o grau e o protocolo do §4.11 para a captura; importar fotos de conhecidos (`T-501`…) e imagens públicas (`XT-0001`…) pela importação da SPEC-036, depois de registrar a fonte |
 | Antes de pedir a extensão | Piloto de concordância do grau das ferramentas (20 fotos, QWK ≥ 0,6), **só** se algum tipo cumprir o critério de grau |
 | Coleta completa | Gerar o split com `--extend-test-types` (ADR-022), treinar no Colab e registrar o CA-21 |
@@ -174,7 +174,7 @@ Cada chave Allen de um jogo é uma peça física. Ferramentas novas cobrem `perf
 - `ml/tests/fixtures/tiny_model_tools/`: mesma estrutura da `tiny_model`, com `labels.json` de 8 tipos (`screw`, `nut`, `other` e as 5 ferramentas) e `ungraded_object_types` com `allen_key`, gerada pelo `ml/scripts/make_tiny_fixture.py` (opção nova `--with-tools`), para os CAs sem torch.
 - `ml/README.md`: seção "Ferramentas (Fase 2)": prefixos, critério de grau, extensão e adiamento do teste (ADR-022) e o passo a passo do §3.3.
 
-### 4.11 Rubrica e protocolo de captura das ferramentas (texto vigente; o architect o copia para `docs/dataset-protocol.md` §1.1 e §3 quando esta SPEC virar `Ready`)
+### 4.11 Rubrica e protocolo de captura das ferramentas (texto vigente; copiado pelo architect para `docs/dataset-protocol.md` §1.1 e §3 em 2026-10-24, depois de esta SPEC virar `Ready`)
 
 | Grau | Critério para ferramentas manuais |
 |---|---|
@@ -246,13 +246,15 @@ Contexto comum: banco de teste do marcador `db` (`TEST_DATABASE_URL`) nos CAs de
 - [ ] review-report APPROVED e security-report PASS
 - [ ] CI verde; `ruff` limpo
 - [ ] `packages/contracts/README.md`, `ml/README.md`, `edge/README.md` (coleta e importação de ferramentas) atualizados; `docs/architecture.md` e `docs/dataset-protocol.md` pelo architect
-- [ ] ADR-021 e ADR-022 `Aceito`
+- [x] ADR-021 e ADR-022 `Aceito` (aprovados pelo humano em 2026-10-24, PR #45)
 - [ ] PR aberto com os relatórios; merge conforme R-09; CA-21 manual registrado depois da coleta (não bloqueia o merge, como o CA-28 da SPEC-012)
 
-## 9. Perguntas para a aprovação (humano)
+## 9. Perguntas para a aprovação (humano) — respondidas em 2026-10-24
 
-1. **ADR-021 e ADR-022:** aceitar os dois como estão? **Recomendação:** sim. O ADR-021 não muda nenhum valor do MVP e evita mudar o contrato a cada modelo; o ADR-022 mede as ferramentas sem perder a comparabilidade de parafusos e porcas.
-2. **Unidades disponíveis:** quantas unidades de cada ferramenta a dupla tem ou consegue com conhecidos? **Recomendação:** seguir só com os tipos que chegarem a 3 peças físicas (meta de 6); os outros ficam no contrato, mas fora do modelo, sem nova SPEC.
+Mantidas como registro. As respostas estão na linha da aprovação no Histórico (2026-10-24, PR #45).
+
+1. **ADR-021 e ADR-022:** aceitar os dois como estão? **Recomendação:** sim. O ADR-021 não muda nenhum valor do MVP e evita mudar o contrato a cada modelo; o ADR-022 mede as ferramentas sem perder a comparabilidade de parafusos e porcas. **Resposta (2026-10-24):** aceitos como estão (`Aceito`).
+2. **Unidades disponíveis:** quantas unidades de cada ferramenta a dupla tem ou consegue com conhecidos? **Recomendação:** seguir só com os tipos que chegarem a 3 peças físicas (meta de 6); os outros ficam no contrato, mas fora do modelo, sem nova SPEC. **Resposta (2026-10-24):** a dupla ainda não sabe quantas unidades tem; vale a recomendação (no mínimo 3 peças físicas por tipo, meta de 6; abaixo disso, o tipo fica no contrato e fora do modelo, sem SPEC nova).
 
 ## Histórico
 
@@ -262,3 +264,4 @@ Contexto comum: banco de teste do marcador `db` (`TEST_DATABASE_URL`) nos CAs de
 | 2026-10-20 | §4: imagens públicas passam de "treino e validação" para **só treino**, com `item_id` `XT-NNNN`, importação pela SPEC-036 e registro de fontes da SPEC-035; o critério de grau conta só as imagens não externas. §6, pergunta 3: resolvida pelo ADR-020. ADRs relevantes: o ADR-020 entra junto com os demais. A SPEC continua `Draft`. | Decisão do humano de 2026-10-19 (ADR-020) | Orquestrador, a pedido do humano |
 | 2026-10-24 | SPEC reescrita para a aprovação. Perguntas do rascunho resolvidas: (1) invariante → ADR-021 (`Proposto`; grau opcional para as ferramentas, `ungraded_object_types` no `labels.json`, SPC e taxa de defeito por `grade is not null`, contrato 0.4.0 minor); (2) teste congelado → ADR-022 (`Proposto`; extensão única por tipo com `--extend-test-types` e adiamento com `--defer-types`); (3) já resolvida; (4) correção de tipo fora (exclusão e nova foto); (5) mapeamento de classes públicas é trabalho humano com a rubrica; (6) piloto de concordância só se algum tipo for graduado; (7) SPC pelo filtro `object_type`, sem carta separada por padrão. Novos: Parte A (developer) e Parte B (ml-engineer) na mesma rodada; tag `security` (entrada da API, banco, coleta e importação); dependência da SPEC-034 (prazo dela), 035, 036, 037, 026 e 028; trabalho humano e metas por ferramenta (§3.3); rubrica e captura das ferramentas (§4.11); lista de ajustes de aceite antigos; CAs testáveis CA-01 a CA-20 e o CA-21 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3, os ADRs 021 e 022 e a ordem `034 → 016 → 018 → 017 → portão da Fase 3 → 020 → 019 → 021`. Ferramentas: a dupla ainda não sabe quantas unidades tem; segue a regra de no mínimo 3 peças físicas por tipo (meta de 6), e os tipos abaixo disso ficam no contrato e fora do modelo, sem SPEC nova. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
+| 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: aviso do topo registra a aprovação; ADR-021 e ADR-022 como `Aceito` nos "ADRs relevantes" e na Definição de pronto (item marcado); §3.3 e §9 marcadas como respondidas, com as respostas da linha anterior; §4.11 copiado para `docs/dataset-protocol.md` §1.1 e §3, como a própria §4.11 manda. As linhas anteriores do Histórico ficam como estavam (registro). | Status `Ready` e ADRs `Aceito` desde o PR #45; sobravam textos da fase de rascunho | Architect, a pedido do orquestrador |

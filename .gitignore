@@ -12,12 +12,18 @@ dist/
 build/
 
 # --- Segredos (R-03) ---
+# O Git no Linux diferencia maiúsculas nos padrões (core.ignorecase=false): cada padrão literal
+# tem ao lado uma variante com classes de caracteres (SPEC-032 §4.2, RV-04 da SPEC-015).
 .env
 .env.*
+.[eE][nN][vV]
+.[eE][nN][vV].*
 !.env.example
 .streamlit/secrets.toml
 *.pem
 *.key
+*.[pP][eE][mM]
+*.[kK][eE][yY]
 
 # --- Dados e imagens (R-02, R-14) ---
 ml/data/
@@ -26,19 +32,32 @@ data/
 *.jpg
 *.jpeg
 *.png
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[pP][nN][gG]
+*.[hH][eE][iI][cC]
+*.[wW][eE][bB][pP]
 !docs/**/*.png
 !ml/reports/**/*.png
+!docs/**/*.[pP][nN][gG]
+!ml/reports/**/*.[pP][nN][gG]
 
 # --- Modelos (pesos vão em GitHub Releases) ---
 ml/models/**/*.onnx
 ml/models/**/*.pt
 ml/models/**/*.pth
+ml/models/**/*.[oO][nN][nN][xX]
+ml/models/**/*.[pP][tT]
+ml/models/**/*.[pP][tT][hH]
 ml/checkpoints/
 
 # --- Borda ---
 *.sqlite
 *.sqlite3
 *.db
+*.[sS][qQ][lL][iI][tT][eE]
+*.[sS][qQ][lL][iI][tT][eE]3
+*.[dD][bB]
 
 # --- Notebooks / IDE / SO ---
 .ipynb_checkpoints/
