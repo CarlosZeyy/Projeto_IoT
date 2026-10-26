@@ -1,13 +1,14 @@
-# Caddy do PartQC (SPEC-015 §4.13, ADR-018). O endereço vem de PUBLIC_HOST (infra/.env):
-# nenhum domínio literal neste arquivo (R-13). HTTPS automático e redirecionamento de HTTP
-# para HTTPS são os padrões do Caddy. Sem bloco global e sem log de acesso.
+# Caddy do PartQC: só roteador interno (ADR-023, SPEC-039; antes, SPEC-015 §4.13). O TLS e o
+# domínio são do proxy do Coolify, que encaminha por HTTP a este contêiner, na rede do recurso.
+# O site :80, sem nome de host, não ativa o HTTPS automático. Sem bloco global e sem log de
+# acesso. Nenhum domínio literal neste arquivo (R-13). O handle_errors entra pela SPEC-038.
 # /docs e /openapi.json da API não são roteados (ADR-018, decisão 4): caem no Streamlit.
 # Headers (SPEC-032 §4.3, SEC-15-04): -Server e -Via apagam os que identificam o software
 # (server: uvicorn, via: 1.1 Caddy). Apagar um campo ativa o defer automaticamente: a operação
 # roda quando a resposta é enviada ao cliente, depois do reverse_proxy. Do CSP, só a diretiva de
 # molduras (frame-ancestors); uma política completa fica para SPEC nova.
 
-{$PUBLIC_HOST} {
+:80 {
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"

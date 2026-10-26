@@ -1,0 +1,70 @@
+# PartQC: recurso "partqc-api" do Coolify, só com a qc-api (ADR-023 e emenda 1, SPEC-039).
+#
+# No Coolify (recurso "Docker Compose" a partir do repositório público, docs/deployment-plan.md §4):
+#   Base Directory /infra e Docker Compose Location /compose.api.yaml (o context: .. aponta para a
+#   raiz do repositório);
+#   sem domínio: só o caddy do recurso "partqc-web" (infra/compose.yaml) tem domínio, e ele chega
+#   a esta API pela rede partqc-api-link, criada por este arquivo;
+#   as variáveis ficam nas Environment Variables deste recurso, e só nele: o Coolify entrega o
+#   .env do recurso a todos os serviços dele, e por isso a string de conexão do banco e o token
+#   do bot ficam num recurso só com a API (SEC-39-01). Os segredos ficam só em runtime, Locked e
+#   Literal. As referências ${...:?} são obrigatórias e bloqueiam o deploy se faltarem;
+#   primeiro deploy: este recurso antes do "partqc-web", porque ele cria a rede partqc-api-link.
+#
+# Conferência local, a partir da raiz do checkout, com um infra/.env de valores fictícios (fora
+# do Git e do contexto de build), o mesmo dos dois arquivos:
+#   docker compose -f infra/compose.api.yaml config --quiet   (nunca sem --quiet: imprime segredos)
+#
+# Endurecimento (SPEC-032 §4.4): sistema de arquivos só de leitura (read_only), com tmpfs em /tmp
+# (64m), e limite de processos e threads (pids_limit, padrão 256, ajustável nas variáveis do
+# recurso). Sem labels do proxy (o Coolify gera as dele) e sem portas publicadas.
+
+name: partqc-api
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      DATABASE_URL: "${DATABASE_URL:?}"
+      READ_API_KEY: "${READ_API_KEY:?}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-262144}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # Alertas da SPEC-017, opcionais e desligados por padrão (antes do merge dela, ignorados).
+      ALERTS_ENABLED: "${ALERTS_ENABLED:-false}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      ALERTS_LOT_IDLE_MINUTES: "${ALERTS_LOT_IDLE_MINUTES:-10}"
+      ALERTS_LOOKBACK_HOURS: "${ALERTS_LOOKBACK_HOURS:-24}"
+      ALERTS_CHECK_INTERVAL_S: "${ALERTS_CHECK_INTERVAL_S:-60}"
+      ALERTS_MAX_PER_HOUR: "${ALERTS_MAX_PER_HOUR:-10}"
+      ALERTS_INCLUDE_SIMULATED: "${ALERTS_INCLUDE_SIMULATED:-false}"
+    expose:
+      - "8000"
+    networks:
+      # default: saída para o Supabase; link: o caddy do "partqc-web" chega aqui como api:8000.
+      - default
+      - link
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    mem_limit: "${API_MEM_LIMIT:-512m}"
+    cpus: "${API_CPUS:-1.0}"
+    pids_limit: "${API_PIDS_LIMIT:-256}"
+    read_only: true
+    tmpfs:
+      - "/tmp:size=64m"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  link:
+    # Criada aqui; internal: não serve de saída para fora (a API sai pela rede padrão).
+    name: partqc-api-link
+    internal: true
