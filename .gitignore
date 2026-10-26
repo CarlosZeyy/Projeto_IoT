@@ -37,6 +37,15 @@ data/
 *.[pP][nN][gG]
 *.[hH][eE][iI][cC]
 *.[wW][eE][bB][pP]
+*.[hH][eE][iI][fF]
+*.[jJ][fF][iI][fF]
+*.[jJ][pP][eE]
+*.[tT][iI][fF]
+*.[tT][iI][fF][fF]
+*.[dD][nN][gG]
+*.[aA][vV][iI][fF]
+*.[mM][oO][vV]
+*.[mM][pP]4
 !docs/**/*.png
 !ml/reports/**/*.png
 !docs/**/*.[pP][nN][gG]
