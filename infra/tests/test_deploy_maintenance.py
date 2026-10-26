@@ -295,6 +295,43 @@ def test_caddyfile_comments_explain_handle_errors_without_a_domain() -> None:
         assert " " not in line[: len(line) - len(line.lstrip())], n
 
 
+ENV_PLACEHOLDER = re.compile(r"\{env\.|\{\$")
+
+
+def _env_placeholders(path: Path) -> list[str]:
+    """Code lines (comments out, as in CA-12) with ``{env.`` or ``{$`` (SEC-39-06)."""
+    return [line for line in _code(path) if ENV_PLACEHOLDER.search(line)]
+
+
+def test_caddyfile_has_no_environment_placeholder() -> None:
+    """Section 4.9 (SEC-39-06, R-03): the Caddy container has READ_API_KEY and PUBLIC_HOST in
+    its environment (ADR-023, amendment 1), so no ``{env.*}`` nor ``{$...}`` in the whole file."""
+    assert _env_placeholders(CADDYFILE) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "\t\trespond {env.READ_API_KEY}",
+        '\t\trespond "{env.READ_API_KEY}" 502',
+        "\t\trespond {$READ_API_KEY}",
+        "\t\theader X-Key {$READ_API_KEY:padrao}",
+        "\t\theader X-Key {env.PUBLIC_HOST}",
+    ],
+)
+def test_control_an_environment_placeholder_is_detected(tmp_path: Path, line: str) -> None:
+    """Negative control on a temporary copy (the real file is never written): the same
+    Caddyfile with a placeholder inside handle_errors is caught; in a comment it is not code."""
+    text = CADDYFILE.read_text(encoding="utf-8")
+    assert '\t\trespond ""\n' in text
+    leaking = tmp_path / "Caddyfile"
+    leaking.write_text(text.replace('\t\trespond ""\n', f"{line}\n"), encoding="utf-8")
+    assert _env_placeholders(leaking) == [line]
+    commented = tmp_path / "Caddyfile.comment"
+    commented.write_text(f"# {line.strip()}\n" + text, encoding="utf-8")
+    assert _env_placeholders(commented) == []
+
+
 # ============================================================ static: .gitignore (section 4.10)
 
 IGNORED = [
