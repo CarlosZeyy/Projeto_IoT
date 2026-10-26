@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Dev |
+| Status | In Test |
 | Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: `edge/`) e depois security-devops (Parte B: `infra/`, `.gitignore`, `.env.example` e `docs/deployment-plan.md`), na mesma rodada (§6) |
 | Tags | security, deploy, infra |
