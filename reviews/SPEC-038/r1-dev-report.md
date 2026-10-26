@@ -74,3 +74,86 @@ Nenhum.
 - [x] `.env.example` sem mudança na Parte A (nenhuma variável nova)
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim; nada em `infra/`, `.gitignore`, `.dockerignore`, `.env.example` nem `docs/deployment-plan.md`
 - [x] Imagens dos testes geradas pelo Pillow; marcadores gerados com `secrets`; nada lido de `~/partqc-entrada/`
+
+## Parte B (security-devops)
+
+| Campo | Valor |
+|---|---|
+| Autor | security-devops (Parte B: `infra/`, `.gitignore`, `.env.example` e `docs/deployment-plan.md`) |
+| Commits | `e601f98` (Caddyfile, `.gitignore`, `.dockerignore`, `.env.example`, plano e testes do autor), mais o commit desta seção |
+| Base | o Caddy da SPEC-039 (ADR-023): site `:80`, imagem de `infra/docker/caddy.Dockerfile`, dois recursos no Coolify, conforme a nota do topo da SPEC |
+
+### Resumo
+
+- `infra/Caddyfile` (§4.9, SEC-32-01): um bloco `handle_errors` sem códigos de status, dentro do site `:80`, com um `header` igual ao do site (as 6 linhas) e `respond ""` (um único argumento que não é número de 3 dígitos é o corpo; sem status, a rota de erro usa o status do erro original). Sem `reverse_proxy`, `file_server`, `templates`, `rewrite` e sem nenhum placeholder `{err.*}`. O `header` do site, o `handle /api/*` e o `handle` sem matcher não mudaram, e o arquivo continua formatado pelo `caddy fmt`.
+- `.gitignore` e os `.dockerignore` da API e do dashboard (§4.10, SEC-32-02): as 9 extensões, só na forma com classes de caracteres, logo depois de `*.[wW][eE][bB][pP]` e antes das exceções de PNG (com `**/` nos `.dockerignore`). Nenhuma linha existente saiu ou mudou de posição relativa. O `.dockerignore` do Caddy não mudou (nota do topo).
+- `.env.example` e `docs/deployment-plan.md` (§4.9, §4.11): a linha `# Inteiro positivo: 0 ou -1 removem o limite (sem aviso do compose); nunca use.` logo acima de `API_PIDS_LIMIT=256`; no plano, a mesma regra no item do `pids_limit` (§2), o diagnóstico no passo 3 da "Atualização" (§4), o risco 9 da §7 no texto da nota do topo (redirecionamento e erros do proxy do Coolify), uma linha nova "Caddy: respostas de erro" na tabela da §2 com as fontes e a data, e o CA manual da SPEC-038 na §9 (`docker stop`/`docker start` pelo seletor do projeto do Coolify).
+
+### Rastreabilidade (critério de aceite → implementação)
+
+| Critério | Arquivo(s) | Teste unitário do autor |
+|---|---|---|
+| CA-12 (Caddyfile como texto) | `infra/Caddyfile` | `infra/tests/test_deploy_maintenance.py::test_one_handle_errors_without_status_codes_inside_the_site`, `::test_handle_errors_has_the_six_header_lines`, `::test_handle_errors_responds_with_an_empty_body_and_no_status`, `::test_handle_errors_never_forwards_or_renders` (4 casos), `::test_handle_errors_uses_no_error_placeholder_but_the_status_code`, `::test_the_rest_of_the_site_does_not_change`, `::test_site_header_block_keeps_the_six_lines`, `::test_caddyfile_comments_explain_handle_errors_without_a_domain`; as condições do CA-04 da SPEC-039 continuam nos testes do autor da 039 (`infra/tests/test_coolify_deploy.py::test_caddyfile_*`) |
+| CA-13 (docker, `caddy adapt`) | `infra/Caddyfile` | `infra/tests/test_deploy_maintenance.py::test_caddy_adapt_puts_the_headers_in_the_error_routes` (handler `headers` em `errors.routes` com os 4 headers e `delete` de `Server`/`Via`; `static_response` sem status e sem corpo; nenhum `reverse_proxy` nos erros; nas `routes`, 1 `headers` adiado e os 2 proxies); `infra/tests/test_docker_images.py::test_caddy_adapts_the_caddyfile` e `infra/tests/test_coolify_deploy.py::test_caddy_image_adapts_without_public_host` (ajustados às `routes`) |
+| CA-14 (docker, resposta de erro) | `infra/Caddyfile` | `infra/tests/test_deploy_maintenance.py::test_caddy_error_response_has_the_headers_and_an_empty_body` (imagem da SPEC-039 §4.3 com `--read-only`, 3 `tmpfs`, `--cap-drop ALL`, `--cap-add NET_BIND_SERVICE`, `--pids-limit 256`, `--network none`; HTTP/1.1 bruto a `127.0.0.1:80` com `Host: partqc.example.org` em `/api/v1/health` e `/`: `502`, os 4 headers, sem `Server`/`Via`, `Content-Length: 0`, corpo vazio, nenhum header duplicado, contêiner `running`); controle negativo `::test_control_without_handle_errors_the_502_leaks_server` (o mesmo Caddyfile sem o bloco devolve `Server: Caddy` e nenhum dos headers) |
+| CA-15 (`.gitignore`) | `.gitignore` | `infra/tests/test_deploy_maintenance.py::test_gitignore_ignores_the_new_photo_and_video_formats` (os 18 caminhos do CA e mais 5), `::test_gitignore_keeps_what_must_stay_tracked` (os 8 do CA e mais 3), `::test_gitignore_new_lines_sit_before_the_png_exceptions`, `::test_gitignore_keeps_every_line_of_the_start_of_the_round` (cópia literal), `::test_no_tracked_file_is_ignored`; `infra/tests/test_deploy_files.py::test_gitignore_variants_sit_next_to_their_patterns_and_before_the_exceptions` (ajustado) |
+| CA-16 (`.dockerignore`) | `infra/docker/api.Dockerfile.dockerignore`, `infra/docker/dashboard.Dockerfile.dockerignore` | `infra/tests/test_deploy_maintenance.py::test_dockerignore_has_the_new_formats_before_the_exceptions`, `::test_dockerignore_keeps_every_rule_of_the_start_of_the_round` (api e dashboard), `::test_caddy_dockerignore_is_unchanged`; *(docker)* as 9 sentinelas do CA e mais 3 em subpastas entraram em `SENTINELS_ABSENT` de `infra/tests/test_docker_images.py` (`::test_build_context_filters_secrets_data_and_weights`, que é o CA-36 da SPEC-015 do autor) |
+| CA-17 (documentação) | `.env.example`, `docs/deployment-plan.md` | `infra/tests/test_deploy_maintenance.py::test_env_example_warns_against_zero_or_minus_one`, `::test_plan_pids_limit_item_forbids_zero_and_minus_one`, `::test_plan_update_step_3_points_to_the_hardening_diagnosis`, `::test_plan_risk_9_describes_handle_errors_and_the_coolify_proxy`, `::test_plan_lists_the_caddy_error_sources_with_the_date`, `::test_plan_manual_ca_18_uses_the_coolify_container_names` |
+| CA-18 (manual, VPS) | `docs/deployment-plan.md` §9, "CA manual da SPEC-038" | manual (humano), pendente |
+
+### Como rodar e verificar
+
+```bash
+uv sync --all-packages --locked
+uv run ruff check . && uv run ruff format --check .
+uv run pytest -q infra/tests/test_deploy_maintenance.py infra/tests/test_deploy_files.py infra/tests/test_coolify_deploy.py
+PARTQC_DOCKER_TESTS=1 uv run pytest -q -m docker infra/tests/test_deploy_maintenance.py infra/tests/test_docker_images.py infra/tests/test_coolify_deploy.py
+```
+
+Resultados (sem `TEST_DATABASE_URL` e sem `CI`):
+
+- suíte inteira sem docker: 7047 passed, 1145 skipped, **2 failed**, que são os dois testes de aceite estáticos listados abaixo;
+- `PARTQC_DOCKER_TESTS=1 uv run pytest -m docker infra/tests`: 91 passed e 4 failed antes da correção do parser de HTTP dos meus 2 testes de resposta (modo texto do `subprocess` trocava CRLF por LF); depois dela, `infra/tests/test_deploy_maintenance.py -m docker`: 3 passed. As outras 2 falhas são os dois testes de aceite docker listados abaixo;
+- limpeza: a lista de contêineres, redes e imagens do Docker antes e depois das execuções é a mesma (nenhum `partqc-test-*` restante). Os contêineres e as imagens rodam com nomes `partqc-test-*` e `--network none`, e nenhum teste novo usa compose.
+
+### Testes de aceite de SPECs anteriores afetados (`docs/architecture.md` §10; ajuste do tester)
+
+Os dois da §3.1 e, pela nota do topo ("vale a mesma regra para um teste de aceite da SPEC-039"), mais dois da SPEC-039. Não alterei nenhum.
+
+| Teste | Por que falha | Ajuste esperado (pela SPEC) |
+|---|---|---|
+| `infra/tests/acceptance/test_spec_032.py::test_extra_caddyfile_headers_are_in_one_header_block_and_no_full_csp` | 2 blocos `header` e `Content-Security-Policy` 2 vezes | o da tabela da §3.1 |
+| `infra/tests/acceptance/test_spec_032.py::test_extra_caddy_adapt_single_header_handler_is_deferred` (docker) | 2 handlers `headers` no JSON (o segundo em `errors`) | o da tabela da §3.1 |
+| `infra/tests/acceptance/test_spec_039.py::test_extra_caddyfile_comments_and_format` | `assert "handle_errors" not in _caddy_text()` e `len(blocks) == 1` dentro do `:80` | a §4.9 põe o `handle_errors` e o segundo `header` no site; o resto do teste (comentários, tabs) continua passando |
+| `infra/tests/acceptance/test_spec_039.py::test_extra_caddy_adapt_has_no_automatic_https_and_no_redirect` (docker) | `statics == []` (o `respond ""` vira um `static_response` em `errors`) e `len(headers) == 1` | contar só nas `routes` do servidor, como na §3.1; o `static_response` dos erros não é redirecionamento (sem status e sem `Location`) |
+
+### Decisões tomadas dentro do escopo da SPEC
+
+1. **`respond ""`.** O `respond` do Caddyfile exige pelo menos um argumento (`respond` sozinho falha no `caddy adapt` com "wrong argument count"). Com um argumento só, que não é número de 3 dígitos, ele é o corpo, e o status fica vazio, então a rota de erro usa o status recomendado do erro (comentário de `ServeHTTP` e `UnmarshalCaddyfile` em `staticresp.go`, consultado em 2026-10-26). Escolhi isso em vez de `respond "" {err.status_code}`, que também é permitido pela §4.9, porque é exatamente o mecanismo que a §4.9 cita, sem nenhum placeholder.
+2. **Verificação prática.** Com a imagem `caddy:2.11.7` fixada e sem a API e o dashboard, o `502` de `/api/v1/health` e de `/` saiu com os 4 headers, sem `Server` e sem `Via` e com `Content-Length: 0`. Com o mesmo arquivo sem o bloco, saiu `Server: Caddy` sem os headers (é o controle negativo do teste do autor).
+3. **Linha nova na tabela da §2 do plano** ("Caddy: respostas de erro"), com as duas fontes e a data de 2026-10-26, além do texto do risco 9: a regra do agente pede a fonte verificada com "Verificado em", e a §4.9 pede a URL e a data no plano.
+4. **CA manual da SPEC-038 na §9 do plano**, no formato dos CAs manuais das SPECs 032 e 017, já com os passos da nota do topo (`docker stop`/`docker start` do contêiner da API pelo seletor `com.docker.compose.project=<uuid>`) e a proibição de parar o `coolify-proxy`.
+5. **`pids_limit` `0` e `-1`, conferido.** Com o Compose 5.6.1, `pids_limit: "${P:-256}"` com `P=0` resolve sem o campo, e com `P=-1` resolve `pids_limit: -1`, os dois sem aviso. Registrei isso no item da §2 do plano.
+6. **Testes do autor ajustados** (§3.1, os do security-devops): `test_caddyfile_header_block_spec_032` (2 blocos, o segundo dentro do `handle_errors`), o `(response,) = ...` de `test_caddy_adapts_the_caddyfile` e o `(headers,) = ...` de `test_caddy_image_adapts_without_public_host` (só as `routes` do servidor), `handle_errors` fora da lista de tokens proibidos de `test_caddyfile_forbidden_token` (teste do autor da 039, que antecipava a SPEC-038) e as 9 linhas novas no teste de variantes do `.gitignore` da SPEC-032.
+
+### Fora do escopo desta parte (registrado a pedido do orquestrador)
+
+- **RV-02 da SPEC-039** (comentários antigos de `env_file` e `infra/.env.dashboard` em `infra/docker/api.Dockerfile`, `infra/docker/dashboard.Dockerfile` e `.streamlit/config.toml`): fora. A §3.1 da SPEC-038 limita a Parte B a `infra/Caddyfile`, `.gitignore`, os dois `.dockerignore`, `.env.example`, `docs/deployment-plan.md` e testes em `infra/tests/`. Os dois Dockerfiles e o `config.toml` não estão nela. Fica para a próxima manutenção (ou uma correção pequena, se o humano decidir).
+- **SEC-39-06** (proibir `{env.` e `{$` no Caddyfile): ver o SPEC_ISSUE abaixo. O Caddyfile desta parte não usa nenhum placeholder de ambiente nem de requisição, e o `handle_errors` não usa nenhum `{err.*}`.
+
+### SPEC_ISSUE
+
+- **SPEC_ISSUE-038-B1 (SEC-39-06, não bloqueia o resto da Parte B).** O `reviews/SPEC-039/r2-security-report.md` pede que, na Parte B da SPEC-038, o CA do Caddyfile passe a exigir que o texto sem comentários não contenha `{env.` nem `{$`, porque o ambiente do Caddy agora tem a `READ_API_KEY` (e o `PUBLIC_HOST`). A SPEC-038 não diz isso: o CA-12 cita as condições do CA-30 da SPEC-015 e do CA-04 da SPEC-039 (que proíbem só o texto `PUBLIC_HOST`, e não `{env.READ_API_KEY}` nem `{$READ_API_KEY}`), e a §4.9 proíbe só `{err.*}` além de `{err.status_code}` dentro do `handle_errors`. Pela instrução do orquestrador, não improvisei o requisito nem um teste do autor para ele. **Sugestão para o architect** (correção pequena, ADR-019, se couber): acrescentar à §4.9 "o arquivo não usa placeholder de ambiente (`{env.*}` nem `{$...}`)" e ao CA-12 "o texto sem comentários não contém `{env.` nem `{$`". O Caddyfile atual já cumpre, então a correção só acrescenta o teste (do autor e do tester), sem mudar a produção.
+
+### CAs manuais
+
+- **CA-18 (VPS, humano)**, depois da atualização com a SPEC-038 na `main`: passos em `docs/deployment-plan.md` §9, "CA manual da SPEC-038". Registrar a tabela de lá e esta seção com `<subdominio>`, sem o UUID e sem o nome do contêiner.
+
+### Checagens do autor
+
+- [x] `uv run ruff check .` e `uv run ruff format --check .` limpos
+- [x] Testes unitários do autor passando, inclusive os 3 `docker` novos e os `docker` antigos de `infra/tests/` que não são de aceite
+- [x] `.env.example` atualizado (só o comentário da §4.11; nenhuma variável nova)
+- [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim; nada em `edge/`
+- [x] Nenhum segredo, subdomínio, IP ou UUID real; o host dos testes é `partqc.example.org`; nada feito na VPS nem no Coolify
+- [x] `git -c core.excludesFile=/dev/null ls-files -ci --exclude-standard` vazio antes e depois da mudança
