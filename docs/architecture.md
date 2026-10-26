@@ -25,7 +25,7 @@ Fonte de verdade técnica do projeto. As SPECs detalham cada parte, mas **não p
 - O banco continua no Supabase (ADR-006, ADR-008). O Render é a reserva fria da API (`infra/render.yaml`).
 - O subdomínio real e o IP da VPS nunca entram no repositório (R-13): a documentação usa `<subdominio>`, e o valor real fica em `PUBLIC_HOST`, no `infra/.env` da VPS.
 
-**A partir da SPEC-039 (ADR-023, `Aceito`, com a emenda 1 aguardando aprovação; substitui em parte o parágrafo acima).** A VPS é gerenciada pelo Coolify, cujo proxy (Traefik, contêiner `coolify-proxy`) ocupa as portas 80 e 443 e já publica outros projetos do humano.
+**A partir da SPEC-039 (ADR-023, `Aceito`, com a emenda 1 aceita pelo humano em 2026-10-25; substitui em parte o parágrafo acima).** A VPS é gerenciada pelo Coolify, cujo proxy (Traefik, contêiner `coolify-proxy`) ocupa as portas 80 e 443 e já publica outros projetos do humano.
 
 - A `qc-api`, o `qc-dashboard` e o Caddy formam **dois** recursos "Docker Compose" do Coolify, criados a partir do repositório público (branch `main`, Base Directory `/infra`): `partqc-api` (Docker Compose Location `/compose.api.yaml`, só a API) e `partqc-web` (`/compose.yaml`, o Caddy e o dashboard). Motivo (emenda 1): o Coolify entrega a todos os serviços de um recurso o `.env` com todas as variáveis de runtime dele, e só a separação em recursos mantém a `DATABASE_URL` fora do dashboard e do Caddy.
 - O Caddy chega à API pela rede `partqc-api-link` (`internal`), criada pelo `partqc-api` e declarada `external` no `partqc-web`.
