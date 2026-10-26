@@ -875,7 +875,6 @@ def test_ca06_compose_config_quiet(compose_copy: Path) -> None:
     assert not (REPO_ROOT / "infra" / ".env").exists()
 
 
-@pytest.mark.docker
 def _resolved_services(copy: Path) -> dict[str, Any]:
     """SPEC-039 section 4.1: ``config`` of both files, services merged."""
     services: dict[str, Any] = {}
@@ -886,6 +885,7 @@ def _resolved_services(copy: Path) -> dict[str, Any]:
     return services
 
 
+@pytest.mark.docker
 def test_extra_compose_config_resolves_pids_and_override(compose_copy: Path) -> None:
     services = _resolved_services(compose_copy)
     for name in SERVICES:
