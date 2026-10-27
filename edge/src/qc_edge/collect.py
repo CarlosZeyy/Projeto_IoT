@@ -71,6 +71,9 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
 
 # Whole-string patterns, always used with ``re.fullmatch`` (``$`` would accept a trailing "\n").
 ITEM_ID_PATTERN = r"[SNOT]-\d{3}"
+# Images imported from a public source (ADR-020, SPEC-036 section 4.7): never counted in the
+# coverage targets, and never accepted by the collect route (``ITEM_ID_PATTERN`` above).
+EXTERNAL_ITEM_ID_PATTERN = r"X[SNOT]-[0-9]{4}"
 ANGLE_PATTERN = r"[0-4]"
 LABELERS = frozenset({"a", "b"})
 GRADE_VALUES = frozenset(grade.value for grade in Grade)
@@ -219,7 +222,7 @@ class CollectRequest:
         notes = fields.get("notes")
         if notes is None:
             notes = ""
-        if not isinstance(notes, str) or not _valid_notes(notes):
+        if not isinstance(notes, str) or not valid_notes(notes):
             raise InvalidCollectFieldError("notes")
 
         return cls(
@@ -249,10 +252,17 @@ def _is_forbidden_char(char: str) -> bool:
     return unicodedata.category(char) in FORBIDDEN_TEXT_CATEGORIES
 
 
-def _valid_notes(notes: str) -> bool:
+def has_forbidden_char(text: str) -> bool:
+    """Whether ``text`` has a character of ``FORBIDDEN_TEXT_CATEGORIES`` (SPEC-025 section 4.11)."""
+    return any(_is_forbidden_char(char) for char in text)
+
+
+def valid_notes(notes: str) -> bool:
+    """The ``notes`` rule of the collect mode: at most ``NOTES_MAX_LENGTH`` characters, none of a
+    forbidden category (SPEC-010 section 4.1, SPEC-025 section 4.11)."""
     if len(notes) > NOTES_MAX_LENGTH:
         return False
-    return not any(_is_forbidden_char(char) for char in notes)
+    return not has_forbidden_char(notes)
 
 
 def capture_device_from_user_agent(user_agent: str) -> str:
@@ -336,7 +346,8 @@ def compute_coverage(manifest_path: Path) -> list[CoverageCell]:
 
     A missing manifest gives the zeroed table. Rows that fit no cell (unknown type, missing or
     unknown grade for ``screw``/``nut``, no ``item_id``) are not counted; any ``other`` row
-    counts in the ``other`` cell.
+    counts in the ``other`` cell. Rows of external images (``is_external_item``) are never
+    counted: they do not count for the targets (ADR-020, SPEC-036 section 4.7).
 
     Raises:
         OSError, UnicodeDecodeError, csv.Error: the manifest exists but cannot be read.
@@ -357,8 +368,27 @@ def compute_coverage(manifest_path: Path) -> list[CoverageCell]:
     return _cells(images, items)
 
 
+def is_external_item(item_id: str | None) -> bool:
+    """``True`` for the ``item_id`` of an external image (``EXTERNAL_ITEM_ID_PATTERN``)."""
+    return isinstance(item_id, str) and re.fullmatch(EXTERNAL_ITEM_ID_PATTERN, item_id) is not None
+
+
+def count_external_images(manifest_path: Path) -> int:
+    """How many rows of the manifest have an external ``item_id`` (0 without the manifest).
+
+    Raises:
+        OSError, UnicodeDecodeError, csv.Error: the manifest exists but cannot be read.
+    """
+    try:
+        handle = manifest_path.open(encoding="utf-8", newline="")
+    except FileNotFoundError:
+        return 0
+    with handle:
+        return sum(1 for row in csv.DictReader(handle) if is_external_item(row.get("item_id")))
+
+
 def _coverage_key(row: Mapping[str, str | None]) -> _CellKey | None:
-    if not row.get("item_id"):
+    if not row.get("item_id") or is_external_item(row.get("item_id")):
         return None
     object_type = row.get("object_type")
     if object_type == DatasetObjectType.OTHER.value:
@@ -453,6 +483,11 @@ class DatasetWriter:
         with self._lock:
             return compute_coverage(self.manifest_path)
 
+    def external_images(self) -> int:
+        """``count_external_images`` of the manifest (SPEC-036 section 4.7), same lock."""
+        with self._lock:
+            return count_external_images(self.manifest_path)
+
     def write(
         self, request: CollectRequest, data: bytes, image: Image.Image, capture_device: str
     ) -> CollectResult:
@@ -486,7 +521,7 @@ class DatasetWriter:
     def _write_locked(
         self, request: CollectRequest, data: bytes, image: Image.Image, capture_device: str
     ) -> CollectResult:
-        rows = self._read_manifest()  # 1. header
+        rows = [(entry.item_id, entry.object_type) for entry in self._read_manifest()]  # 1.
         if any(  # 2. same item_id with another object_type
             item_id == request.item_id and object_type != request.object_type.value
             for item_id, object_type in rows
@@ -533,30 +568,9 @@ class DatasetWriter:
             item_images=item_images,
         )
 
-    def _read_manifest(self) -> list[tuple[str, str]]:
-        """``(item_id, object_type)`` of every row; ``[]`` when the manifest does not exist.
-
-        Raises:
-            ManifestHeaderMismatchError: the first line is not the header of section 4.2
-                (including a BOM, an empty file or a first line that is not UTF-8).
-            ManifestUnreadableError: the rows are not valid UTF-8 CSV.
-        """
-        try:
-            raw = self.manifest_path.read_bytes()
-        except FileNotFoundError:
-            return []
-        first_line, _, rest = raw.partition(b"\n")
-        try:
-            header = next(csv.reader([first_line.decode("utf-8")]), None)
-        except (UnicodeDecodeError, csv.Error):
-            raise ManifestHeaderMismatchError() from None
-        if header != list(MANIFEST_COLUMNS):
-            raise ManifestHeaderMismatchError()
-        try:
-            reader = csv.reader(io.StringIO(rest.decode("utf-8"), newline=""))
-            return [(row[1], row[2]) for row in reader if len(row) >= 3]
-        except (UnicodeDecodeError, csv.Error):
-            raise ManifestUnreadableError() from None
+    def _read_manifest(self) -> list[ManifestEntry]:
+        """``read_manifest_entries`` of this dataset (``[]`` when the manifest does not exist)."""
+        return read_manifest_entries(self.manifest_path)
 
     def _save_image(self, target: Path, data: bytes, image: Image.Image) -> None:
         """Temporary file (``0600``) in the same directory, then ``rename`` (keeps the mode).
@@ -573,28 +587,135 @@ class DatasetWriter:
         On failure the manifest goes back to its previous size (or is removed when this call
         created it), so a half-written row never stays behind.
         """
-        line = _csv_line(row)
-        fd, created = open_private_file(self.manifest_path, os.O_RDWR | os.O_APPEND)
-        size = 0
-        try:
-            size = os.fstat(fd).st_size
-            if created:
-                line = _csv_line(MANIFEST_COLUMNS) + line
-            elif size > 0 and os.pread(fd, 1, size - 1) != b"\n":
-                line = "\n" + line  # a hand-edited manifest without the final line break
-            _write_all(fd, line.encode("utf-8"))
-            os.fsync(fd)
-            if created:  # the new directory entry of the manifest (SPEC-025 section 4.10)
-                fsync_dir(self._root, relative_to=self._root)
-        except BaseException:
-            if created:
-                self.manifest_path.unlink(missing_ok=True)
-            else:
-                with contextlib.suppress(OSError):
-                    os.ftruncate(fd, size)
-            raise
-        finally:
-            os.close(fd)
+        append_csv_row(self.manifest_path, MANIFEST_COLUMNS, row, root=self._root)
+
+
+# ------------------------------------------------------------------------- CSV files of the dataset
+
+
+class CsvHeaderMismatchError(Exception):
+    """The first line of a dataset CSV is not its exact header (BOM, empty file, not UTF-8)."""
+
+
+class CsvUnreadableError(Exception):
+    """The rows of a dataset CSV are not valid UTF-8 CSV."""
+
+
+@dataclass(frozen=True)
+class ManifestEntry:
+    """The columns of a manifest row that the writers check (SPEC-010 section 4.2)."""
+
+    image_path: str
+    item_id: str
+    object_type: str
+
+
+def read_csv_rows(path: Path, columns: tuple[str, ...]) -> list[list[str]] | None:
+    """The rows (without the header) of the dataset CSV ``path``; ``None`` when it is absent.
+
+    The first line must be exactly ``columns`` (no BOM). Rows are returned as they are, even
+    with another number of fields; the caller decides what to read from them.
+
+    Raises:
+        CsvHeaderMismatchError: the first line is not the header (including a BOM, an empty
+            file or a first line that is not UTF-8).
+        CsvUnreadableError: the rows are not valid UTF-8 CSV.
+        OSError: the file exists but cannot be read.
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    first_line, _, rest = raw.partition(b"\n")
+    try:
+        header = next(csv.reader([first_line.decode("utf-8")]), None)
+    except (UnicodeDecodeError, csv.Error):
+        raise CsvHeaderMismatchError() from None
+    if header != list(columns):
+        raise CsvHeaderMismatchError()
+    try:
+        return list(csv.reader(io.StringIO(rest.decode("utf-8"), newline="")))
+    except (UnicodeDecodeError, csv.Error):
+        raise CsvUnreadableError() from None
+
+
+def read_manifest_entries(manifest_path: Path) -> list[ManifestEntry]:
+    """``image_path``, ``item_id`` and ``object_type`` of every manifest row (``[]`` if absent).
+
+    Raises:
+        ManifestHeaderMismatchError: the first line is not the header of section 4.2
+            (including a BOM, an empty file or a first line that is not UTF-8).
+        ManifestUnreadableError: the rows are not valid UTF-8 CSV.
+        OSError: the manifest exists but cannot be read.
+    """
+    try:
+        rows = read_csv_rows(manifest_path, MANIFEST_COLUMNS)
+    except CsvHeaderMismatchError:
+        raise ManifestHeaderMismatchError() from None
+    except CsvUnreadableError:
+        raise ManifestUnreadableError() from None
+    if rows is None:
+        return []
+    return [ManifestEntry(row[0], row[1], row[2]) for row in rows if len(row) >= 3]
+
+
+@dataclass(frozen=True)
+class AppendedRow:
+    """How ``append_csv_row`` changed a file: what ``rollback_append`` needs to undo it."""
+
+    path: Path
+    created: bool
+    previous_size: int
+
+
+def append_csv_row(
+    path: Path, columns: tuple[str, ...], row: tuple[str, ...], *, root: Path
+) -> AppendedRow:
+    """Append ``row`` to the dataset CSV ``path`` and ``fsync`` it.
+
+    When missing, the file is created with ``0600`` and the ``columns`` header, and ``root``
+    (the ``DATASET_DIR``) gets ``fsync_dir`` (SPEC-025 section 4.10). A file without the final
+    line break (edited by hand) gets one first. On failure the file goes back to its previous
+    size (or is removed when this call created it), so a half-written row never stays behind.
+    """
+    line = _csv_line(row)
+    fd, created = open_private_file(path, os.O_RDWR | os.O_APPEND)
+    size = 0
+    try:
+        size = os.fstat(fd).st_size
+        if created:
+            line = _csv_line(columns) + line
+        elif size > 0 and os.pread(fd, 1, size - 1) != b"\n":
+            line = "\n" + line
+        _write_all(fd, line.encode("utf-8"))
+        os.fsync(fd)
+        if created:
+            fsync_dir(root, relative_to=root)
+    except BaseException:
+        if created:
+            path.unlink(missing_ok=True)
+        else:
+            with contextlib.suppress(OSError):
+                os.ftruncate(fd, size)
+        raise
+    finally:
+        os.close(fd)
+    return AppendedRow(path=path, created=created, previous_size=size)
+
+
+def rollback_append(appended: AppendedRow, *, root: Path) -> None:
+    """Undo ``append_csv_row``: remove the file it created, or cut it back to its previous size
+    (``ftruncate`` and ``fsync``). Errors propagate (``OSError``)."""
+    if appended.created:
+        appended.path.unlink(missing_ok=True)
+        fsync_dir(root, relative_to=root)
+        return
+    fd = os.open(appended.path, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        os.ftruncate(fd, appended.previous_size)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def write_private_file_atomically(
