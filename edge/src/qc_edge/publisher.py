@@ -224,7 +224,7 @@ class HttpPublisher:
             raise PublishRejectedError(refusal_summary(status_code, content or b""))
         if not 200 <= status_code < 300:
             raise PublishTransientError(f"HTTP {status_code}")
-        return _parse_results(content or b"", items)
+        return parse_batch_results(content or b"", items)
 
     def _read_body(self, response: httpx.Response, start: float) -> bytes:
         """The body of ``response``, chunk by chunk, within the deadline and the byte cap.
@@ -302,8 +302,12 @@ class HttpPublisher:
         return self._redact(f"{name}: {message}" if message else name)
 
 
-def _parse_results(content: bytes, items: Sequence[InspectionCreate]) -> list[PublishResult]:
-    """``BatchResult`` with the ids of ``items`` in the same order; else transient."""
+def parse_batch_results(content: bytes, items: Sequence[InspectionCreate]) -> list[PublishResult]:
+    """``BatchResult`` with the ids of ``items`` in the same order; else transient.
+
+    Shared with ``qc_edge.mqtt_publisher`` (SPEC-020): the answer ``ok`` of the bridge carries
+    the same ``BatchResult``.
+    """
     try:
         result = BatchResult.model_validate_json(content)
     except ValidationError:
