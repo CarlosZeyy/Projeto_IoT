@@ -57,7 +57,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos (contrato 0.5.0) | developer | contrato, security | 034, 016, 030 (e 004, 009, 013, 028) | S6 | In Security (r1; encadeada na 016; merge depois da 036 e da 016) |
 | [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030 (e 007, 009, 024) | S8 | Ready |
 | [020](specs/SPEC-020-mqtt.md) | Fase 3: transporte MQTT (Mosquitto local e ponte) | developer | security | 009, 030, 034 (e 004) | S8 | In Security (r1; portões PASS; aguardando CA-11 com o pacote do Arch e CA-12 manual; merge depois da fila 036→016→018→017→038) |
-| [021](specs/SPEC-021-ferramentas-eletricas.md) | Fase 3: ferramentas elétricas (só identificação, contrato 0.6.0) | developer + ml-engineer | contrato, security | 016, 018, 034 | S8 | In Test (r1; adiantada; encadeada na 020) |
+| [021](specs/SPEC-021-ferramentas-eletricas.md) | Fase 3: ferramentas elétricas (só identificação, contrato 0.6.0) | developer + ml-engineer | contrato, security | 016, 018, 034 | S8 | In Dev (r2: T-01 no dev report; adiantada; encadeada na 020) |
 | [022](specs/SPEC-022-manutencao-setup.md) | Manutenção do setup (hook, CI sem senha, commits do architect) | developer | infra | 001 | S1 | Done |
 | [023](specs/SPEC-023-pacotes-compartilhados-0-2.md) | Pacotes compartilhados 0.2.0 (teto de `latency_ms`, proporção da imagem, flag de JPEG truncado) | developer | contrato, security | 002 | S2 | Done |
 | [024](specs/SPEC-024-preprocess-0-3-scans-jpeg.md) | `qc-preprocess` 0.3.0 (limite de scans do JPEG) | developer | security | 023 | S2 | Done |
