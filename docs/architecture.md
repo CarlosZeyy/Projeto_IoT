@@ -59,28 +59,28 @@ O acesso ao banco é feito com **psycopg 3 direto ao Postgres do Supabase** (con
 
 As **migrações** são a exceção: o `infra/migrate.py` usa um advisory lock de sessão, que não sobrevive entre transações no modo transaction. Por isso, elas rodam pela conexão direta ou pelo pooler em **modo session** (porta 5432), nunca pela porta 6543, e o executor recusa essa porta (SPEC-015 §4.7).
 
-## 3. Contrato v0 (`qc-contracts` 0.5.0, a partir da SPEC-018)
+## 3. Contrato v0 (`qc-contracts` 0.6.0, a partir da SPEC-021)
 
-Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023); 0.3.0, com os 3 campos opcionais de corte da carta p em `SpcResponse` (SPEC-026, ADR-017; vigente até a SPEC-016); 0.4.0, com as 5 ferramentas manuais no `ObjectType` e os grupos de grau (SPEC-016, ADR-021; vigente até a SPEC-018); 0.5.0, com os schemas novos `HeartbeatCreate` e `DeviceStatus` (§3.3), sem mudar nenhum schema existente (SPEC-018, minor; vigente a partir da SPEC-018). O histórico completo fica em `packages/contracts/README.md`.
+Versões: 0.1.0, a versão inicial (SPEC-002); 0.2.0, com o teto de `latency_ms` (SPEC-023); 0.3.0, com os 3 campos opcionais de corte da carta p em `SpcResponse` (SPEC-026, ADR-017; vigente até a SPEC-016); 0.4.0, com as 5 ferramentas manuais no `ObjectType` e os grupos de grau (SPEC-016, ADR-021; vigente até a SPEC-018); 0.5.0, com os schemas novos `HeartbeatCreate` e `DeviceStatus` (§3.3), sem mudar nenhum schema existente (SPEC-018, minor; vigente até a SPEC-021); 0.6.0, com as 4 ferramentas elétricas no `ObjectType`, todas no grupo "sem grau" (SPEC-021, ADR-021, minor; vigente a partir da SPEC-021). O histórico completo fica em `packages/contracts/README.md`.
 
 ### 3.1 Enums
 
 | Enum | Valores (código) | Rótulo PT-BR |
 |---|---|---|
-| `ObjectType` | `screw`, `nut`, `unknown`; a partir da SPEC-016 (0.4.0), também, nesta ordem, `pliers`, `adjustable_wrench`, `allen_key`, `flat_screwdriver`, `phillips_screwdriver` | parafuso, porca, desconhecido; alicate, chave inglesa, chave Allen, chave de fenda, chave Phillips |
+| `ObjectType` | `screw`, `nut`, `unknown`; a partir da SPEC-016 (0.4.0), também, nesta ordem, `pliers`, `adjustable_wrench`, `allen_key`, `flat_screwdriver`, `phillips_screwdriver`; a partir da SPEC-021 (0.6.0), também, nesta ordem e depois de `phillips_screwdriver`, `angle_grinder`, `saw`, `drill`, `cordless_screwdriver` (12 valores) | parafuso, porca, desconhecido; alicate, chave inglesa, chave Allen, chave de fenda, chave Phillips; esmerilhadeira, serra, furadeira, parafusadeira |
 | `Grade` (ordem = severidade 0..4) | `perfect`(0), `good`(1), `fair`(2), `poor`(3), `unusable`(4) | perfeito, bom, mediano, ruim, inutilizável |
 | `Source` | `live`, `simulated` | real, simulado |
 | `CaptureMode` (só borda) | `inspect`, `collect` | inspeção, coleta |
 
 Expansões de `ObjectType`, cada uma acompanhada de aumento de versão:
 - **Fase 2:** `pliers`, `adjustable_wrench`, `allen_key`, `flat_screwdriver`, `phillips_screwdriver` (entram na SPEC-016, contrato 0.4.0).
-- **Fase 3 (futura):** `angle_grinder`, `saw`, `drill`, `cordless_screwdriver`.
+- **Fase 3:** `angle_grinder`, `saw`, `drill`, `cordless_screwdriver` (entram na SPEC-021, contrato 0.6.0). São **só identificadas**: o estado interno (motor, escovas) está fora do escopo (PRD §4.4), e elas nunca têm grau.
 
-**Grupos de grau** (ADR-021, `Aceito`; a partir da SPEC-016, contrato 0.4.0): `GRADE_REQUIRED_OBJECT_TYPES` (`screw`, `nut`), `GRADE_FORBIDDEN_OBJECT_TYPES` (`unknown` e, a partir da SPEC-021, as ferramentas elétricas) e `GRADE_OPTIONAL_OBJECT_TYPES` (as ferramentas manuais). Cada tipo está em exatamente um grupo.
+**Grupos de grau** (ADR-021, `Aceito`; a partir da SPEC-016, contrato 0.4.0): `GRADE_REQUIRED_OBJECT_TYPES` (`screw`, `nut`), `GRADE_FORBIDDEN_OBJECT_TYPES` (`unknown` e, a partir da SPEC-021, `angle_grinder`, `saw`, `drill` e `cordless_screwdriver`) e `GRADE_OPTIONAL_OBJECT_TYPES` (as ferramentas manuais). Cada tipo está em exatamente um grupo; os três somam os 12 valores do `ObjectType` 0.6.0. Uma ferramenta elétrica com `grade`, `grade_score` ou `grade_confidence` não nulo é recusada com `ValidationError`.
 
 A classe `other` do modelo é sempre mapeada para `unknown` no contrato.
 
-**Regra de defeito** (ADR-013), implementada uma única vez em `qc_contracts.is_defective(grade)`: `poor` e `unusable` são defeituosos; os demais graus não. `grade = None` (objeto `unknown`) não é defeito e **não entra no SPC**.
+**Regra de defeito** (ADR-013), implementada uma única vez em `qc_contracts.is_defective(grade)`: `poor` e `unusable` são defeituosos; os demais graus não. `grade = None` (objeto `unknown`, ferramenta manual sem grau e, a partir da SPEC-021, ferramenta elétrica) não é defeito e **não entra no SPC**.
 
 ### 3.2 `InspectionCreate` (borda → API)
 
@@ -125,7 +125,7 @@ Campos extras são rejeitados (`extra="forbid"`).
 ### 3.4 SPC — carta p por lote (ADR-013)
 
 - **Subgrupo:** `lot_id`. Os lotes são ordenados pelo menor `inspected_at`.
-- **Registros considerados:** `object_type != unknown` e `source` filtrado (padrão `live`). A partir da SPEC-016 (ADR-021): `grade is not null`, que seleciona as mesmas linhas nos dados do MVP; a mesma regra vale para o denominador de `defect_rate` no resumo e na série temporal.
+- **Registros considerados:** `object_type != unknown` e `source` filtrado (padrão `live`). A partir da SPEC-016 (ADR-021): `grade is not null`, que seleciona as mesmas linhas nos dados do MVP; a mesma regra vale para o denominador de `defect_rate` no resumo e na série temporal. Por essa regra, as ferramentas elétricas (SPEC-021) ficam fora da carta e do denominador, sem código novo; o filtro `object_type` da rota usa o `SpcObjectType` da SPEC-016, que não as inclui (uma elétrica no filtro → 422).
 - **Por lote:** `n` = número de inspeções, `defects` = número de defeituosas, `p = defects / n`.
 - **Lotes excluídos:** com `n < min_lot_size` (padrão 5). Saem do cálculo e são listados em `excluded_lots`.
 - **Linha central:** `p̄ = Σ defects / Σ n` nos primeiros `baseline_lots` lotes válidos (padrão 20; se houver menos, usa todos).
@@ -239,6 +239,7 @@ alerts_sent(
 - **Restrições** (SPEC-003 §4.1): os `check` espelham os enums, as faixas e as regexes do contrato (defesa em profundidade). `inspections.device_id` é `not null`, porque o contrato o exige (SPEC_ISSUE-02 da SPEC-003, ratificado).
 - **Restrições da `002`** (SPEC-027; a partir do merge dela): `model_version` com a regex do contrato; `inspection_id` com versão 4 e variante RFC 4122 (`UUID4` do pydantic); `inspected_at` e `received_at` na faixa do `datetime` do Python em UTC (`>= 0001-01-01 00:00:00+00` e `< 10000-01-01 00:00:00+00`, o que recusa `infinity`). Sem elas, uma linha gravada fora da API (SQL Editor, migração manual) derrubava a leitura com 500. A migração confere antes as linhas existentes e recusa, só com contagens na mensagem, se alguma violar as regras.
 - **Restrições da `003`** (SPEC-016 §4.2, ADR-021; a partir da SPEC-016): o `check` de `object_type` aceita os 8 valores do `ObjectType` 0.4.0, e o `check ((object_type = 'unknown') = (grade is null))` do esquema acima é trocado pela invariante dos grupos de grau (§3.1): `screw`/`nut` com grau, `unknown` sem grau e as ferramentas manuais com ou sem grau. `is_defective` não muda.
+- **Restrições da `006`** (`006_power_tool_object_types.sql`, SPEC-021 §3.1, ADR-021; a partir da SPEC-021): substitui os dois `check` da `003`. O de `object_type` aceita os 12 valores do `ObjectType` 0.6.0, e o de grau (mesmo nome, `inspections_grade_null_iff_unknown`) põe as 4 ferramentas elétricas no ramo "sem grau": `(object_type not in ('screw','nut') or grade is not null) and (object_type not in ('unknown','angle_grinder','saw','drill','cordless_screwdriver') or grade is null)`. O banco aceita exatamente os pares tipo × grau que o `InspectionCreate` 0.6.0 aceita (`23514` nos demais). `is_defective` não muda. Idempotente, num bloco `DO`, como a `003`; rodar a `003` de novo depois da `006` traz de volta os `check` de 8 valores, por isso as migrações rodam sempre em ordem.
 - **Colunas da `004`** (`004_device_heartbeat.sql`, SPEC-018 §4.2; a partir da SPEC-018): `devices` ganha, todas anuláveis, `last_heartbeat_at timestamptz` (hora do servidor; decide o `online` do §4), `hb_sent_at timestamptz` (relógio da borda, só diagnóstico), `hb_model_version text`, `hb_model_sha256 text` e `hb_app_version text` (`check` com as regexes do contrato 0.5.0), `hb_uptime_s`, `hb_outbox_pending` e `hb_outbox_dead` (`integer`, `check (>= 0)`) e `check ((hb_model_version is null) = (hb_model_sha256 is null))`. Só o último heartbeat de cada dispositivo fica guardado (sem histórico).
 - **Tabela da `005`** (`005_alerts.sql`, SPEC-017 §4.3; a partir da SPEC-017): `alerts_sent`, uma linha por alerta já tratado (`lot_id`, `source`, `kind`), inserida pela API **antes** do envio ao Telegram. A chave primária `(lot_id, source, kind)` é a deduplicação (uma mensagem por lote e origem, também com vários workers); a regex de `lot_id` espelha o `LOT_ID_PATTERN` do contrato, e `kind` aceita só `out_of_control`. `created_at` é o `now` da verificação (relógio do servidor em UTC, o mesmo das janelas do §4), e o índice em `created_at` serve à contagem do teto por hora a cada verificação. `delivered` só vira `true` depois de o Telegram aceitar a mensagem; uma falha fica `false` e não é repetida. RLS habilitado, sem políticas e sem `force`, como as demais tabelas. Sem chave estrangeira para `inspections`.
 - **Colunas `real` (`float4`):** arredondam (ex.: `0.97` vira `0.9700000286`) e recusam com `22003` todo valor diferente de zero que arredonde para zero (abaixo de cerca de `7e-46`). A API converte esse erro em 422 (§4); a borda legítima não produz esses valores.
@@ -292,8 +293,10 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 ### 6.3 Modo coleta (montagem do dataset)
 
 O operador escolhe `item_id`, `object_type`, `grade`, `labeler` e `angle` **antes** de fotografar. A borda:
-- salva em `DATASET_DIR/raw/<object_type>/<grade>/<item_id>__<angle>__<timestamp>.jpg`;
+- salva em `DATASET_DIR/raw/<object_type>/<grade>/<item_id>__<angle>__<timestamp>.jpg`; nos tipos sem grau do dataset (`other` e, a partir da SPEC-021, as 4 ferramentas elétricas), o grau é vazio obrigatório e o diretório é `_` (`NO_GRADE_DIR`): `raw/<object_type>/_/`;
 - acrescenta uma linha a `DATASET_DIR/manifest.csv`.
+
+Tipos e prefixos do `item_id` (`docs/dataset-protocol.md` §5 e §10.3): `S` = `screw`, `N` = `nut`, `O` = `other` e `T` = uma ferramenta manual (SPEC-016) ou, a partir da SPEC-021, elétrica. Uma ferramenta elétrica com grau preenchido é recusada com 422 (`grade must be empty for a power tool`), sem gravar nada. A tabela de cobertura do console tem uma linha por ferramenta elétrica, sem grau, com a meta de identificação da SPEC-021 §3.3 (90 imagens e 6 peças; mínimo de 3 peças, só no texto).
 
 Nada é enviado à nuvem e nenhuma inferência é feita. Formato do manifest em `docs/dataset-protocol.md`.
 
@@ -308,7 +311,8 @@ O pipeline (SPEC-011) lê o manifest só com `csv`/`pandas`, acusa linha sem arq
 **Importação de fotos que não vêm da página** (ADR-020; a partir das SPECs 035 e 036):
 - `python -m qc_edge.importer --dataset-dir <D> --inbox <I> --plan <P> --privacy-checked [--dry-run]` lê arquivos de uma pasta de entrada fora de `DATASET_DIR` e um plano CSV preenchido pela dupla. Cada imagem é normalizada como a página faz (rotação EXIF aplicada, lado maior em até 1280 px, JPEG q=90, sem metadados) e gravada com o mesmo layout, o mesmo `flock`, as mesmas permissões e o mesmo `fsync` da coleta. Sem rede;
 - o manifest não muda. A origem de cada imagem importada (`contributor` = foto de conhecido, `external` = imagem de dataset público) fica em `DATASET_DIR/sources.csv`; a imagem sem linha nele é `capture`. As fontes externas ficam no registro `ml/external_sources.csv` (no Git, sem imagens), com uma lista fechada de licenças;
-- as imagens externas têm `item_id` `X<tipo>-NNNN` e vão sempre para o treino: o `qc_ml.split.rows_for` recusa uma delas em `val` ou `test`, e o split recusa mais de 30% delas no treino (padrão). A rota de coleta continua recusando esse `item_id`.
+- as imagens externas têm `item_id` `X<tipo>-NNNN` e vão sempre para o treino: o `qc_ml.split.rows_for` recusa uma delas em `val` ou `test`, e o split recusa mais de 30% delas no treino (padrão). A rota de coleta continua recusando esse `item_id`;
+- a partir da SPEC-021, o plano aceita as 4 ferramentas elétricas com `T-`/`XT-` e grau vazio; uma elétrica com grau dá o problema `grade_on_other (grade)` (o mesmo código do `other` com grau) e o plano inteiro é recusado, sem gravar nada.
 
 ### 6.4 Configuração (`.env` da borda)
 
@@ -336,7 +340,7 @@ Cada versão vive em `ml/models/<model_version>/`. **O nome do diretório é o `
 |---|---|
 | `model.onnx` | Entrada `image` float32 `[N,3,224,224]`; saídas `type_probs` `[N,T]` e `grade_probs` `[N,5]` |
 | `model.sha256` | Hash do `model.onnx` (vai em cada inspeção) |
-| `labels.json` | `{"object_types": ["screw","nut","other"], "grades": ["perfect","good","fair","poor","unusable"]}`. A partir da SPEC-016, também `ungraded_object_types` (lista opcional, padrão `[]`): os tipos que o modelo não gradua (ADR-021) |
+| `labels.json` | `{"object_types": ["screw","nut","other"], "grades": ["perfect","good","fair","poor","unusable"]}`. A partir da SPEC-016, também `ungraded_object_types` (lista opcional, padrão `[]`): os tipos que o modelo não gradua (ADR-021). A borda recusa (`ModelLoadError`) um modelo com um tipo de `GRADE_FORBIDDEN_OBJECT_TYPES` fora dessa lista; a partir da SPEC-021, as ferramentas elétricas do modelo entram nela **sempre** (`derive_model_labels`, sem passar pelo critério de grau) e, decididas na borda, saem sem grau (resposta da captura com `approved = null` e `labels_pt.verdict = "sem grau"`, SPEC-016 §4.4) |
 | `preprocessing.json` | Saída de `PreprocessParams.to_json()`: `resize_shorter`, `crop`, `mean`, `std` |
 | `decision.json` | `type_threshold`, `unusable_threshold`, `grade_review_threshold` (escolhidos na **validação**) |
 | `metrics.json` | Métricas do teste final (ver a skill `ml-pipeline`). A partir da SPEC-035, `counts.<split>` traz também `by_origin` (`capture`, `contributor`, `external`) e `by_source`; `val` e `test` têm sempre 0 imagens externas (ADR-020) |
@@ -416,7 +420,7 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
   - "O outro pacote não mudou" não vira teste de aceite. O reviewer confere no diff (`pyproject.toml`, `__init__.py` e `uv.lock`).
   - As docstrings de módulo dos testes citam no máximo a versão que a própria SPEC introduziu, nunca "a versão verificada agora".
   - **Quando uma SPEC aumenta a versão de um pacote:** o CA dela fixa a versão nova (exata). A §3.1 dela autoriza o tester a converter para a forma acima as asserções exatas desse pacote no arquivo de aceite da SPEC vigente anterior (um arquivo por pacote), e nada mais. Enquanto existir o CA-28 da SPEC-004 (`test_ca28_version_expectations_migrated`, em `api/tests/acceptance/test_spec_004.py`), que fixa em `ALLOWED_EXACT` o par arquivo/versão vigente de cada pacote e exige essas asserções em funções `test_ca01_*`, a mesma §3.1 autoriza trocar nesse conjunto o par do pacote pelo do arquivo novo, e o CA de versão da SPEC nova é o CA-01 (precedente: SPEC-026).
-  - Implementação: migração única pelo tester da SPEC-004 (§3.1 e CA-28 dela). **Arquivos vigentes** (atualizado em 2026-10-17, RV-01 de `reviews/SPEC-026/r1-review-report.md`, em 2026-10-24, observação de `reviews/SPEC-016/r1-test-report.md`, e em 2026-10-25, observação de `reviews/SPEC-018/r1-test-report.md`): as asserções exatas ficam só em `packages/preprocess/tests/acceptance/test_spec_024.py` (`qc-preprocess` 0.3.0) e, a partir da SPEC-018, em `packages/contracts/tests/acceptance/test_spec_018.py` (`qc-contracts` 0.5.0; da SPEC-016 até a SPEC-018, `test_spec_016.py` com 0.4.0; até a SPEC-016, `test_spec_026.py` com 0.3.0). A fonte de verdade é o conjunto `ALLOWED_EXACT` do CA-28 da SPEC-004: quando ele muda, esta linha muda junto. O reviewer confere a regra em toda SPEC.
+  - Implementação: migração única pelo tester da SPEC-004 (§3.1 e CA-28 dela). **Arquivos vigentes** (atualizado em 2026-10-17, RV-01 de `reviews/SPEC-026/r1-review-report.md`, em 2026-10-24, observação de `reviews/SPEC-016/r1-test-report.md`, em 2026-10-25, observação de `reviews/SPEC-018/r1-test-report.md`, e em 2026-10-27, SPEC-021 §3.1): as asserções exatas ficam só em `packages/preprocess/tests/acceptance/test_spec_024.py` (`qc-preprocess` 0.3.0) e, a partir da SPEC-021, em `packages/contracts/tests/acceptance/test_spec_021.py` (`qc-contracts` 0.6.0, SPEC-021 §3.1; da SPEC-018 até a SPEC-021, `test_spec_018.py` com 0.5.0; da SPEC-016 até a SPEC-018, `test_spec_016.py` com 0.4.0; até a SPEC-016, `test_spec_026.py` com 0.3.0). A fonte de verdade é o conjunto `ALLOWED_EXACT` do CA-28 da SPEC-004: quando ele muda, esta linha muda junto. O reviewer confere a regra em toda SPEC.
   - O ajuste do `ALLOWED_EXACT` vai **no mesmo commit** do tester que cria o arquivo de aceite que ele passa a citar; senão, o CA-28 falha num checkout isolado do commit intermediário e atrapalha o `git bisect` (RV-03 de `reviews/SPEC-026/r1-review-report.md`).
 - **Testes de aceite de SPECs anteriores** (aprovada pelo humano em 2026-10-17; motivada pelo SPEC_ISSUE-01 de `reviews/SPEC-005/r1-dev-report.md` e pelo SPEC_ISSUE-01 de `reviews/SPEC-010/r1-dev-report.md`). Sem esta regra, toda SPEC que substitui de propósito um comportamento provisório de outra (um 501, uma opção desabilitada, uma rota ainda inexistente) trava o loop num SPEC_ISSUE só para autorizar o tester a mexer no arquivo de aceite antigo.
   - **Quando vale:** uma SPEC nova muda **de propósito** um comportamento que um teste de aceite de uma SPEC anterior verifica, e a mudança decorre de um requisito ou CA escrito na SPEC nova (por exemplo, "substitui o 501 da SPEC-007" ou "coleta habilitado").
