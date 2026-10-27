@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Review |
-| Rodada atual | r1 |
+| Status | In Security |
+| Rodada atual | r2 |
 | Autor da implementação | developer (Parte A: contrato, banco, API, borda e dashboard) e depois ml-engineer (Parte B: `qc-ml`), na mesma rodada, como na SPEC-016 |
 | Tags | contrato, security |
 | Depende de | SPEC-016 (grupos de tipos, `ungraded_object_types`, extensão do teste), SPEC-018 (contrato 0.5.0; esta SPEC leva a 0.6.0), SPEC-034 |
