@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import logging
 import secrets
 import struct
 import sys
@@ -192,6 +193,18 @@ def encode_image(
     buffer = io.BytesIO()
     Image.new("RGB", size, color).save(buffer, format=fmt)
     return buffer.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def restore_pil_logger_level() -> Iterator[None]:
+    """The ``main`` of ``qc_edge.importer`` and ``qc_edge.privacy`` may raise the level of the
+    ``PIL`` logger (SPEC-038 section 4.4); each test gets it back as it was."""
+    pil = logging.getLogger("PIL")
+    level = pil.level
+    try:
+        yield
+    finally:
+        pil.setLevel(level)
 
 
 @pytest.fixture

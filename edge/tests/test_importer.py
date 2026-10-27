@@ -1,5 +1,8 @@
 """``python -m qc_edge.importer`` (SPEC-036): plan validation, normalisation, writing, rollback.
 
+Since SPEC-038: PNG text chunks, the level of the ``PIL`` logger, the rollback of the created
+directories, the hash checked again under the lock and the refusal inside a Git repository.
+
 Every image is generated here by Pillow (R-14); the dataset, the inbox and the registry live in
 ``tmp_path``. Only the boundaries are replaced: the clock, ``sleep``, ``socket.socket`` and the
 low-level write that fails.
@@ -1344,3 +1347,393 @@ def test_module_entry_point(env: Env, tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     assert result.stdout == "imported 0, skipped 0, failed 0\n"
+
+
+# ----------------------------------------------------------------------------- SPEC-038 (4.3)
+
+
+def png_with_text(kind: str, value: str, size: tuple[int, int] = (800, 600)) -> bytes:
+    from PIL import PngImagePlugin
+
+    info = PngImagePlugin.PngInfo()
+    if kind == "tEXt":
+        info.add_text("comment", value)
+    elif kind == "zTXt":
+        info.add_text("comment", value, zip=True)
+    else:
+        info.add_itxt("comment", value)
+    return encode(Image.new("RGB", size, (90, 120, 150)), "PNG", pnginfo=info)
+
+
+@pytest.mark.parametrize("kind", ["tEXt", "zTXt", "iTXt"])
+def test_png_comment_is_not_copied(kind: str) -> None:
+    mark = "MARK" + secrets.token_hex(8)
+    data = png_with_text(kind, mark)
+    assert Image.open(io.BytesIO(data)).info.get("comment") == mark  # premise
+    output, width, height = normalize_imported_image(data)
+    assert (width, height) == (800, 600)
+    assert jpeg_private_findings(output) == frozenset()
+    assert mark.encode() not in output
+
+
+def test_png_comment_reduced_image_is_not_copied() -> None:
+    mark = "MARK" + secrets.token_hex(8)
+    output, width, _ = normalize_imported_image(png_with_text("tEXt", mark, (2048, 1024)))
+    assert width == 1280
+    assert mark.encode() not in output
+
+
+def test_png_with_comment_is_imported(env: Env, capsys: pytest.CaptureFixture[str]) -> None:
+    mark = "MARK" + secrets.token_hex(8)
+    env.add_file("c.png", png_with_text("iTXt", mark))
+    env.write_plan([contributor_row("c.png")])
+    assert env.run() == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "imported 1, skipped 0, failed 0"
+    (stored,) = env.dataset.glob("raw/**/*.jpg")
+    assert mark.encode() not in stored.read_bytes()
+
+
+# ----------------------------------------------------------------------------- SPEC-038 (4.4)
+
+
+@pytest.mark.parametrize(
+    ("pil_level", "root_level", "expected"),
+    [
+        (logging.NOTSET, logging.DEBUG, logging.INFO),
+        (logging.DEBUG, logging.WARNING, logging.INFO),
+        (logging.NOTSET, logging.WARNING, logging.NOTSET),  # effective WARNING: untouched
+        (logging.WARNING, logging.DEBUG, logging.WARNING),
+        (logging.INFO, logging.DEBUG, logging.INFO),
+    ],
+)
+def test_limit_pil_logging(
+    caplog: pytest.LogCaptureFixture, pil_level: int, root_level: int, expected: int
+) -> None:
+    caplog.set_level(root_level)
+    logging.getLogger("PIL").setLevel(pil_level)
+    privacy.limit_pil_logging()
+    assert logging.getLogger("PIL").level == expected
+    assert logging.getLogger("PIL").getEffectiveLevel() >= logging.INFO
+
+
+def exif_marked_jpeg(make: str, artist: str) -> bytes:
+    exif = Image.Exif()
+    exif[0x010F] = make  # Make
+    exif[0x013B] = artist  # Artist
+    exif[0x0112] = 1  # Orientation
+    return encode(Image.new("RGB", (800, 600), (90, 120, 150)), quality=90, exif=exif.tobytes())
+
+
+def test_importer_main_keeps_exif_tags_out_of_the_debug_log(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    make, artist = "MAKE" + secrets.token_hex(6), "ARTIST" + secrets.token_hex(6)
+    data = exif_marked_jpeg(make, artist)
+    caplog.set_level(logging.DEBUG)
+    logging.getLogger("PIL").setLevel(logging.NOTSET)
+    jpeg_module.exif_orientation(data)
+    assert make in caplog.text  # premise: Pillow logs the tag values in DEBUG
+    caplog.clear()
+    env.add_file("a.jpg", data)
+    env.write_plan([contributor_row("a.jpg")])
+    assert env.run() == 0
+    assert make not in caplog.text and artist not in caplog.text
+    assert logging.getLogger("PIL").getEffectiveLevel() >= logging.INFO
+
+
+def test_privacy_main_keeps_exif_tags_out_of_the_debug_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    make, artist = "MAKE" + secrets.token_hex(6), "ARTIST" + secrets.token_hex(6)
+    target = tmp_path / "d" / "raw" / "screw" / "fair" / "S-001__0__20261022T141503Z.jpg"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(exif_marked_jpeg(make, artist))
+    caplog.set_level(logging.DEBUG)
+    logging.getLogger("PIL").setLevel(logging.NOTSET)
+    assert privacy.main(["--dataset-dir", str(tmp_path / "d")]) == 1
+    assert make not in caplog.text and artist not in caplog.text
+    assert logging.getLogger("PIL").getEffectiveLevel() >= logging.INFO
+
+
+def test_main_never_lowers_a_higher_pil_level(env: Env, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    env.write_plan([])
+    assert env.run() == 0
+    assert logging.getLogger("PIL").level == logging.WARNING
+    assert privacy.main(["--dataset-dir", str(env.tmp)]) == 0
+    assert logging.getLogger("PIL").level == logging.WARNING
+
+
+# ----------------------------------------------------------------------------- SPEC-038 (4.5)
+
+
+def directories(root: Path) -> dict[str, int]:
+    """Every directory under ``root`` with its mode."""
+    return {
+        p.relative_to(root).as_posix(): stat.S_IMODE(p.stat().st_mode)
+        for p in root.rglob("*")
+        if p.is_dir()
+    }
+
+
+def _seed_nut(env: Env) -> None:
+    env.add_file("nut.jpg", plain_jpeg(color=(5, 6, 7)))
+    env.write_plan(
+        [contributor_row("nut.jpg", item_id="N-501", object_type="nut", grade="good", angle="0")]
+    )
+    assert env.run() == 0
+    env.clock.now += timedelta(seconds=1)
+
+
+@pytest.mark.parametrize("target", ["sources.csv", "manifest.csv", "image"])
+def test_failed_row_removes_the_directories_it_created(
+    env: Env, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    _seed_nut(env)
+    before = directories(env.dataset)
+    env.add_file("a.jpg", plain_jpeg())
+    env.write_plan([contributor_row("a.jpg")])
+    if target == "image":
+
+        def broken(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+        monkeypatch.setattr(importer, "write_private_file_atomically", broken)
+    else:
+        _fail_writes_to(monkeypatch, target)
+    assert env.run() == 1
+    assert directories(env.dataset) == before
+    assert not (env.dataset / "raw" / "screw").exists()
+
+
+def test_failed_row_keeps_a_directory_that_existed(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.add_file("s.jpg", plain_jpeg(color=(8, 8, 8)))
+    env.write_plan([contributor_row("s.jpg", item_id="S-502", grade="good", angle="0")])
+    assert env.run() == 0
+    env.clock.now += timedelta(seconds=1)
+    os.chmod(env.dataset / "raw" / "screw", 0o750)
+    before = directories(env.dataset)
+    env.add_file("a.jpg", plain_jpeg())
+    env.write_plan([contributor_row("a.jpg")])
+    _fail_writes_to(monkeypatch, "sources.csv")
+    assert env.run() == 1
+    assert directories(env.dataset) == before
+    assert not (env.dataset / "raw" / "screw" / "fair").exists()
+
+
+def test_directory_that_cannot_be_removed_stays(
+    env: Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    env.add_file("a.jpg", plain_jpeg())
+    env.write_plan([contributor_row("a.jpg")])
+    _fail_writes_to(monkeypatch, "sources.csv")
+    real_rmdir = os.rmdir
+    removed: list[str] = []
+
+    def rmdir(path: Any, *args: Any, **kwargs: Any) -> None:
+        if Path(path).name == "fair":
+            raise OSError(errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY))
+        removed.append(Path(path).name)
+        real_rmdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rmdir", rmdir)
+    assert env.run() == 1
+    assert (env.dataset / "raw" / "screw" / "fair").is_dir()
+    assert removed == ["screw", "raw"]  # tried innermost first; both still hold "fair"
+    assert str(env.tmp) not in caplog.text
+
+
+# ----------------------------------------------------------------------------- SPEC-038 (4.6)
+
+
+def _two_plans(env: Env) -> tuple[list[importer.PlanRow], list[importer.PlanRow]]:
+    env.add_file("a.jpg", plain_jpeg())
+    env.write_plan([contributor_row("a.jpg")])
+    args = {
+        "dataset_dir": env.dataset,
+        "inbox": env.inbox,
+        "plan": env.plan,
+        "external_sources": env.registry,
+    }
+    return importer.load_plan(**args), importer.load_plan(**args)
+
+
+def _phase2(env: Env, rows: list[importer.PlanRow]) -> tuple[int, list[str]]:
+    out = io.StringIO()
+    code = importer.run_import(
+        rows,
+        dataset_dir=env.dataset,
+        dry_run=False,
+        clock=env.clock,
+        sleep=env.clock.sleep,
+        out=out,
+    )
+    return code, out.getvalue().splitlines()
+
+
+def test_two_runs_of_the_same_plan_store_the_photo_once(env: Env) -> None:
+    rows_1, rows_2 = _two_plans(env)
+    assert not rows_2[0].skip
+    assert _phase2(env, rows_1) == (
+        0,
+        [
+            "imported a.jpg -> raw/screw/fair/S-501__2__20261022T141503Z.jpg",
+            "imported 1, skipped 0, failed 0",
+        ],
+    )
+    assert _phase2(env, rows_2) == (
+        0,
+        [
+            "skipped a.jpg: already imported",
+            "imported 0, skipped 1, failed 0",
+        ],
+    )
+    assert len(env.manifest()) == 1 and len(env.sources()) == 1
+    assert len(list((env.dataset / "raw").rglob("*.jpg"))) == 1
+    assert env.clock.sleeps == []
+
+
+def test_a_hash_excluded_meanwhile_is_imported_again(env: Env) -> None:
+    rows_1, rows_2 = _two_plans(env)
+    assert _phase2(env, rows_1)[0] == 0
+    first = env.manifest()[0]["image_path"]
+    (env.dataset / first).unlink()
+    write_csv(env.dataset / "exclusions.csv", ("image_path", "reason"), [[first, "other"]])
+    code, out = _phase2(env, rows_2)
+    assert code == 0
+    assert out[-1] == "imported 1, skipped 0, failed 0"
+    sources = env.sources()
+    assert len(sources) == 2
+    assert sources[0]["input_sha256"] == sources[1]["input_sha256"]
+    assert sources[0]["image_path"] != sources[1]["image_path"]
+
+
+@pytest.mark.parametrize(
+    ("content", "reason"),
+    [
+        (b"other,header\n", "exclusions header mismatch"),
+        (b"image_path,reason\n\xff\xfe\n", "exclusions unreadable"),
+    ],
+)
+def test_bad_exclusions_under_the_lock_stops_the_import(
+    env: Env, content: bytes, reason: str
+) -> None:
+    rows_1, _ = _two_plans(env)
+    env.dataset.mkdir()
+    (env.dataset / "exclusions.csv").write_bytes(content)
+    code, out = _phase2(env, rows_1)
+    assert code == 1
+    assert out == [f"failed a.jpg: {reason}", "imported 0, skipped 0, failed 1"]
+    assert not (env.dataset / "manifest.csv").exists()
+    assert not (env.dataset / "raw").exists()
+
+
+# ----------------------------------------------------------------------------- SPEC-038 (4.7)
+
+
+@pytest.mark.parametrize("entry", ["dir", "file", "dangling-link"])
+def test_inside_git_repository(tmp_path: Path, entry: str) -> None:
+    repo = tmp_path / "repo"
+    (repo / "a" / "b").mkdir(parents=True)
+    git = repo / ".git"
+    if entry == "dir":
+        git.mkdir()
+    elif entry == "file":
+        git.write_text("gitdir: /elsewhere\n", encoding="utf-8")
+    else:
+        git.symlink_to(tmp_path / "missing")
+    assert importer.inside_git_repository(repo)
+    assert importer.inside_git_repository(repo / "a" / "b")
+    assert importer.inside_git_repository(repo / "a" / "not-created")
+    assert not importer.inside_git_repository(tmp_path / "other")
+    assert not importer.inside_git_repository(tmp_path)
+
+
+@pytest.fixture
+def repo(env: Env) -> Path:
+    repo = env.tmp / "repo"
+    (repo / "entrada").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    return repo
+
+
+def _refused(env: Env, capsys: pytest.CaptureFixture[str], message: str) -> None:
+    capsys.readouterr()
+    assert env.run() == 2
+    captured = capsys.readouterr()
+    assert message in captured.err
+    assert captured.out == ""
+    assert not env.dataset.exists()
+
+
+@pytest.mark.parametrize("where", ["entrada", "a/b", "link"])
+def test_inbox_inside_a_git_repository_is_refused(
+    env: Env, repo: Path, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    env.add_file("a.jpg", plain_jpeg())
+    env.write_plan([contributor_row("a.jpg")])
+    if where == "link":
+        link = env.tmp / "link"
+        link.symlink_to(repo / "entrada", target_is_directory=True)
+        env.inbox = link
+    else:
+        env.inbox = repo / where
+        env.inbox.mkdir(parents=True, exist_ok=True)
+    _refused(env, capsys, "inbox must be outside any git repository")
+
+
+@pytest.mark.parametrize("where", ["direct", "link", "missing"])
+def test_plan_inside_a_git_repository_is_refused(
+    env: Env, repo: Path, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    env.add_file("a.jpg", plain_jpeg())
+    env.write_plan([contributor_row("a.jpg")])
+    inside = repo / "plano.csv"
+    if where != "missing":
+        inside.write_bytes(env.plan.read_bytes())
+    if where == "link":
+        link = env.tmp / "plano-link.csv"
+        link.symlink_to(inside)
+        env.plan = link
+    else:
+        env.plan = inside
+    _refused(env, capsys, "plan must be outside any git repository")
+
+
+def test_inbox_is_checked_before_the_plan(
+    env: Env, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.inbox = repo / "entrada"
+    env.plan = repo / "plano.csv"
+    _refused(env, capsys, "inbox must be outside any git repository")
+
+
+def test_inbox_inside_the_dataset_is_checked_first(
+    env: Env, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.dataset = repo / "dataset"
+    env.inbox = repo / "dataset" / "entrada"
+    env.inbox.mkdir(parents=True)
+    env.write_plan([])
+    capsys.readouterr()
+    assert env.run() == 2
+    err = capsys.readouterr().err
+    assert "inbox must be outside the dataset" in err
+    assert "git repository" not in err
+
+
+def test_dataset_and_registry_inside_a_repository_are_accepted(
+    env: Env, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.dataset = repo / "ml" / "data"
+    registry = repo / "ml" / "external_sources.csv"
+    registry.parent.mkdir(parents=True)
+    registry.write_bytes(env.registry.read_bytes())
+    env.registry = registry
+    env.add_file("a.png", encode(Image.new("RGB", (800, 600)), "PNG"))
+    env.write_plan([external_row("a.png")])
+    assert env.run() == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "imported 1, skipped 0, failed 0"

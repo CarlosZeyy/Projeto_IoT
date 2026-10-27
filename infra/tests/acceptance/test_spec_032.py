@@ -623,15 +623,24 @@ def test_ca04_caddyfile_headers() -> None:
 
 def test_extra_caddyfile_headers_are_in_one_header_block_and_no_full_csp() -> None:
     text = _caddy_text()
-    blocks = [m.start() for m in re.finditer(r"(?m)^\s*header\s*\{", text)]
+    # SPEC-038 section 4.9 (section 3.1 table): one header block outside handle_errors and one
+    # inside it, each with the 6 lines.
+    errors = _block_after(text, "handle_errors {")
+    outside = text.replace(errors, "", 1)
+    blocks = [m.start() for m in re.finditer(r"(?m)^\s*header\s*\{", outside)]
     assert len(blocks) == 1, blocks
-    block = _block_after(text[blocks[0] :], "header {")
-    for expected in HEADER_LINES:
-        assert expected in block, expected
+    inside = [m.start() for m in re.finditer(r"(?m)^\s*header\s*\{", errors)]
+    assert len(inside) == 1, inside
+    for block in (
+        _block_after(outside[blocks[0] :], "header {"),
+        _block_after(errors[inside[0] :], "header {"),
+    ):
+        for expected in HEADER_LINES:
+            assert expected in block, expected
     # Section 3.2: only frame-ancestors, no full Content-Security-Policy.
     for directive in ("default-src", "script-src", "connect-src", "style-src", "img-src"):
         assert directive not in text, directive
-    assert text.count("Content-Security-Policy") == 1
+    assert text.count("Content-Security-Policy") == 2
     # The header block applies to the whole site, not only to one route.
     assert "header {" not in _block_after(text, "handle /api/* {")
 
@@ -727,7 +736,10 @@ def test_extra_caddy_adapt_single_header_handler_is_deferred(tmp_path) -> None:
     )  # fmt: skip
     assert result.returncode == 0, result.stderr
     cfg = json.loads(result.stdout)
-    handlers = [n for n in _walk(cfg) if isinstance(n, dict) and n.get("handler") == "headers"]
+    # SPEC-038 section 4.9 (section 3.1 table): count only in the routes of the servers; the
+    # handlers of ``errors`` stay out of the count.
+    routes = [s.get("routes", []) for s in cfg["apps"]["http"]["servers"].values()]
+    handlers = [n for n in _walk(routes) if isinstance(n, dict) and n.get("handler") == "headers"]
     assert len(handlers) == 1, handlers
     assert handlers[0]["response"].get("deferred") is True, handlers[0]
 

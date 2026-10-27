@@ -49,6 +49,19 @@ SENTINELS_ABSENT = [
     "Foto.Png",
     "edge/data/OUTBOX.SQLITE3",
     "ml/models/partqc-sentinel-v0/MODEL.ONNX",
+    # SPEC-038 section 4.10 (SEC-32-02): the other photo and video formats of a phone
+    "foto.HEIF",
+    "foto.jfif",
+    "foto.JPE",
+    "scan.tif",
+    "scan.TIFF",
+    "raw.dng",
+    "foto.AVIF",
+    "IMG_0001.MOV",
+    "video.mp4",
+    "edge/data/entrada/IMG_0002.heif",
+    "ml/reports/partqc-sentinel-v0/curva.tiff",
+    "packages/contracts/demo.Mp4",
 ]
 SENTINELS_DASHBOARD = [
     "ml/models/partqc-sentinel-v0/metrics.json",
@@ -309,8 +322,9 @@ def test_caddy_adapts_the_caddyfile(caddy_image: str) -> None:
         h["response"]["set"].get("Strict-Transport-Security") == ["max-age=31536000"]
         for h in headers
     )
-    # SPEC-032 section 4.3: one deferred handler deletes Server and Via and sets the 4 headers.
-    (response,) = [h["response"] for h in headers]
+    # SPEC-032 section 4.3: one deferred handler in the site routes deletes Server and Via and
+    # sets the 4 headers. The handle_errors copy (SPEC-038 section 4.9) lives in server.errors.
+    (response,) = [h["response"] for h in _walk(server["routes"]) if h.get("handler") == "headers"]
     assert response["deferred"] is True
     assert sorted(response["delete"]) == ["Server", "Via"]
     assert response["set"] == {

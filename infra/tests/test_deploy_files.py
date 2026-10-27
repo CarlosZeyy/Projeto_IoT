@@ -464,13 +464,17 @@ CADDY_HEADER_LINES = [
 
 
 def test_caddyfile_header_block_spec_032() -> None:
-    """SPEC-032 section 4.3 (SEC-15-04): exactly these 6 lines in the site header block."""
+    """SPEC-032 section 4.3 (SEC-15-04): exactly these 6 lines in the site header block. Since
+    SPEC-038 section 4.9, the only other header block is the copy inside handle_errors."""
     code = _caddy_code()
     start = code.index("\theader {")
     end = code.index("\t}", start)
     assert [line.strip() for line in code[start + 1 : end]] == CADDY_HEADER_LINES
     text = "\n".join(code)
-    assert text.count("header {") == 1
+    assert text.count("header {") == 2
+    assert [line for line in code if line.strip() == "header {"] == ["\theader {", "\t\theader {"]
+    inner = code.index("\t\theader {")
+    assert code.index("\thandle_errors {") == inner - 1
     # Only the frame-ancestors directive: no full policy (SPEC-032 section 3.2).
     assert "script-src" not in text and "default-src" not in text
 
@@ -634,6 +638,18 @@ CASE_VARIANTS = {
     "*.db": "*.[dD][bB]",
 }
 EXTRA_PHOTO_VARIANTS = ("*.[hH][eE][iI][cC]", "*.[wW][eE][bB][pP]")
+# SPEC-038 section 4.10 (SEC-32-02): only the character-class form, before the PNG exceptions.
+SPEC_038_PHOTO_VIDEO_LINES = (
+    "*.[hH][eE][iI][fF]",
+    "*.[jJ][fF][iI][fF]",
+    "*.[jJ][pP][eE]",
+    "*.[tT][iI][fF]",
+    "*.[tT][iI][fF][fF]",
+    "*.[dD][nN][gG]",
+    "*.[aA][vV][iI][fF]",
+    "*.[mM][oO][vV]",
+    "*.[mM][pP]4",
+)
 VARIANT_LINE = re.compile(r"\[[a-z][A-Z]\]")
 
 
@@ -718,7 +734,7 @@ def test_gitignore_variants_sit_next_to_their_patterns_and_before_the_exceptions
     assert lines.index(".[eE][nN][vV].*") < lines.index("!.env.example")
     photos = [
         lines.index(p)
-        for p in ("*.jpg", "*.jpeg", "*.png", *EXTRA_PHOTO_VARIANTS)
+        for p in ("*.jpg", "*.jpeg", "*.png", *EXTRA_PHOTO_VARIANTS, *SPEC_038_PHOTO_VIDEO_LINES)
         + tuple(CASE_VARIANTS[p] for p in ("*.jpg", "*.jpeg", "*.png"))
     ]
     exceptions = [
@@ -731,8 +747,10 @@ def test_gitignore_variants_sit_next_to_their_patterns_and_before_the_exceptions
         )
     ]
     assert max(photos) < min(exceptions)
-    # The only variant lines are the ones of SPEC-032 (``*.py[cod]`` does not match the regex).
+    # The only variant lines are the ones of SPEC-032 and SPEC-038 (``*.py[cod]`` does not match
+    # the regex).
     expected = set(CASE_VARIANTS.values()) | set(EXTRA_PHOTO_VARIANTS)
+    expected |= set(SPEC_038_PHOTO_VIDEO_LINES)
     expected |= {"!docs/**/*.[pP][nN][gG]", "!ml/reports/**/*.[pP][nN][gG]"}
     assert {line for line in lines if VARIANT_LINE.search(line)} == expected
 

@@ -240,7 +240,6 @@ def test_caddyfile_single_site_on_port_80() -> None:
         "preload",
         "/docs",
         "openapi",
-        "handle_errors",
     ],
 )
 def test_caddyfile_forbidden_token(token: str) -> None:
@@ -687,7 +686,8 @@ def test_caddy_image_adapts_without_public_host(caddy_image: str) -> None:
     assert set(by_dial) == {("api:8000",), ("dashboard:8501",)}
     assert [m["path"] for m in by_dial[("api:8000",)] if "path" in m] == [["/api/*"]]
     assert not [m for m in by_dial[("dashboard:8501",)] if "path" in m]
-    (headers,) = [n["response"] for n in _walk(config) if n.get("handler") == "headers"]
+    # The site handler; the handle_errors copy (SPEC-038 section 4.9) is in server["errors"].
+    (headers,) = [n["response"] for n in _walk(server["routes"]) if n.get("handler") == "headers"]
     assert sorted(headers["delete"]) == ["Server", "Via"]
     assert headers["set"] == {
         "Strict-Transport-Security": ["max-age=31536000"],

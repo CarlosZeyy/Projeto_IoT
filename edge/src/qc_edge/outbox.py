@@ -16,6 +16,10 @@ and no image is ever stored here (R-02): the ``payload`` column is the JSON of t
 * ``dead_items`` and ``requeue_dead`` (SPEC-034 section 4.1) list the ``dead`` rows and put them
   back to ``pending``; ``open_existing`` opens a file that already exists without ever creating
   it, for the ``python -m qc_edge.requeue`` CLI.
+* A row whose columns do not have the type and format written above (edited by hand or
+  corrupted) never stops a caller (SPEC-038 section 4.1): ``fetch_due`` marks it ``dead`` with
+  ``INVALID_ROW_ERROR`` and ``dead_items`` skips it. The ``WARNING`` names only the ``rowid`` and
+  the first invalid column, never the value.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import UUID
 
@@ -41,6 +45,8 @@ if TYPE_CHECKING:
     from qc_edge.publish_loop import ConnectivityState
 
 logger = logging.getLogger("qc_edge")
+row_logger = logging.getLogger("qc_edge.outbox")
+"""Logger of the invalid rows (SPEC-038 section 4.1); only ``rowid`` and column, never a value."""
 
 Clock = Callable[[], datetime]
 """Returns the current time, timezone-aware (converted to UTC here); injectable in tests."""
@@ -64,6 +70,9 @@ OUTBOX_COLUMNS = (
     "status",
     "last_error",
 )
+
+INVALID_ROW_ERROR = "invalid outbox row"
+"""``last_error`` of a ``pending`` row that ``fetch_due`` marks ``dead`` (SPEC-038 section 4.1)."""
 
 STATUS_PENDING = "pending"
 STATUS_SENT = "sent"
@@ -102,6 +111,47 @@ def parse_timestamp(value: str) -> datetime:
 def cut_error(error: str) -> str:
     """``error`` cut to ``MAX_LAST_ERROR`` characters."""
     return error[:MAX_LAST_ERROR]
+
+
+class _InvalidColumnError(Exception):
+    """A column read from the outbox has another type or format (SPEC-038 section 4.1).
+
+    ``column`` is the column name; the value is never kept here.
+    """
+
+    def __init__(self, column: str) -> None:
+        self.column = column
+        super().__init__(column)
+
+
+def _read_uuid(column: str, value: object) -> UUID:
+    if isinstance(value, str):
+        try:
+            return UUID(value)
+        except ValueError:
+            pass
+    raise _InvalidColumnError(column)
+
+
+def _read_timestamp(column: str, value: object) -> datetime:
+    if isinstance(value, str):
+        try:
+            return parse_timestamp(value)
+        except (ValueError, OverflowError):
+            pass
+    raise _InvalidColumnError(column)
+
+
+def _read_int(column: str, value: object) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise _InvalidColumnError(column)
+
+
+def _read_optional_text(column: str, value: object) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    raise _InvalidColumnError(column)
 
 
 @dataclass(frozen=True)
@@ -255,30 +305,46 @@ class SqliteOutbox:
         The backoff never schedules more than ``max_delay_s`` ahead, so the second case only
         happens after the wall clock jumped back; without it the row would wait the delay plus
         the size of the jump. Rows with the same ``created_at`` keep their insertion order.
+
+        A ``pending`` row whose ``inspection_id``, ``created_at``, ``attempts`` or
+        ``next_attempt_at`` has another type or format (SPEC-038 section 4.1) is not returned:
+        it becomes ``dead`` with ``last_error = INVALID_ROW_ERROR`` in the same call (by
+        ``rowid``, under the lock, in one transaction), and a ``WARNING`` names its ``rowid`` and
+        first invalid column. The list may then hold fewer than ``limit`` items.
         """
         if limit < 1:
             return []
         now = self._clock()
         now_text = format_timestamp(now)
         horizon = format_timestamp(now + timedelta(seconds=max_delay_s))
+        items: list[OutboxItem] = []
+        invalid: list[tuple[int, str]] = []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT inspection_id, payload, created_at, attempts, next_attempt_at "
+                "SELECT rowid, inspection_id, payload, created_at, attempts, next_attempt_at "
                 "FROM outbox WHERE status = 'pending' "
                 "AND (next_attempt_at <= ? OR next_attempt_at > ?) "
                 "ORDER BY created_at, rowid LIMIT ?",
                 (now_text, horizon, limit),
             ).fetchall()
-        return [
-            OutboxItem(
-                inspection_id=UUID(row[0]),
-                payload=row[1],
-                created_at=parse_timestamp(row[2]),
-                attempts=int(row[3]),
-                next_attempt_at=parse_timestamp(row[4]),
+            for row in rows:
+                try:
+                    items.append(_pending_item(row))
+                except _InvalidColumnError as exc:
+                    invalid.append((int(row[0]), exc.column))
+            if invalid:
+                # By ``rowid``: the ``inspection_id`` may be the invalid column (SPEC-038 §7).
+                with self._conn:
+                    self._conn.executemany(
+                        "UPDATE outbox SET status = 'dead', last_error = ? "
+                        "WHERE rowid = ? AND status = 'pending'",
+                        [(INVALID_ROW_ERROR, rowid) for rowid, _ in invalid],
+                    )
+        for rowid, column in invalid:
+            row_logger.warning(
+                "invalid outbox row marked dead (rowid=%d, column=%s)", rowid, column
             )
-            for row in rows
-        ]
+        return items
 
     def mark_sent(self, ids: Sequence[UUID]) -> None:
         """``pending`` -> ``sent`` with ``sent_at = now``."""
@@ -328,21 +394,26 @@ class SqliteOutbox:
             )
 
     def dead_items(self) -> list[DeadItem]:
-        """``dead`` rows, oldest ``created_at`` first (then insertion order); never the payload."""
+        """``dead`` rows, oldest ``created_at`` first (then insertion order); never the payload.
+
+        A row whose ``inspection_id``, ``created_at``, ``attempts`` or ``last_error`` has another
+        type or format (SPEC-038 section 4.1) is skipped with a ``WARNING`` that names its
+        ``rowid`` and first invalid column; nothing is written.
+        """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT inspection_id, created_at, attempts, last_error FROM outbox "
+                "SELECT rowid, inspection_id, created_at, attempts, last_error FROM outbox "
                 "WHERE status = 'dead' ORDER BY created_at, rowid"
             ).fetchall()
-        return [
-            DeadItem(
-                inspection_id=UUID(row[0]),
-                created_at=parse_timestamp(row[1]),
-                attempts=int(row[2]),
-                last_error=row[3],
-            )
-            for row in rows
-        ]
+        items: list[DeadItem] = []
+        for row in rows:
+            try:
+                items.append(_dead_item(row))
+            except _InvalidColumnError as exc:
+                row_logger.warning(
+                    "invalid dead row skipped (rowid=%d, column=%s)", int(row[0]), exc.column
+                )
+        return items
 
     def requeue_dead(self, ids: Sequence[UUID] | None = None) -> int:
         """``dead`` -> ``pending``: every ``dead`` row (``None``) or the ``dead`` rows in ``ids``.
@@ -406,6 +477,39 @@ class SqliteOutbox:
                 return
             self._closed = True
             self._conn.close()
+
+
+def _pending_item(row: Sequence[Any]) -> OutboxItem:
+    """``OutboxItem`` of ``(rowid, inspection_id, payload, created_at, attempts,
+    next_attempt_at)``; the columns are checked in this order (SPEC-038 section 4.1).
+
+    Raises:
+        _InvalidColumnError: the first column with another type or format.
+    """
+    _, inspection_id, payload, created_at, attempts, next_attempt_at = row
+    return OutboxItem(
+        inspection_id=_read_uuid("inspection_id", inspection_id),
+        created_at=_read_timestamp("created_at", created_at),
+        attempts=_read_int("attempts", attempts),
+        next_attempt_at=_read_timestamp("next_attempt_at", next_attempt_at),
+        payload=payload,  # revalidated by the publish loop as it is (SPEC-009 section 4.3)
+    )
+
+
+def _dead_item(row: Sequence[Any]) -> DeadItem:
+    """``DeadItem`` of ``(rowid, inspection_id, created_at, attempts, last_error)``; the columns
+    are checked in this order (SPEC-038 section 4.1).
+
+    Raises:
+        _InvalidColumnError: the first column with another type or format.
+    """
+    _, inspection_id, created_at, attempts, last_error = row
+    return DeadItem(
+        inspection_id=_read_uuid("inspection_id", inspection_id),
+        created_at=_read_timestamp("created_at", created_at),
+        attempts=_read_int("attempts", attempts),
+        last_error=_read_optional_text("last_error", last_error),
+    )
 
 
 def _prepare_file(path: Path) -> None:

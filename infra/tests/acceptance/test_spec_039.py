@@ -507,12 +507,15 @@ def test_extra_caddyfile_comments_and_format() -> None:
     assert "ADR-023" in comments
     assert "SPEC-038" in comments
     assert "handle_errors" in comments
-    assert "handle_errors" not in _caddy_text()
+    # SPEC-038 section 4.9 adds the handle_errors block to the site (top note of SPEC-038)
+    assert len(re.findall(r"(?m)^\s*handle_errors\s*\{", _caddy_text())) == 1
     for n, line in enumerate(raw.splitlines(), 1):
         assert line == line.rstrip(), n
         indent = line[: len(line) - len(line.lstrip())]
         assert " " not in indent, (n, "caddy fmt indents with tabs")
     site = _block_after(_caddy_text(), ":80 {")
+    # SPEC-038 section 4.9: the site-wide header block is the one outside handle_errors
+    site = site.replace(_block_after(site, "handle_errors {"), "", 1)
     blocks = re.findall(r"(?m)^\s*header\s*\{", site)
     assert len(blocks) == 1, blocks
     assert "header {" not in _block_after(site, "handle /api/* {")
@@ -1179,11 +1182,21 @@ def test_extra_caddy_adapt_has_no_automatic_https_and_no_redirect(caddy_image: s
     assert "automatic_https" not in dumped
     assert "tls_connection_policies" not in dumped
     assert "https://" not in dumped
+    # SPEC-038 section 4.9 (top note): count only in the routes of the server; the
+    # ``static_response`` of ``errors`` (the empty error body) is not a redirect.
+    servers = cfg["apps"]["http"]["servers"].values()
+    routes = [s.get("routes", []) for s in servers]
     statics = [
-        n for n in _walk(cfg) if isinstance(n, dict) and n.get("handler") == "static_response"
+        n for n in _walk(routes) if isinstance(n, dict) and n.get("handler") == "static_response"
     ]
     assert statics == [], statics
-    headers = [n for n in _walk(cfg) if isinstance(n, dict) and n.get("handler") == "headers"]
+    errors = [s.get("errors", {}) for s in servers]
+    for static in (
+        n for n in _walk(errors) if isinstance(n, dict) and n.get("handler") == "static_response"
+    ):
+        assert not str(static.get("status_code", "")).startswith("3"), static
+        assert "Location" not in (static.get("headers") or {}), static
+    headers = [n for n in _walk(routes) if isinstance(n, dict) and n.get("handler") == "headers"]
     assert len(headers) == 1 and headers[0]["response"].get("deferred") is True, headers
 
 
