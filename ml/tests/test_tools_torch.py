@@ -35,7 +35,9 @@ from qc_preprocess import PreprocessParams  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
-TOOLS_LABELS = ModelLabels(KNOWN_OBJECT_TYPES, GRADES, ("allen_key",))
+# The 8 types of SPEC-016 (KNOWN_OBJECT_TYPES gained the 4 power tools in SPEC-021).
+EIGHT = KNOWN_OBJECT_TYPES[:8]
+TOOLS_LABELS = ModelLabels(EIGHT, GRADES, ("allen_key",))
 VERSION = "partqc-smoketools-v1"
 
 
@@ -57,7 +59,7 @@ def test_parts_dataset_masks_the_ungraded_tools(tools_data: Path) -> None:
     ds = PartsDataset(df, tools_data / "ds", TOOLS_LABELS, PreprocessParams(), train=False)
     i = _index(df, "allen_key")
     _, type_idx, grade_idx = ds[i]
-    assert type_idx == KNOWN_OBJECT_TYPES.index("allen_key") and grade_idx == -1
+    assert type_idx == EIGHT.index("allen_key") and grade_idx == -1
     j = _index(df, "pliers")
     assert ds.grade_index(j) == GRADES.index(df.at[j, "grade"])
     assert ds.grade_index(_index(df, "other")) == -1
@@ -98,11 +100,11 @@ def test_pipeline_with_tools_records_the_model_types(tools_run: Path) -> None:
     config = load_config(tools_run)
     record = json.loads((config.model_dir / "training_config.json").read_text())
     # 3 items per tool x grade: no tool meets the grade criterion
-    assert record["labels"] == {"object_types": list(KNOWN_OBJECT_TYPES), "grades": list(GRADES)}
+    assert record["labels"] == {"object_types": list(EIGHT), "grades": list(GRADES)}
     assert record["ungraded_object_types"] == list(TOOL_OBJECT_TYPES)
     labels = json.loads((config.model_dir / "labels.json").read_text())
     assert labels == {
-        "object_types": list(KNOWN_OBJECT_TYPES),
+        "object_types": list(EIGHT),
         "grades": list(GRADES),
         "ungraded_object_types": list(TOOL_OBJECT_TYPES),
     }
@@ -132,7 +134,7 @@ def test_training_labels_sources(tools_run: Path, tmp_path: Path) -> None:
         TOOL_OBJECT_TYPES
     )
     assert export_mod.training_labels(config, {"labels": dict(record["labels"])}) == ModelLabels(
-        KNOWN_OBJECT_TYPES, GRADES
+        EIGHT, GRADES
     )
     with pytest.raises(ExportError, match="invalid labels"):
         export_mod.training_labels(
