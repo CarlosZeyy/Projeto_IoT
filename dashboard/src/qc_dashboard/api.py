@@ -25,6 +25,7 @@ import streamlit as st
 from pydantic import TypeAdapter, ValidationError
 
 from qc_contracts import (
+    DeviceStatus,
     Grade,
     HealthResponse,
     InspectionRead,
@@ -227,6 +228,10 @@ class ApiClient:
     def lots(self, params: Filters) -> LotPage:
         return self._get_model("/lots", _LOT_PAGE, params.to_query())
 
+    def devices(self) -> list[DeviceStatus]:
+        """``GET /api/v1/devices`` (SPEC-018): every device, ``online`` computed by the API."""
+        return self._get_model("/devices", _DEVICES, {})
+
 
 _HEALTH = TypeAdapter(HealthResponse)
 _TIMESERIES = TypeAdapter(list[TimeseriesPoint])
@@ -234,6 +239,7 @@ _SUMMARY = TypeAdapter(MetricsSummary)
 _SPC = TypeAdapter(SpcResponse)
 _INSPECTION_PAGE = TypeAdapter(InspectionPage)
 _LOT_PAGE = TypeAdapter(LotPage)
+_DEVICES = TypeAdapter(list[DeviceStatus])
 
 
 @st.cache_resource(show_spinner=False)

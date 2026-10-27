@@ -1,8 +1,9 @@
 """Schema of infra/migrations against the test PostgreSQL. All tests are marked `db`.
 
 001_init.sql: SPEC-003 §4.1. 002_contract_checks.sql (checks that mirror the contract): SPEC-027
-§4.1. 003_tool_object_types.sql (hand tools and the grade groups of ADR-021): SPEC-016 §4.2. The
-last two at the end of this file.
+§4.1. 003_tool_object_types.sql (hand tools and the grade groups of ADR-021): SPEC-016 §4.2.
+004_device_heartbeat.sql (last heartbeat of each device): SPEC-018 §4.2. The last three at the end
+of this file.
 """
 
 from __future__ import annotations
@@ -20,7 +21,10 @@ import pytest
 from psycopg import errors
 
 from qc_contracts import (
+    APP_VERSION_PATTERN,
+    MAX_HEARTBEAT_COUNT,
     MODEL_VERSION_PATTERN,
+    SHA256_PATTERN,
     Grade,
     InspectionCreate,
     ObjectType,
@@ -128,6 +132,14 @@ def test_device_columns(conn: psycopg.Connection) -> None:
         ("api_key_hash", "text", "NO"),
         ("created_at", "timestamp with time zone", "NO"),
         ("last_seen_at", "timestamp with time zone", "YES"),
+        ("last_heartbeat_at", "timestamp with time zone", "YES"),
+        ("hb_sent_at", "timestamp with time zone", "YES"),
+        ("hb_model_version", "text", "YES"),
+        ("hb_model_sha256", "text", "YES"),
+        ("hb_app_version", "text", "YES"),
+        ("hb_uptime_s", "integer", "YES"),
+        ("hb_outbox_pending", "integer", "YES"),
+        ("hb_outbox_dead", "integer", "YES"),
     ]
 
 
@@ -645,3 +657,129 @@ def test_tool_migration_keeps_mvp_rows_valid(conn: psycopg.Connection) -> None:
     _insert(conn, object_type="unknown", grade=None, grade_score=None, grade_confidence=None)
     conn.execute(TOOLS_SQL.read_text(encoding="utf-8"))
     assert _count(conn) == 3
+
+
+# ---------- 004_device_heartbeat (SPEC-018 §4.2) ----------
+
+HEARTBEAT_SQL = MIGRATIONS_DIR / "004_device_heartbeat.sql"
+
+
+def _heartbeat_values(**overrides: Any) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "hb_sent_at": datetime(2026, 10, 24, 12, 0, tzinfo=UTC),
+        "hb_model_version": "partqc-mnv3-v1",
+        "hb_model_sha256": SHA,
+        "hb_app_version": "0.0.0",
+        "hb_uptime_s": 10,
+        "hb_outbox_pending": 0,
+        "hb_outbox_dead": 0,
+    }
+    values.update(overrides)
+    return values
+
+
+def _heartbeat_stored(conn: psycopg.Connection, **overrides: Any) -> bool:
+    """True when the heartbeat update works; False on ``CheckViolation`` (SQLSTATE 23514)."""
+    values = _heartbeat_values(**overrides)
+    assignments = ", ".join(f"{name} = %({name})s" for name in values)
+    try:
+        with conn.transaction():
+            conn.execute(
+                f"update devices set last_heartbeat_at = now(), {assignments} "
+                "where device_id = %(device_id)s",
+                {**values, "device_id": DEVICE},
+            )
+    except errors.CheckViolation as exc:
+        assert exc.sqlstate == "23514"
+        return False
+    return True
+
+
+def test_new_device_has_null_heartbeat_columns(conn: psycopg.Connection) -> None:
+    row = conn.execute(
+        "select last_heartbeat_at, hb_sent_at, hb_model_version, hb_model_sha256, hb_app_version,"
+        " hb_uptime_s, hb_outbox_pending, hb_outbox_dead from devices where device_id = %s",
+        (DEVICE,),
+    ).fetchone()
+    assert row == (None,) * 8
+
+
+def test_valid_heartbeat_is_stored(conn: psycopg.Connection) -> None:
+    assert _heartbeat_stored(conn)
+    assert _heartbeat_stored(conn, hb_model_version=None, hb_model_sha256=None)
+    assert _heartbeat_stored(conn, hb_uptime_s=MAX_HEARTBEAT_COUNT, hb_outbox_dead=0)
+
+
+@pytest.mark.parametrize("column", ["hb_uptime_s", "hb_outbox_pending", "hb_outbox_dead"])
+def test_negative_counters_are_refused(conn: psycopg.Connection, column: str) -> None:
+    assert not _heartbeat_stored(conn, **{column: -1})
+    assert _heartbeat_stored(conn, **{column: 0})
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"hb_model_version": "partqc-mnv3-v1", "hb_model_sha256": None},
+        {"hb_model_version": None, "hb_model_sha256": SHA},
+    ],
+)
+def test_model_pair_is_null_together(conn: psycopg.Connection, overrides: dict[str, Any]) -> None:
+    with pytest.raises(errors.CheckViolation) as info, conn.transaction():
+        values = _heartbeat_values(**overrides)
+        conn.execute(
+            "update devices set hb_model_version = %(hb_model_version)s, "
+            "hb_model_sha256 = %(hb_model_sha256)s where device_id = %(device_id)s",
+            {**values, "device_id": DEVICE},
+        )
+    assert info.value.sqlstate == "23514"
+    assert info.value.diag.constraint_name == "devices_hb_model_pair_check"
+
+
+@pytest.mark.parametrize(
+    "value", ["partqc-mnv3-v1", "abc", "a" * 40, "ab", "a" * 41, "Partqc", "x_y", "abc\n"]
+)
+def test_hb_model_version_check_mirrors_contract(conn: psycopg.Connection, value: str) -> None:
+    expected = re.fullmatch(MODEL_VERSION_PATTERN, value) is not None
+    assert _heartbeat_stored(conn, hb_model_version=value) == expected
+
+
+@pytest.mark.parametrize("value", [SHA, "0" * 64, "A" * 64, "a" * 63, "a" * 65, SHA + "\n"])
+def test_hb_model_sha256_check_mirrors_contract(conn: psycopg.Connection, value: str) -> None:
+    expected = re.fullmatch(SHA256_PATTERN, value) is not None
+    assert _heartbeat_stored(conn, hb_model_sha256=value) == expected
+
+
+@pytest.mark.parametrize(
+    "value", ["0.0.0", "1.2.3+local", "v2-rc.1", "A" * 40, "", "A" * 41, "1 0", "1_0", "1.0\n"]
+)
+def test_hb_app_version_check_mirrors_contract(conn: psycopg.Connection, value: str) -> None:
+    expected = re.fullmatch(APP_VERSION_PATTERN, value) is not None
+    assert _heartbeat_stored(conn, hb_app_version=value) == expected
+
+
+def test_heartbeat_migration_runs_again_without_error(conn: psycopg.Connection) -> None:
+    assert _heartbeat_stored(conn)
+    sql_text = HEARTBEAT_SQL.read_text(encoding="utf-8")
+    before = conn.execute(
+        "select conname, pg_get_constraintdef(oid) from pg_constraint "
+        "where conrelid = 'devices'::regclass order by 1"
+    ).fetchall()
+    conn.execute(sql_text)
+    conn.execute(sql_text)
+    after = conn.execute(
+        "select conname, pg_get_constraintdef(oid) from pg_constraint "
+        "where conrelid = 'devices'::regclass order by 1"
+    ).fetchall()
+    assert after == before
+    assert {name for name, _ in after} >= {
+        "devices_hb_model_version_check",
+        "devices_hb_model_sha256_check",
+        "devices_hb_app_version_check",
+        "devices_hb_uptime_s_check",
+        "devices_hb_outbox_pending_check",
+        "devices_hb_outbox_dead_check",
+        "devices_hb_model_pair_check",
+    }
+    assert conn.execute(
+        "select hb_uptime_s from devices where device_id = %s", (DEVICE,)
+    ).fetchone() == (10,)

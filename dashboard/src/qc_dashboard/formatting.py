@@ -18,6 +18,7 @@ from qc_contracts import (
     GRADE_LABELS_PT,
     OBJECT_TYPE_LABELS_PT,
     SOURCE_LABELS_PT,
+    DeviceStatus,
     Grade,
     InspectionRead,
     ObjectType,
@@ -198,6 +199,63 @@ def spc_rows(spc: SpcResponse) -> list[dict[str, str]]:
         }
         for point in spc.points
     ]
+
+
+DEVICE_COLUMNS: tuple[str, ...] = (
+    "Dispositivo",
+    "Situação",
+    "Origem",
+    "Último sinal",
+    "Modelo",
+    "Versão",
+    "Pendentes",
+    "Com falha",
+    "Ligado há",
+)
+ONLINE = "online"
+OFFLINE = "offline"
+NEVER = "nunca"
+
+
+def fmt_uptime(seconds: int | None) -> str:
+    """Whole hours and minutes: ``7500`` -> ``2 h 05 min``; ``None`` -> ``—``.
+
+    The seconds left over are dropped (never rounded up); the hours are not split into days.
+    """
+    if seconds is None:
+        return EMPTY
+    hours, rest = divmod(max(int(seconds), 0), 3600)
+    return f"{fmt_int(hours)} h {rest // 60:02d} min"
+
+
+def device_rows(items: Iterable[DeviceStatus]) -> list[dict[str, str]]:
+    """Rows of the device table (SPEC-018 §4.5), columns of ``DEVICE_COLUMNS``, as display text.
+
+    ``Último sinal`` is the local time of the last heartbeat (``nunca`` without one) and
+    ``Ligado há`` the uptime it reported (``—`` without one). ``Origem`` is the origin of the
+    latest inspection of the device (``—`` without inspections, R-06).
+    """
+    return [
+        {
+            "Dispositivo": item.device_id,
+            "Situação": ONLINE if item.online else OFFLINE,
+            "Origem": source_label(item.last_source),
+            "Último sinal": (
+                NEVER if item.last_heartbeat_at is None else fmt_datetime(item.last_heartbeat_at)
+            ),
+            "Modelo": item.model_version or EMPTY,
+            "Versão": item.app_version or EMPTY,
+            "Pendentes": fmt_int(item.outbox_pending),
+            "Com falha": fmt_int(item.outbox_dead),
+            "Ligado há": fmt_uptime(item.uptime_s),
+        }
+        for item in items
+    ]
+
+
+def has_simulated_device(items: Iterable[DeviceStatus]) -> bool:
+    """True when the latest inspection of any device is ``simulated`` (the R-06 badge)."""
+    return any(item.last_source is Source.SIMULATED for item in items)
 
 
 def _csv_number(value: float | None) -> str:

@@ -14,6 +14,7 @@ database whose name contains ``test``.
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import shutil
 import uuid
@@ -437,10 +438,12 @@ def test_extra_invalid_tool_payloads_are_422_and_not_stored(env: Env) -> None:
 
 
 @pytest.mark.db
-def test_extra_health_reports_contract_0_4_0(env: Env) -> None:
+def test_extra_health_reports_contract_at_least_0_4_0(env: Env) -> None:
     body = env.client.get(URL_HEALTH).json()
     assert body["status"] == "ok"
-    assert body["contract_version"] == "0.4.0"
+    v = body["contract_version"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
+    assert (0, 4, 0) <= tuple(int(p) for p in v.split(".")) < (1, 0, 0)
 
 
 @pytest.mark.db

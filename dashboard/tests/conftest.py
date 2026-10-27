@@ -1,4 +1,4 @@
-"""Fixtures of the qc-dashboard author tests (SPEC-013, SPEC-028).
+"""Fixtures of the qc-dashboard author tests (SPEC-013, SPEC-028, SPEC-018).
 
 Only the HTTP boundary is mocked: ``httpx.MockTransport`` answers with bodies built from the
 ``qc_contracts`` models and records every request. No test touches the network. Keys are
@@ -20,6 +20,7 @@ import pytest
 import streamlit as st
 
 from qc_contracts import (
+    DeviceStatus,
     InspectionRead,
     MetricsSummary,
     Page,
@@ -80,6 +81,25 @@ def inspection(**overrides: Any) -> InspectionRead:
     }
     values.update(overrides)
     return InspectionRead.model_validate(values)
+
+
+def device_status(**overrides: Any) -> DeviceStatus:
+    """A device with a recent heartbeat (``online``) and a ``live`` latest inspection."""
+    values: dict[str, Any] = {
+        "device_id": "edge-01",
+        "last_seen_at": "2026-11-03T15:00:00Z",
+        "last_heartbeat_at": "2026-11-03T15:00:00Z",
+        "online": True,
+        "model_version": "partqc-mnv3-v1",
+        "model_sha256": SHA,
+        "app_version": "0.0.0",
+        "uptime_s": 7500,
+        "outbox_pending": 2,
+        "outbox_dead": 1,
+        "last_source": "live",
+    }
+    values.update(overrides)
+    return DeviceStatus.model_validate(values)
 
 
 def spc_point(lot_id: str, *, out_of_control: bool = False, **overrides: Any) -> SpcPoint:
@@ -189,6 +209,7 @@ class MockApi:
         self.spc_source: Source | None = None
         self.inspections: list[InspectionRead] = [inspection()]
         self.inspections_total: int | None = None
+        self.devices: list[DeviceStatus] = [device_status()]
         self.failure: Callable[[httpx.Request], httpx.Response] | None = None
         # Routes (without the /api/v1 prefix) that time out while the others answer.
         self.timing_out: set[str] = set()
@@ -224,6 +245,8 @@ class MockApi:
                 offset=offset,
             )
             return httpx.Response(200, json=page.model_dump(mode="json"))
+        if path == "/devices":
+            return httpx.Response(200, json=[d.model_dump(mode="json") for d in self.devices])
         return httpx.Response(404, json={"detail": "Not Found"})
 
     def paths(self) -> list[str]:
@@ -288,6 +311,7 @@ def factory() -> SimpleNamespace:
         inspection=inspection,
         spc_point=spc_point,
         spc_response=spc_response,
+        device_status=device_status,
         metrics_document=metrics_document,
         new_key=new_key,
         MockApi=MockApi,

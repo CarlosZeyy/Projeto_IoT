@@ -1,6 +1,6 @@
 # qc-dashboard
 
-Painel Streamlit do PartQC (SPEC-013, ADR-007). Lê **todos** os dados pela `qc-api`, com a chave de leitura no header `X-API-Key`, e nunca acessa o banco. Os rótulos em PT-BR vêm de `qc_contracts.labels` (ADR-012).
+Painel Streamlit do PartQC (SPEC-013, SPEC-018, ADR-007). Lê **todos** os dados pela `qc-api`, com a chave de leitura no header `X-API-Key`, e nunca acessa o banco. Os rótulos em PT-BR vêm de `qc_contracts.labels` (ADR-012).
 
 ## Páginas
 
@@ -10,12 +10,15 @@ Painel Streamlit do PartQC (SPEC-013, ADR-007). Lê **todos** os dados pela `qc-
 | Controle estatístico | `views/controle_estatistico.py` | Carta p por lote de **uma** origem (ADR-013, ADR-017) e tabela dos lotes |
 | Histórico | `views/historico.py` | Inspeções paginadas, filtros da página e CSV da página atual |
 | Sobre o modelo | `views/sobre_o_modelo.py` | `metrics.json` do modelo contra as metas do PRD (SPEC-012) |
+| Dispositivos | `views/dispositivos.py` | Cada dispositivo `online`/`offline`, com a origem dos dados, o último sinal, o modelo, a versão da borda, as filas do outbox e o tempo ligado (SPEC-018) |
 
 A barra lateral (origem, período, tipo e lote) vale para todas as páginas e é mantida ao trocar de página. A origem padrão é **Real**. Na Visão geral, no Histórico e em "Sobre o modelo", com `Simulado`, ou com `Todos` quando há dados simulados nos filtros, a página mostra o aviso `Contém dados simulados` (R-06). A Visão geral e o Histórico sempre dizem a origem em vigor logo abaixo do título.
 
 A carta p usa toda a história da origem escolhida: o período da barra lateral não se aplica a ela. A origem da carta acompanha a da barra lateral (`Simulado` lá → `Simulado` aqui; `Real` ou `Todos` → `Real`); numa sessão nova, ela começa em `Real` e pode ser trocada na própria página. Nessa página, o aviso `Contém dados simulados` aparece se, e só se, a carta for `Simulado` (ele não depende da barra lateral), e a origem da carta aparece sempre logo abaixo do título (`Origem da carta: real` ou `Origem da carta: simulado`), fora da figura (SPEC-028).
 
 "Sobre o modelo" lê as métricas de um arquivo local. A API só é consultada para o aviso com a origem `Todos`; se essa consulta falhar, a página mostra o erro e o aviso (por conservadorismo) e continua com as tabelas e as imagens.
+
+"Dispositivos" lê `GET /api/v1/devices`, com o mesmo cache das outras leituras. Quem decide `online` é a API: o último heartbeat da borda chegou há menos de 180 s, pela hora do servidor (com o cache de 30 s, a mudança pode levar até ~3,5 min para aparecer). `Último sinal` é a hora local do último heartbeat (`nunca` sem heartbeat) e `Ligado há` é o tempo ligado que ele informou (ex.: `2 h 05 min`; `—` sem heartbeat). `Origem` é a origem da inspeção mais recente do dispositivo (`real`, `simulado` ou `—`); se algum dispositivo estiver com `simulado`, a página mostra o aviso `Contém dados simulados` (R-06). O simulador não envia heartbeat, então aparece `offline`, com a origem `simulado`. Os filtros da barra lateral não se aplicam a essa página.
 
 As figuras não têm a barra de ferramentas do Plotly, que, em aparelhos de toque, fica sempre visível sobre o título. O botão de tela cheia do Streamlit continua.
 
@@ -58,7 +61,7 @@ Não carregue o `.env` único do projeto no dashboard: ele traz também a connec
 ## Estrutura
 
 ```text
-app.py                     st.navigation com as 4 páginas
+app.py                     st.navigation com as 5 páginas
 views/                     uma página por arquivo
 src/qc_dashboard/
   config.py                secrets e variáveis de ambiente

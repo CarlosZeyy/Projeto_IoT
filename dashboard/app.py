@@ -1,7 +1,7 @@
 """PartQC dashboard (SPEC-013): ``uv run --package qc-dashboard streamlit run dashboard/app.py``.
 
-Four pages; Visão geral is the default. Every page reads the data through ``qc-api`` with the
-read key (ADR-007), never the database.
+Five pages (Dispositivos from SPEC-018); Visão geral is the default. Every page reads the data
+through ``qc-api`` with the read key (ADR-007), never the database.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ pages = [
     st.Page(VIEWS / "controle_estatistico.py", title="Controle estatístico"),
     st.Page(VIEWS / "historico.py", title="Histórico"),
     st.Page(VIEWS / "sobre_o_modelo.py", title="Sobre o modelo"),
+    st.Page(VIEWS / "dispositivos.py", title="Dispositivos"),
 ]
 
 st.navigation(pages).run()

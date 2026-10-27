@@ -158,6 +158,7 @@ def test_every_cached_read_has_max_entries() -> None:
         "fetch_timeseries",
         "fetch_spc",
         "fetch_inspections",
+        "fetch_devices",
         "fetch_lots",
     }
     for function in functions:

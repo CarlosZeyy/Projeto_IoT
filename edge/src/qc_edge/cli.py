@@ -24,6 +24,11 @@ Outbox and cloud (SPEC-009 section 4.4):
   ``source=live``) never reaches a durable file and no later start can publish it (R-06). A
   ``WARNING`` naming ``--stub-model`` (and no value) says so.
 
+Heartbeat (SPEC-018 section 4.4): a ``HeartbeatLoop`` (with its own ``HttpPublisher``) is
+registered after the ``PublishLoop``, under the same conditions, unless ``HEARTBEAT_INTERVAL_S``
+is ``0``. With ``--stub-model`` or without the key or the URL there is never a heartbeat (R-06).
+An invalid ``HEARTBEAT_INTERVAL_S`` exits with code 2 naming the variable.
+
 An invalid ``CLOUD_API_URL`` (``EdgeSettings``) or a set ``DEVICE_API_KEY`` that is not visible
 ASCII exits with code 2 naming the variable, never its value, with or without the flag. The loop
 stops with the app (lifespan); the outbox stays open until the process ends (every ``put`` is
@@ -46,6 +51,7 @@ from pydantic import ValidationError
 from qc_edge.app import create_app
 from qc_edge.argv import ArgumentsError, QuietArgumentParser, describe_arguments, resolve_argv
 from qc_edge.config import EdgeSettings
+from qc_edge.heartbeat import HeartbeatLoop
 from qc_edge.inference import Inferencer, StubInferencer, short_sha
 from qc_edge.onnx_inferencer import THRESHOLD_ENV_VARS, ModelLoadError, OnnxInferencer
 from qc_edge.outbox import OUTBOX_FILE_NAME, SqliteOutbox
@@ -91,9 +97,9 @@ def _open_outbox(settings: EdgeSettings, connectivity: ConnectivityState | None)
 
 
 def _build_sink(
-    settings: EdgeSettings, stub_model: bool
+    settings: EdgeSettings, stub_model: bool, inferencer: Inferencer | None = None
 ) -> tuple[InspectionSink, list[BackgroundService]]:
-    """Sink and background services (SPEC-009 section 4.4)."""
+    """Sink and background services (SPEC-009 section 4.4, SPEC-018 section 4.4)."""
     api_key = settings.DEVICE_API_KEY.get_secret_value() if settings.DEVICE_API_KEY else None
     url = settings.CLOUD_API_URL  # already checked by EdgeSettings, with or without the flag
     if api_key:
@@ -128,7 +134,22 @@ def _build_sink(
     publisher = HttpPublisher(url, api_key)
     loop = PublishLoop(outbox, publisher, connectivity)
     logger.info("cloud publishing enabled (outbox: %s)", outbox.path)
-    return outbox, [loop]
+    services: list[BackgroundService] = [loop]
+    if settings.HEARTBEAT_INTERVAL_S:
+        # A publisher of its own: the two loops run in different threads.
+        heartbeat_publisher = HttpPublisher(url, api_key, device_id=settings.DEVICE_ID)
+        services.append(
+            HeartbeatLoop(
+                heartbeat_publisher,
+                outbox,
+                inferencer,
+                interval_s=settings.HEARTBEAT_INTERVAL_S,
+            )
+        )
+        logger.info("heartbeat enabled (every %d s)", settings.HEARTBEAT_INTERVAL_S)
+    else:
+        logger.info("heartbeat disabled (HEARTBEAT_INTERVAL_S=0)")
+    return outbox, services
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -217,7 +238,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         sys.exit(EXIT_CONFIG_ERROR)
 
     inferencer = _load_inferencer(settings, args.stub_model)
-    sink, background = _build_sink(settings, args.stub_model)
+    sink, background = _build_sink(settings, args.stub_model, inferencer)
 
     # SEC-04: checked after every edge module and onnxruntime are imported (and the model is
     # loaded) and before the server starts. No qc_edge module changes the flag.

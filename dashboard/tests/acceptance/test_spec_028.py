@@ -876,7 +876,7 @@ def test_extra_every_cached_read_has_max_entries() -> None:
     source = (DASHBOARD / "src" / "qc_dashboard" / "data.py").read_text("utf-8")
     decorators = re.findall(r"@st\.cache_data\(([^)]*)\)", source)
     functions = re.findall(r"^def fetch_\w+", source, flags=re.MULTILINE)
-    assert len(decorators) == len(functions) == 6
+    assert len(decorators) == len(functions) == 7
     for args in decorators:
         assert "max_entries" in args and "ttl" in args
 

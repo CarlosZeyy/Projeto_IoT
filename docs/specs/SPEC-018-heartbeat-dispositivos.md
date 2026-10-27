@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Security |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | contrato, security |
 | Depende de | SPEC-034 (`Done` antes de esta entrar em `In Dev`: mudança de contrato com a borda em operação), SPEC-016 (contrato 0.4.0; esta SPEC leva a 0.5.0), SPEC-030 (prazo e teto do publisher) (e SPEC-004, SPEC-009, SPEC-013, SPEC-028) |
@@ -155,3 +155,4 @@ Nada é mockado além das fronteiras: banco de teste real na API; `httpx.MockTra
 | 2026-10-24 | SPEC reescrita para a aprovação. Decisões do architect: contrato 0.5.0 minor (sem ADR obrigatório), com limites inteiros e `model_version`/`model_sha256` nulos juntos; `last_heartbeat_at` e `online` pela hora do servidor; `last_source` em `DeviceStatus` para mostrar dispositivos simulados (pergunta 4: o simulador não envia heartbeat); envio pelo `HttpPublisher` (único módulo com `httpx`), com os limites da SPEC-030 e parada em 401/403; `HEARTBEAT_INTERVAL_S` de 10 a 3.600 ou 0; dependência das SPECs 034 (prazo dela), 016 (versão do contrato) e 030; CAs CA-01 a CA-12 testáveis e CA-13 manual. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: o aviso do topo passa a registrar a aprovação. | Status `Ready` desde o PR #45; sobrava o aviso da fase de rascunho | Architect, a pedido do orquestrador |
+| 2026-10-24 | Entra em `In Dev` encadeada, antes de a SPEC-016 estar `Done` (todos os portões PASS, PR #52 empilhado sobre a 036), por decisão do humano; a branch nasce da `spec/SPEC-016-ferramentas-manuais` e o merge desta SPEC só acontece depois dos merges da 036 e da 016. | Resposta do humano de 2026-10-24 | Orquestrador, a pedido do humano |

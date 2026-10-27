@@ -16,6 +16,9 @@ are checked here (a finite number in ``[0, 1]``, SPEC-008 section 4.2, item 6), 
 stops the start with code 2 naming the variable. ``DATASET_DIR`` (SPEC-010) is not created here:
 the collect mode creates it, with mode ``0700``, on the first capture.
 
+SPEC-018: ``HEARTBEAT_INTERVAL_S`` (default 60) is an integer from 10 to 3600, or ``0`` to turn the
+heartbeat off; anything else stops the start with code 2 naming the variable.
+
 SPEC-025: ``EDGE_HOST`` is an IPv4 literal only (with ``::`` uvicorn listens on IPv6 only, and
 neither the console URL nor the QR code would open), and an ``EDGE_DATA_DIR`` created here gets
 mode ``0700`` (an existing one is left as it is).
@@ -43,6 +46,11 @@ DEFAULT_DATASET_DIR = Path("ml/data")
 MIN_SESSION_TOKEN_LENGTH = 32
 # SPEC-009 section 4.2: plain HTTP only towards these hosts (local tests).
 LOCAL_HTTP_HOSTS = frozenset({"localhost", "127.0.0.1"})
+
+# Heartbeat (SPEC-018 section 4.4): seconds between two heartbeats; 0 turns it off.
+DEFAULT_HEARTBEAT_INTERVAL_S = 60
+MIN_HEARTBEAT_INTERVAL_S = 10
+MAX_HEARTBEAT_INTERVAL_S = 3600
 
 # Threshold override (SPEC-008 section 4.2, item 6): a finite number in [0, 1].
 Threshold = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
@@ -80,6 +88,8 @@ class EdgeSettings(BaseSettings):
     TYPE_THRESHOLD: Threshold | None = None
     UNUSABLE_THRESHOLD: Threshold | None = None
     GRADE_REVIEW_THRESHOLD: Threshold | None = None
+    # SPEC-018: heartbeat interval (0 = off).
+    HEARTBEAT_INTERVAL_S: int = DEFAULT_HEARTBEAT_INTERVAL_S
 
     @field_validator("EDGE_HOST")
     @classmethod
@@ -88,6 +98,16 @@ class EdgeSettings(BaseSettings):
             ipaddress.IPv4Address(value)
         except ValueError:
             raise ValueError("must be an IPv4 address literal (e.g. 0.0.0.0)") from None
+        return value
+
+    @field_validator("HEARTBEAT_INTERVAL_S")
+    @classmethod
+    def _heartbeat_interval(cls, value: int) -> int:
+        if value != 0 and not MIN_HEARTBEAT_INTERVAL_S <= value <= MAX_HEARTBEAT_INTERVAL_S:
+            raise ValueError(
+                f"must be 0 (off) or an integer from {MIN_HEARTBEAT_INTERVAL_S} to "
+                f"{MAX_HEARTBEAT_INTERVAL_S}"
+            )
         return value
 
     @field_validator("CLOUD_API_URL")
