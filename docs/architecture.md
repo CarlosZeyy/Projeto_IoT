@@ -281,7 +281,12 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
    - backoff exponencial de 1 s até 60 s, com jitter;
    - marca como enviado ao receber `created` ou `duplicate`;
    - o timeout de 5 s vale por operação (conexão, escrita, cada leitura). A partir da SPEC-030, cada requisição tem também um prazo total de 15 s e lê no máximo 512 KiB de resposta (estourar vira retry), e um salto do relógio para trás não prende o retry nem o health check;
-   - a partir da SPEC-020 (Fase 3), `EDGE_PUBLISHER=mqtt` troca o `HttpPublisher` por um `MqttPublisher` (Mosquitto só em loopback no notebook e uma ponte, `python -m qc_edge.mqtt_bridge`, que repassa à mesma rota HTTP); o item só vira enviado com a resposta da ponte, nunca pelo PUBACK;
+   - a partir da SPEC-020 (Fase 3), `EDGE_PUBLISHER=mqtt` troca o `HttpPublisher` por um `MqttPublisher` no mesmo `PublishLoop` (backoff, bissecção e `dead` não mudam). O transporte MQTT, também a partir da SPEC-020:
+     - **broker:** Mosquitto local, só em loopback no notebook (`edge/mosquitto/partqc.conf`: `listener 1883 127.0.0.1`, `allow_anonymous false`, arquivo de senhas fora do repositório); nenhum broker na nuvem (R-01). O `paho-mqtt` (MQTT 5) só é importado por `qc_edge.mqtt_transport` e não entra no fecho do `qc-api` nem do `qc-dashboard` (R-12);
+     - **pedido/resposta MQTT 5, QoS 1:** o `MqttPublisher` publica o `BatchCreate` em `partqc/v1/<device_id>/batch` (e um pedido vazio em `.../health`) com `ResponseTopic` `partqc/v1/<device_id>/reply/<sessão>` e `CorrelationData` de 16 bytes aleatórios, e espera a resposta com a mesma correlação por até `MQTT_RESPONSE_TIMEOUT_S` (a conexão, o PUBACK e a resposta dividem esse prazo). A propriedade de usuário `result` da resposta é `ok` (payload = `BatchResult`, validado como no `HttpPublisher`), `rejected` (payload = resumo da recusa da SPEC-009, nunca o corpo da API; vira `PublishRejectedError`), `auth` (`PublishAuthError`) ou `transient`; resposta malformada, timeout, broker fora do ar ou desconexão também viram `PublishTransientError`. Resposta com correlação desconhecida é descartada. Os payloads são os do `qc-contracts`, sem schema novo e sem imagem (R-02, R-04);
+     - **ponte sem estado** (`python -m qc_edge.mqtt_bridge`): assina só `batch` e `health` do `DEVICE_ID`, valida o `BatchCreate` (inválido → `rejected` com `HTTP 422: invalid batch payload`) e reusa o `HttpPublisher` para a mesma rota `/inspections/batch` (o `httpx` continua só em `publisher.py`, com os limites da SPEC-030). Só responde a um `ResponseTopic` da forma acima; pedido sem `ResponseTopic` ou sem `CorrelationData` é ignorado com aviso. Se a ponte cair entre a API e a resposta, o publisher reenvia e a API responde `duplicate` (R-05). Logs só com contagem, `result` e tópico; sai com 0 em SIGINT/SIGTERM e 2 com configuração inválida;
+     - **confirmação:** o item só vira enviado com a resposta `ok` da ponte, **nunca** pelo PUBACK, que só confirma o broker. Sem ponte, o lote fica `pending` e é reenviado com backoff;
+     - o heartbeat (SPEC-018) continua por HTTP, direto da borda;
    - um item recusado (413/422) vira `dead` e fica no arquivo. A partir da SPEC-034, `python -m qc_edge.requeue --outbox-path <arquivo> [--yes]` lista os `dead` e os devolve a `pending`, sem mudar o `payload` (a revalidação pelo contrato e a idempotência por `inspection_id` continuam). A partir da SPEC-038, uma linha com coluna fora do formato (editada à mão ou corrompida) vira `dead` no laço, com `last_error = invalid outbox row`, em vez de parar o envio dos outros itens, e a listagem a pula com um aviso que cita só o `rowid` e a coluna.
 
 ### 6.3 Modo coleta (montagem do dataset)
@@ -308,6 +313,20 @@ O pipeline (SPEC-011) lê o manifest só com `csv`/`pandas`, acusa linha sem arq
 ### 6.4 Configuração (`.env` da borda)
 
 `EDGE_HOST` (0.0.0.0; só IPv4 literal, SPEC-025), `EDGE_PORT` (8000), `EDGE_DATA_DIR` (padrão `edge/data`, no `.gitignore`), `EDGE_SESSION_TOKEN` (opcional), `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL`, `MODEL_DIR`, `DATASET_DIR`, `OUTBOX_PATH`, `TYPE_THRESHOLD`, `UNUSABLE_THRESHOLD`, `GRADE_REVIEW_THRESHOLD` (os três últimos são opcionais e sobrescrevem o `decision.json`). A partir da SPEC-018, `HEARTBEAT_INTERVAL_S` (padrão 60; inteiro de 10 a 3.600; `0` desliga; fora disso, a borda não sobe e sai com código 2): o `HeartbeatLoop` envia um `HeartbeatCreate` pelo `HttpPublisher` a cada intervalo, sem passar pelo outbox, e só é registrado nas mesmas condições do laço de publicação (sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL`; R-06).
+
+A partir da SPEC-020 (transporte MQTT, §6.2):
+
+| Variável | Padrão | Regra |
+|---|---|---|
+| `EDGE_PUBLISHER` | `http` | `http` ou `mqtt`; outro valor → a borda não sobe e sai com código 2, com `invalid configuration: EDGE_PUBLISHER must be http or mqtt` |
+| `MQTT_HOST` | `127.0.0.1` | só `127.0.0.1`, `::1` ou `localhost` (o broker roda no notebook); outro → código 2 |
+| `MQTT_PORT` | `1883` | inteiro de 1 a 65535; outro → código 2 |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | vazias | obrigatórias com `EDGE_PUBLISHER=mqtt` (também com `--stub-model` ou sem chave e URL) e sempre na ponte; faltando → código 2, citando só o nome. A senha é segredo: não aparece em log, em `/api/status` nem no console (R-03) |
+| `MQTT_RESPONSE_TIMEOUT_S` | `15` | número de 1 a 60 (prazo único de conexão, PUBACK e resposta da ponte); outro → código 2 |
+
+- `MQTT_HOST`, `MQTT_PORT` e `MQTT_RESPONSE_TIMEOUT_S` são validadas em toda subida, com ou sem `EDGE_PUBLISHER=mqtt`. As mensagens de erro citam a variável, nunca o valor.
+- Com `EDGE_PUBLISHER=mqtt`, o `MqttPublisher` entra no `PublishLoop` nas mesmas condições do `HttpPublisher` (sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL`, que a ponte usa). Com `--stub-model`, nada muda: `InMemorySink` e nenhum publisher (R-06).
+- A ponte (`BridgeSettings`) lê `DEVICE_ID`, `DEVICE_API_KEY` e `CLOUD_API_URL` (regras da SPEC-009, obrigatórias) e `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME` e `MQTT_PASSWORD`, só do ambiente do processo (`uv run --env-file .env --package qc-edge python -m qc_edge.mqtt_bridge`). Identificadores de cliente: `partqc-edge-<DEVICE_ID>` e `partqc-bridge-<DEVICE_ID>`.
 
 ## 7. Modelo (`qc-ml`) — artefatos
 
@@ -380,7 +399,7 @@ Exemplos: `type_accuracy = 0.93127` → `0,9312`; `grade_mae = 0.12341` → `0,1
 
 ## 10. Testes (regras do projeto)
 
-- **Marcadores:** `db` (exige `TEST_DATABASE_URL`; sem ela, o teste é pulado, e no CI a sessão falha; SPEC-001 e SPEC-003), `acceptance`, `slow` e `docker`. O `docker` exige Docker com BuildKit e Compose v2, roda só com `PARTQC_DOCKER_TESTS=1` (senão, o teste é pulado) e é executado pelo workflow `docker`, e não pelo `ci` (SPEC-015 §4.14). A partir da SPEC-020, o `mqtt` exige o `mosquitto` instalado e roda só com `PARTQC_MQTT_TESTS=1` (senão, o teste é pulado), fora do CI.
+- **Marcadores:** `db` (exige `TEST_DATABASE_URL`; sem ela, o teste é pulado, e no CI a sessão falha; SPEC-001 e SPEC-003), `acceptance`, `slow` e `docker`. O `docker` exige Docker com BuildKit e Compose v2, roda só com `PARTQC_DOCKER_TESTS=1` (senão, o teste é pulado) e é executado pelo workflow `docker`, e não pelo `ci` (SPEC-015 §4.14). A partir da SPEC-020, o `mqtt` (broker Mosquitto real, fixture `mosquitto_broker` em `edge/tests/conftest.py`, porta livre de `127.0.0.1` e usuário e senha aleatórios) exige o `mosquitto` e o `mosquitto_passwd` no `PATH` e roda só com `PARTQC_MQTT_TESTS=1` (senão, o teste é pulado), fora do CI; sem broker, os testes usam o `InMemoryBroker`, sem rede.
 - **Sem suíte dentro da suíte** (RV-01 e RV-03 de `reviews/SPEC-023/r1-review-report.md`):
   - Nenhum teste roda a suíte inteira em subprocesso (`pytest` sem caminhos, ou com um diretório inteiro de `testpaths`). Com k testes assim, cada um se protegendo só da própria recursão, a suíte roda muitas vezes por execução, e uma execução interna pode recriar o schema do banco de teste no meio da sessão externa.
   - Um CA do tipo "`ruff check`, `ruff format --check` e `pytest -q` terminam com código 0" é verificado pelo CI (R-09) e pela execução da suíte inteira que o tester já faz e registra no test-report. Ele não ganha teste automatizado: o test-report o marca como "verificado pela execução da suíte" e cita a contagem de testes. As SPECs novas não precisam escrever esse CA, porque a Definição de pronto já exige CI verde.

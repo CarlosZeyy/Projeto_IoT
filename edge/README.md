@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -40,6 +40,11 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 | `CLOUD_API_URL` | vazio | URL base da `qc-api`, sem `/api/v1` no fim (ex.: `https://<seu-servico>.onrender.com`). `https://` obrigatório; `http://` só com `localhost` ou `127.0.0.1` (testes locais). Sem usuário/senha, query ou fragmento. Outro valor → código 2 citando `CLOUD_API_URL`. Vazio = nada é enviado |
 | `OUTBOX_PATH` | `EDGE_DATA_DIR/outbox.sqlite3` | arquivo SQLite do outbox (ignorado com `--stub-model`: nem aberto nem criado); as pastas que faltarem são criadas com `0700` e o arquivo novo com `0600`. Se não abrir (ex.: é um diretório) → código 2 citando `OUTBOX_PATH` |
 | `HEARTBEAT_INTERVAL_S` | `60` | segundos entre dois heartbeats (seção "Heartbeat"); inteiro de 10 a 3600, ou `0` para desligar. Outro valor (ex.: `5`, `abc`) → código 2 citando a variável, com ou sem `--stub-model` |
+| `EDGE_PUBLISHER` | `http` | `http` (envio direto à `qc-api`) ou `mqtt` (Mosquitto local + ponte; seção "Transporte MQTT"). Outro valor → código 2 com `EDGE_PUBLISHER must be http or mqtt` |
+| `MQTT_HOST` | `127.0.0.1` | só `127.0.0.1`, `::1` ou `localhost` (o broker fica no notebook); outro → código 2 citando a variável |
+| `MQTT_PORT` | `1883` | 1 a 65535 |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | vazios | obrigatórias com `EDGE_PUBLISHER=mqtt` (com ou sem `--stub-model`) e na ponte; faltando uma → código 2 citando a variável. A senha é segredo (R-03): nunca aparece em log, no `/api/status` nem no console |
+| `MQTT_RESPONSE_TIMEOUT_S` | `15` | segundos que a borda espera a resposta da ponte a cada lote; número de 1 a 60 |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -272,6 +277,58 @@ Registre o resultado no test-report da SPEC-009.
 5. Em até 90 s, o console mostra `online` e pendentes `0`, e as 3 inspeções aparecem no dashboard.
 
 O que registrar: horários dos passos 2 a 5, o que o console mostrou em cada um e os `inspection_id` das 3 inspeções no dashboard.
+
+## Transporte MQTT (SPEC-020, opcional)
+
+Com `EDGE_PUBLISHER=mqtt`, o laço de envio entrega os lotes do outbox a um **Mosquitto que escuta só em loopback no notebook**, e uma **ponte** (`python -m qc_edge.mqtt_bridge`) os repassa à mesma rota HTTP autenticada da `qc-api` (opção C do ADR-009). O protocolo aparece na demo, a rede não fica exposta (nenhuma porta nova, nenhum broker na nuvem, R-01) e a nuvem continua recebendo como na seção anterior. O padrão continua `http`.
+
+```text
+outbox → MqttPublisher ──MQTT 5, QoS 1──► Mosquitto (127.0.0.1:1883) ──► ponte → HttpPublisher ──HTTPS──► qc-api
+                       ◄──── resposta (result) ────────────────────────────┘
+```
+
+Como funciona:
+
+- a borda publica o `BatchCreate` em `partqc/v1/<DEVICE_ID>/batch` com as propriedades do MQTT 5 `ResponseTopic` (`partqc/v1/<DEVICE_ID>/reply/<sessão>`, aleatória a cada subida) e `CorrelationData` (16 bytes aleatórios). O health check usa `partqc/v1/<DEVICE_ID>/health`, com payload vazio;
+- a ponte valida o lote pelo contrato, chama a API com o `HttpPublisher` (mesmos limites: 5 s por operação, 15 s por envio, 512 KiB de resposta) e responde com a propriedade `result`: `ok` (com o `BatchResult`), `rejected` (com o resumo `HTTP <status>: ...`, nunca o corpo da API), `auth` ou `transient`;
+- **o item só vira `sent` com a resposta `ok` da ponte**, que só existe depois da resposta da API. O PUBACK do broker não confirma nada. Sem resposta em `MQTT_RESPONSE_TIMEOUT_S`, com o broker fora do ar ou com a ponte desligada, as inspeções continuam pendentes e seguem o backoff, a bissecção, o `dead` e o `auth_error` da seção anterior;
+- a ponte não guarda estado: se ela cair entre a API e a resposta, a borda reenvia o lote e a API responde `duplicate` (R-05);
+- os payloads são só o JSON do contrato, nunca imagem (R-02). O heartbeat continua por HTTP, direto da borda (SPEC-018). Com `--stub-model`, nada muda: nada é publicado (R-06).
+
+Passo a passo (trabalho humano, uma vez por máquina):
+
+```bash
+sudo pacman -S mosquitto                                   # repositório extra do Arch; software livre
+mkdir -p ~/.config/partqc && chmod 700 ~/.config/partqc
+mosquitto_passwd -c ~/.config/partqc/mosquitto.passwd partqc-edge   # pede a senha (fora do Git, R-03)
+# edite edge/mosquitto/partqc.conf (ou uma cópia fora do repositório) e troque <usuario> no password_file
+mosquitto -c edge/mosquitto/partqc.conf                    # terminal 1: o broker (127.0.0.1:1883, sem anônimo)
+```
+
+No `.env`, além de `DEVICE_ID`, `DEVICE_API_KEY` e `CLOUD_API_URL` (que a ponte usa), ponha `EDGE_PUBLISHER=mqtt`, `MQTT_USERNAME=partqc-edge` e `MQTT_PASSWORD=<a senha do mosquitto_passwd>`. Depois:
+
+```bash
+uv run --env-file .env --package qc-edge python -m qc_edge.mqtt_bridge   # terminal 2: a ponte
+uv run --env-file .env --package qc-edge qc-edge                         # terminal 3: a borda
+mosquitto_sub -h 127.0.0.1 -u partqc-edge -P '<senha>' -t 'partqc/v1/#' -v   # opcional: ver os lotes
+```
+
+- A ponte não lê o `.env` sozinha (use `--env-file`), não aceita argumentos e exige `DEVICE_API_KEY`, `CLOUD_API_URL`, `MQTT_USERNAME` e `MQTT_PASSWORD`; faltando uma, ou com `MQTT_HOST` fora do loopback, sai com código 2 citando a variável, nunca o valor. Sai com 0 no Ctrl+C (SIGINT) ou SIGTERM. Com o broker fora do ar, ela continua ligada e reconecta sozinha.
+- A ponte assina só os tópicos `batch` e `health` do seu `DEVICE_ID` e responde só em `partqc/v1/<DEVICE_ID>/reply/<sessão>`; um pedido sem `ResponseTopic` ou sem `CorrelationData` é ignorado com um aviso.
+- O log da ponte mostra só contagens, `result` e o tópico (ex.: `batch of 3 item(s) on partqc/v1/edge-01/batch: ok`), nunca o payload, a senha nem o `DEVICE_API_KEY`.
+- O console continua mostrando **Pendentes** e **Conectividade com a nuvem**: com a ponte desligada, os pendentes crescem e a conectividade fica `offline`; ao religar a ponte, eles saem no ciclo seguinte do backoff.
+- Testes com o broker real (marcador `mqtt`): `PARTQC_MQTT_TESTS=1 uv run pytest -q -m mqtt edge/tests` (pulados sem a variável ou sem o `mosquitto` e o `mosquitto_passwd` no `PATH`; nunca rodam no CI).
+
+### Teste manual MQTT (CA-12 da SPEC-020)
+
+Registre o resultado no test-report da SPEC-020.
+
+1. Broker local pelo passo a passo acima.
+2. Ponte e borda com `EDGE_PUBLISHER=mqtt` (modelo real, sem `--stub-model`).
+3. Inspecione 10 peças.
+4. Confira as 10 na nuvem (dashboard).
+5. Derrube a ponte (Ctrl+C no terminal 2), inspecione 3 peças, confira no console que ficam pendentes, religue a ponte e confira as 3 na nuvem.
+6. Com o `mosquitto_sub` acima, confira que os lotes aparecem no tópico `partqc/v1/<DEVICE_ID>/batch`, só com o JSON do resultado, sem imagem.
 
 ## Firewall no Arch
 

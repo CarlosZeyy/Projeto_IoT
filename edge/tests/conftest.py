@@ -5,7 +5,9 @@ SPEC-025 (``jpeg_tools``) insert, right after the SOI of a Pillow JPEG, an EXIF 
 IFD, an XMP APP1, an IPTC APP13 and a COM, and append a Motion-Photo-like trailer after the EOI;
 the rotated samples carry an EXIF (or XMP) ``Orientation``. The ``dummy_model`` fixture
 (SPEC-008) gives the helper that builds dummy ONNX models and model directories, and
-``fake_cloud`` (SPEC-009) the fake cloud, the manual clock and an inspection factory.
+``fake_cloud`` (SPEC-009) the fake cloud, the manual clock and an inspection factory. The
+``mosquitto_broker`` fixture (SPEC-020) starts a real broker for the tests marked ``mqtt``, which
+are skipped without ``PARTQC_MQTT_TESTS=1`` and the ``mosquitto`` executables.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import logging
+import os
 import secrets
 import struct
 import sys
@@ -48,6 +51,25 @@ def _load_dummy_model() -> types.ModuleType:
 def load_fake_cloud() -> types.ModuleType:
     """``edge/tests/fake_cloud.py`` (SPEC-009): fake cloud, manual clock, inspection factory."""
     return _load_helper("fake_cloud.py")
+
+
+def load_mosquitto_support() -> types.ModuleType:
+    """``edge/tests/mosquitto_support.py`` (SPEC-020): the ``mqtt`` marker and a real broker."""
+    return _load_helper("mosquitto_support.py")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """``mqtt`` marker (SPEC-020 section 6): skipped unless ``PARTQC_MQTT_TESTS=1`` and the
+    ``mosquitto`` and ``mosquitto_passwd`` executables are on the ``PATH``."""
+    mqtt_items = [item for item in items if item.get_closest_marker("mqtt") is not None]
+    if not mqtt_items:
+        return
+    support = load_mosquitto_support()
+    reason = support.skip_reason(os.environ)
+    if reason is None:
+        return
+    for item in mqtt_items:
+        item.add_marker(pytest.mark.skip(reason=reason))
 
 
 XMP_PREFIX = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -184,6 +206,12 @@ EDGE_ENV_VARS = (
     "UNUSABLE_THRESHOLD",
     "GRADE_REVIEW_THRESHOLD",
     "HEARTBEAT_INTERVAL_S",
+    "EDGE_PUBLISHER",
+    "MQTT_HOST",
+    "MQTT_PORT",
+    "MQTT_USERNAME",
+    "MQTT_PASSWORD",
+    "MQTT_RESPONSE_TIMEOUT_S",
 )
 
 
@@ -287,3 +315,23 @@ def dummy_model() -> types.ModuleType:
 def fake_cloud() -> types.ModuleType:
     """The ``edge/tests/fake_cloud.py`` helper (SPEC-009)."""
     return load_fake_cloud()
+
+
+@pytest.fixture
+def mosquitto_broker(tmp_path: Path) -> Iterator[types.SimpleNamespace]:
+    """A real Mosquitto on a free port of ``127.0.0.1``, with a random user and password
+    (SPEC-020, ``mqtt`` marker only): ``host``, ``port``, ``username``, ``password``, and
+    ``stop()``/``restart()`` (same port and credentials)."""
+    support = load_mosquitto_support()
+    broker = support.start_mosquitto(tmp_path / "mosquitto")
+    try:
+        yield types.SimpleNamespace(
+            host=broker.host,
+            port=broker.port,
+            username=broker.username,
+            password=broker.password,
+            stop=broker.stop,
+            restart=broker.restart,
+        )
+    finally:
+        broker.stop()
