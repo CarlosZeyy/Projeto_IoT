@@ -21,9 +21,9 @@ Failures of the broker (not reachable, not connected, refused, no PUBACK in time
 Real transport notes:
 
 * ``connect()`` starts the ``paho`` network thread once (``connect_async`` + ``loop_start``) and
-  waits for the CONNACK up to ``connect_timeout_s``; the thread keeps reconnecting in the
-  background (``reconnect_delay_set(1, 30)``), and every subscription is sent again on each new
-  connection (``clean_start=True``).
+  waits for the CONNACK up to ``connect_timeout_s`` (or the ``timeout_s`` given); the thread
+  keeps reconnecting in the background (``reconnect_delay_set(1, 30)``), and every subscription
+  is sent again on each new connection (``clean_start=True``).
 * ``publish()`` refuses at once when the client is not connected (``paho`` would queue the
   message and send it after a reconnection). A message whose PUBACK did not arrive in time may
   still be sent by ``paho`` after a reconnection; the answer to it is discarded by its unknown
@@ -93,8 +93,11 @@ class MqttTransportError(Exception):
 
 
 class MqttTransport(Protocol):
-    def connect(self) -> None:
-        """Connect (idempotent). Raises ``MqttTransportError`` when the broker is not reachable."""
+    def connect(self, timeout_s: float | None = None) -> None:
+        """Connect (idempotent), waiting at most ``timeout_s`` (``None``: the transport's own).
+
+        Raises ``MqttTransportError`` when the broker is not reachable.
+        """
         ...
 
     def publish(self, message: MqttMessage, qos: int = 1, timeout_s: float | None = None) -> None:
@@ -201,7 +204,7 @@ class PahoMqttTransport:
 
     # -- MqttTransport ---------------------------------------------------------------------
 
-    def connect(self) -> None:
+    def connect(self, timeout_s: float | None = None) -> None:
         with self._lock:
             if self._closed:
                 raise MqttTransportError(TRANSPORT_CLOSED)
@@ -215,7 +218,8 @@ class PahoMqttTransport:
                 )
                 self._client.loop_start()
                 self._started = True
-        if not self._connected.wait(self._connect_timeout_s):
+        wait_s = self._connect_timeout_s if timeout_s is None else max(timeout_s, 0.0)
+        if not self._connected.wait(wait_s):
             raise MqttTransportError(self._connect_error)
 
     def publish(self, message: MqttMessage, qos: int = 1, timeout_s: float | None = None) -> None:
@@ -441,7 +445,7 @@ class InMemoryTransport:
         """Connected and the broker running."""
         return self._connected and self.broker.running
 
-    def connect(self) -> None:
+    def connect(self, timeout_s: float | None = None) -> None:
         if not self.broker.running:
             raise MqttTransportError(BROKER_UNREACHABLE)
         self._connected = True

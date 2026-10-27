@@ -13,6 +13,7 @@ import re
 import time
 import types
 from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -25,7 +26,12 @@ from qc_edge.mqtt_publisher import (
     health_topic,
     rejected_detail,
 )
-from qc_edge.mqtt_transport import InMemoryBroker, InMemoryTransport, MqttMessage
+from qc_edge.mqtt_transport import (
+    InMemoryBroker,
+    InMemoryTransport,
+    MqttMessage,
+    MqttTransportError,
+)
 from qc_edge.publisher import (
     PublishAuthError,
     PublishRejectedError,
@@ -394,3 +400,33 @@ def test_health_without_bridge_is_false_within_the_timeout(transport: InMemoryTr
 def test_health_with_broker_down(broker: InMemoryBroker, transport: InMemoryTransport) -> None:
     broker.stop()
     assert MqttPublisher(transport, DEVICE).check_health() is False
+
+
+class _SlowConnect:
+    """A transport whose ``connect`` waits the whole ``timeout_s`` and fails (broker down)."""
+
+    def __init__(self) -> None:
+        self.timeouts: list[float | None] = []
+
+    def connect(self, timeout_s: float | None = None) -> None:
+        self.timeouts.append(timeout_s)
+        time.sleep(timeout_s if timeout_s is not None else 5.0)
+        raise MqttTransportError("mqtt broker not reachable")
+
+    def subscribe(self, topic_filter: str, handler: Any, qos: int = 1) -> None:
+        pass
+
+    def publish(self, message: MqttMessage, qos: int = 1, timeout_s: float | None = None) -> None:
+        raise AssertionError("never published")
+
+    def disconnect(self) -> None:
+        pass
+
+
+def test_connection_wait_is_inside_the_response_timeout() -> None:
+    transport = _SlowConnect()
+    start = time.monotonic()
+    assert MqttPublisher(transport, DEVICE, 0.3).check_health() is False
+    assert time.monotonic() - start < 1.5
+    (timeout,) = transport.timeouts
+    assert timeout is not None and 0 < timeout <= 0.3

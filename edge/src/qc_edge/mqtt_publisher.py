@@ -82,6 +82,10 @@ def rejected_detail(payload: bytes) -> str:
     return clean or "rejected by the bridge"
 
 
+def _remaining(deadline: float) -> float:
+    return max(deadline - time.monotonic(), 0.0)
+
+
 @dataclass
 class _Pending:
     event: threading.Event = field(default_factory=threading.Event)
@@ -161,14 +165,16 @@ class MqttPublisher:
 
     # -- request / response ------------------------------------------------------------------
 
-    def _ensure_ready(self) -> None:
+    def _ensure_ready(self, deadline: float) -> None:
         if not self._subscribed:
             self._transport.subscribe(self._reply_topic, self._on_answer, qos=QOS)
             self._subscribed = True
-        self._transport.connect()
+        self._transport.connect(timeout_s=_remaining(deadline))
 
     def _request(self, topic: str, payload: bytes) -> MqttMessage:
         """Publish a request and return the answer with the same ``CorrelationData``.
+
+        The connection, the PUBACK and the answer share one deadline of ``response_timeout_s``.
 
         Raises:
             PublishTransientError: broker down, no PUBACK, or no answer within the timeout.
@@ -180,7 +186,7 @@ class MqttPublisher:
             self._pending[correlation] = pending
         try:
             try:
-                self._ensure_ready()
+                self._ensure_ready(deadline)
                 self._transport.publish(
                     MqttMessage(
                         topic=topic,
@@ -189,11 +195,11 @@ class MqttPublisher:
                         correlation_data=correlation,
                     ),
                     qos=QOS,
-                    timeout_s=max(deadline - time.monotonic(), 0.0),
+                    timeout_s=_remaining(deadline),
                 )
             except MqttTransportError as exc:
                 raise PublishTransientError(str(exc) or "mqtt broker unavailable") from None
-            if not pending.event.wait(max(deadline - time.monotonic(), 0.0)):
+            if not pending.event.wait(_remaining(deadline)):
                 raise PublishTransientError(
                     f"no answer from the mqtt bridge within {self._response_timeout_s:g} s"
                 )
