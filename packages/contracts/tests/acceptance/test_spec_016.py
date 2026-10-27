@@ -115,7 +115,8 @@ def test_ca01_contracts_version_is_0_4_0() -> None:
 
 
 def test_ca01_object_type_members_in_order() -> None:
-    assert [m.value for m in ObjectType] == ALL_TYPES
+    # SPEC-021 section 3.1: the 4 power tools come after these 8 values, in this order.
+    assert [m.value for m in ObjectType][: len(ALL_TYPES)] == ALL_TYPES
 
 
 def test_ca01_tool_labels_pt() -> None:
@@ -138,9 +139,10 @@ def test_ca01_grade_groups_are_disjoint_and_cover_the_enum() -> None:
         assert a.isdisjoint(b), (a, b)
     union = GRADE_REQUIRED_OBJECT_TYPES | GRADE_FORBIDDEN_OBJECT_TYPES | GRADE_OPTIONAL_OBJECT_TYPES
     assert union == set(ObjectType)
-    assert sum(len(g) for g in groups) == 8
+    assert sum(len(g) for g in groups) == len(ObjectType)
     assert {m.value for m in GRADE_REQUIRED_OBJECT_TYPES} == {"screw", "nut"}
-    assert {m.value for m in GRADE_FORBIDDEN_OBJECT_TYPES} == {"unknown"}
+    # SPEC-021 section 3.1: the 4 power tools join unknown in the group without grade.
+    assert "unknown" in {m.value for m in GRADE_FORBIDDEN_OBJECT_TYPES}
     assert {m.value for m in GRADE_OPTIONAL_OBJECT_TYPES} == set(TOOLS)
 
 

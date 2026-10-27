@@ -575,6 +575,11 @@ EXPECTED_LABELS = [
             "allen_key": "chave Allen",
             "flat_screwdriver": "chave de fenda",
             "phillips_screwdriver": "chave Phillips",
+            # SPEC-021 section 3.1: labels of the 4 power tools.
+            "angle_grinder": "esmerilhadeira",
+            "saw": "serra",
+            "drill": "furadeira",
+            "cordless_screwdriver": "parafusadeira",
         },
     ),
     (SOURCE_LABELS_PT, Source, {"live": "real", "simulated": "simulado"}),

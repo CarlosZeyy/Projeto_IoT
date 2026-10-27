@@ -82,6 +82,7 @@ CA01_STAMP = "20261022T141503Z"
 GRADES = ["perfect", "good", "fair", "poor", "unusable"]
 # SPEC-016 section 4.4: the hand tools of the coverage table.
 TOOLS_016 = ["pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver"]
+POWER_021 = ["angle_grinder", "saw", "drill", "cordless_screwdriver"]
 HEADER_MISMATCH = {"detail": "manifest header mismatch"}
 TYPE_CONFLICT = {"detail": "item_id already registered with another object_type"}
 CAPTURE_EXISTS = {"detail": "capture already exists, try again"}
@@ -724,11 +725,14 @@ def test_ca15_compute_coverage_counts_images_and_items(edge: Edge) -> None:
 
     cells = compute_coverage(edge.manifest)
 
-    # SPEC-016 section 4.4: the table gains the rows of the 5 hand tools (5 grades each).
-    assert len(cells) == 11 + 25
+    # SPEC-016 section 4.4: the table gains the rows of the 5 hand tools (5 grades each);
+    # SPEC-021 section 3.1: and one row per power tool, without grade.
+    assert len(cells) == 11 + 25 + 4
     by_key = {(c.object_type, c.grade): c for c in cells}
     expected_keys = {(t, g) for t in ("screw", "nut") for g in GRADES} | {("other", None)}
-    assert set(by_key) == expected_keys | {(t, g) for t in TOOLS_016 for g in GRADES}
+    assert set(by_key) == (
+        expected_keys | {(t, g) for t in TOOLS_016 for g in GRADES} | {(t, None) for t in POWER_021}
+    )
     for key, cell in by_key.items():
         if key == ("screw", "perfect"):
             assert (cell.images, cell.items) == (130, 9)
@@ -760,7 +764,8 @@ def test_ca15_console_shows_the_coverage_table(edge: Edge) -> None:
 
 def test_ca15_missing_manifest_is_an_empty_table(edge: Edge) -> None:
     cells = compute_coverage(edge.manifest)
-    assert len(cells) == 11 + 25  # SPEC-016 section 4.4: plus the 5 tools x 5 grades
+    # SPEC-016 section 4.4: plus the 5 tools x 5 grades; SPEC-021: plus 4 power tool rows.
+    assert len(cells) == 11 + 25 + 4
     assert all((c.images, c.items) == (0, 0) for c in cells)
     page = console_get(edge.app())
     assert page.status_code == 200
@@ -1156,7 +1161,8 @@ def test_extra_compute_coverage_ignores_unknown_cells(edge: Edge) -> None:
         ],
     )
     cells = {(c.object_type, c.grade): c for c in compute_coverage(edge.manifest)}
-    assert len(cells) == 11 + 25  # SPEC-016 section 4.4: plus the 5 tools x 5 grades
+    # SPEC-016 section 4.4: plus the 5 tools x 5 grades; SPEC-021: plus 4 power tool rows.
+    assert len(cells) == 11 + 25 + 4
     assert (cells[("screw", "good")].images, cells[("screw", "good")].items) == (1, 1)
 
 
