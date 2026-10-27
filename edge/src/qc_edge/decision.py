@@ -10,7 +10,8 @@ gives ``p4 == 1.0`` with ``p3 > 0`` (``sum(i * p_i) > 4``), which ``InspectionCr
 The clamp never changes ``object_type``, ``grade`` nor ``needs_review``.
 
 SPEC-016 section 4.4 (ADR-021): a decided type listed in ``labels.ungraded_object_types`` (a
-hand tool the model does not grade) comes out with ``grade``, ``grade_score`` and
+hand tool the model does not grade, or a power tool, which is always listed there: SPEC-021 and
+the load rule of ``OnnxInferencer``) comes out with ``grade``, ``grade_score`` and
 ``grade_confidence`` ``None``, and ``needs_review`` depends only on the type confidence. The
 grade groups of the contract are checked again by ``InspectionCreate``.
 """

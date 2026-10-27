@@ -74,6 +74,10 @@ from qc_edge.collect import (
     GRADED_TARGET_ITEMS,
     OTHER_TARGET_IMAGES,
     OTHER_TARGET_ITEMS,
+    POWER_TOOL_MIN_ITEMS,
+    POWER_TOOL_OBJECT_TYPES,
+    POWER_TOOL_TARGET_IMAGES,
+    POWER_TOOL_TARGET_ITEMS,
     TOOL_GRADE_TARGET_IMAGES,
     TOOL_GRADE_TARGET_ITEMS,
     TOOL_MIN_ITEMS,
@@ -175,18 +179,21 @@ CONNECTIVITY_HINTS_PT = {
 VERDICT_APPROVED = "aprovada"
 VERDICT_REJECTED = "reprovada"
 VERDICT_UNKNOWN = "desconhecido"
-# A known object without a grade: a hand tool the model does not grade (SPEC-016 section 4.4).
+# A known object without a grade: a hand tool the model does not grade (SPEC-016 section 4.4) or
+# a power tool, never graded (SPEC-021).
 VERDICT_UNGRADED = "sem grau"
 
 # Classes of the collect mode in PT-BR, in the order of the selector: parafuso, porca, the hand
-# tools and "outro" last. ``other`` is a model class, not a contract value, so it has no entry in
-# ``qc_contracts.labels``; the others come from there.
+# tools, the power tools and "outro" last. ``other`` is a model class, not a contract value, so it
+# has no entry in ``qc_contracts.labels``; the others come from there.
 DATASET_OBJECT_TYPE_LABELS_PT = {
     DatasetObjectType.SCREW: OBJECT_TYPE_LABELS_PT[ObjectType.SCREW],
     DatasetObjectType.NUT: OBJECT_TYPE_LABELS_PT[ObjectType.NUT],
     **{tool: OBJECT_TYPE_LABELS_PT[ObjectType(tool.value)] for tool in TOOL_OBJECT_TYPES},
+    **{tool: OBJECT_TYPE_LABELS_PT[ObjectType(tool.value)] for tool in POWER_TOOL_OBJECT_TYPES},
     DatasetObjectType.OTHER: "outro",
 }
+_POWER_TOOL_VALUES = frozenset(tool.value for tool in POWER_TOOL_OBJECT_TYPES)
 COVERAGE_UNREADABLE_HTML = (
     '<p class="warning" id="coverage-warning">Não foi possível ler o manifest.csv do dataset: '
     "confira o arquivo no notebook. A tabela abaixo está zerada.</p>"
@@ -235,7 +242,8 @@ def _verdict(object_type: ObjectType, grade: Grade | None) -> tuple[bool | None,
     """``(approved, verdict label)``; the defect rule is only ``qc_contracts.is_defective``.
 
     Without a grade there is no verdict (``approved`` is ``None``): ``desconhecido`` for an
-    ``unknown`` object, ``sem grau`` for a known type the model does not grade (SPEC-016).
+    ``unknown`` object, ``sem grau`` for a known type the model does not grade (SPEC-016) and
+    for a power tool, never graded (SPEC-021).
     """
     if grade is None:
         return None, VERDICT_UNKNOWN if object_type is ObjectType.UNKNOWN else VERDICT_UNGRADED
@@ -686,7 +694,9 @@ def _coverage_html(dataset: DatasetWriter) -> str:
         f"(mínimo {GRADED_MIN_ITEMS}). Ferramentas: {TOOL_GRADE_TARGET_IMAGES} imagens e "
         f"{TOOL_GRADE_TARGET_ITEMS} peças por grau (critério de grau, opcional); identificação: "
         f"{TOOL_TARGET_IMAGES} imagens e {TOOL_TARGET_ITEMS} peças por ferramenta (mínimo "
-        f"{TOOL_MIN_ITEMS}). Outro: {OTHER_TARGET_IMAGES} imagens e "
+        f"{TOOL_MIN_ITEMS}). Ferramentas elétricas (sem grau): {POWER_TOOL_TARGET_IMAGES} "
+        f"imagens e {POWER_TOOL_TARGET_ITEMS} peças por ferramenta (mínimo "
+        f"{POWER_TOOL_MIN_ITEMS}). Outro: {OTHER_TARGET_IMAGES} imagens e "
         f"{OTHER_TARGET_ITEMS} objetos. Em verde, as células que atingiram as duas metas.</p>\n"
     )
     return (
@@ -702,7 +712,10 @@ def _coverage_html(dataset: DatasetWriter) -> str:
 
 def _coverage_row_html(cell: CoverageCell) -> str:
     object_type = DATASET_OBJECT_TYPE_LABELS_PT[DatasetObjectType(cell.object_type)]
-    grade = GRADE_LABELS_PT[Grade(cell.grade)] if cell.grade is not None else "—"
+    if cell.grade is not None:
+        grade = GRADE_LABELS_PT[Grade(cell.grade)]
+    else:
+        grade = VERDICT_UNGRADED if cell.object_type in _POWER_TOOL_VALUES else "—"
     cells = (
         object_type,
         grade,
