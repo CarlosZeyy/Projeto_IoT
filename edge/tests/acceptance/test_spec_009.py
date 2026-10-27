@@ -78,6 +78,7 @@ ROOT = EDGE_ROOT.parent  # repository root
 
 BATCH_PATH = "/api/v1/inspections/batch"
 HEALTH_PATH = "/api/v1/health"
+HB_PATH = "/api/v1/devices/edge-01/heartbeat"  # SPEC-018 §4.4, default DEVICE_ID
 SESSION_HEADER = "X-Session-Token"
 PORT = 8000
 T0 = datetime(2026, 10, 1, 12, 0, 0, tzinfo=UTC)
@@ -1565,11 +1566,12 @@ def test_extra_cli_with_key_and_url_publishes_over_real_http(
     ids = {r.json()["inspection"]["inspection_id"] for r in runner.result["responses"]}
     assert set(local_cloud.stored) == ids
     for method, path, headers, body in local_cloud.seen:
-        assert (method, path) in {("POST", BATCH_PATH), ("GET", HEALTH_PATH)}
+        assert (method, path) in {("POST", BATCH_PATH), ("GET", HEALTH_PATH), ("POST", HB_PATH)}
         lowered = {k.lower(): v for k, v in headers.items()}
         if method == "POST":
             assert lowered["x-api-key"] == key
             assert lowered["content-type"].startswith("application/json")
+        if (method, path) == ("POST", BATCH_PATH):
             for item in json.loads(body)["items"]:
                 assert set(item) == CONTRACT_FIELDS
                 assert item["source"] == "live"

@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Security |
+| Rodada atual | r2 |
 | Autor da implementação | developer (Parte A: contrato, banco, API, borda e dashboard) e depois ml-engineer (Parte B: `qc-ml`), na mesma rodada, como na SPEC-016 |
 | Tags | contrato, security |
 | Depende de | SPEC-016 (grupos de tipos, `ungraded_object_types`, extensão do teste), SPEC-018 (contrato 0.5.0; esta SPEC leva a 0.6.0), SPEC-034 |
@@ -135,3 +135,4 @@ Mantida como registro. A resposta está na linha da aprovação no Histórico (2
 | 2026-10-24 | SPEC reescrita para a aprovação, com a regra de escopo mantida. Perguntas do rascunho resolvidas: (1) invariante → ADR-021 (as elétricas no grupo "sem grau", contrato 0.6.0 minor); (2) furadeira e parafusadeira separadas, confusão reportada; (3) metas humanas (3 unidades no mínimo, 6 de meta, 90 imagens) e adiamento de tipo sem unidades; (4) teste estendido → ADR-022. Corrigido: imagens públicas só no treino (ADR-020; o rascunho dizia treino e validação). Novos: Parte A e Parte B na mesma rodada; tag `security`; dependências das SPECs 016, 018 e 034; captura das elétricas; fixture com 12 tipos; ajustes de aceite antigos; CAs CA-01 a CA-13 testáveis e CA-14 manual; pergunta sobre o congelamento do modelo. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta; a regra de escopo da Fase 3 continua. Pergunta 1 do §9: o modelo com as elétricas só substitui o da demo se as métricas de parafuso e porca não piorarem na comparação do CHANGELOG (recomendação aceita). Ferramentas: segue a regra de no mínimo 3 peças físicas por tipo. | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: o aviso do topo passa a registrar a aprovação, mantendo a regra de escopo da Fase 3; ADR-021 e ADR-022 como `Aceito` nos "ADRs relevantes"; §9 marcada como respondida, com a resposta da linha anterior. A captura das elétricas (§3.3) **não** foi copiada para `docs/dataset-protocol.md`: esta SPEC não manda copiá-la na aprovação (a Definição de pronto deixa o protocolo para a entrega) e a Fase 3 só roda depois do portão da Fase 2. As linhas anteriores do Histórico ficam como estavam (registro). | Status `Ready` e ADRs `Aceito` desde o PR #45; sobravam textos da fase de rascunho | Architect, a pedido do orquestrador |
+| 2026-10-26 | Entra em `In Dev` antes do portão da Fase 3 (22/11), por decisão do humano de 2026-10-26: só código e testes sintéticos; o modelo real depende das fotos das ferramentas elétricas (CA manual). Encadeada na SPEC-020 (sobre 038, 017, 018, 016 e 036); o merge sai depois deles. | Resposta do humano de 2026-10-26 | Orquestrador, a pedido do humano |

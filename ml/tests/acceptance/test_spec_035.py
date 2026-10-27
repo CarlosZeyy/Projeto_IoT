@@ -1043,7 +1043,8 @@ def test_ca11_data_report_by_origin(tmp_path: Path, capsys) -> None:
 
 def test_ca12_metrics_counts_by_origin(_evaluated: SimpleNamespace) -> None:
     metrics = json.loads((_evaluated.model_dir / "metrics.json").read_text(encoding="utf-8"))
-    assert set(metrics) == METRIC_KEYS
+    # SPEC-016 section 4.8: new top-level key tool_grade_metrics.
+    assert set(metrics) == METRIC_KEYS | {"tool_grade_metrics"}
     counts = metrics["counts"]
     assert counts["train"]["by_origin"] == {"capture": 44, "contributor": 0, "external": 11}
     assert counts["val"]["by_origin"]["external"] == 0

@@ -8,7 +8,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
 
 def test_import_and_version() -> None:
-    assert qc_contracts.__version__ == "0.3.0"
+    assert qc_contracts.__version__ == "0.6.0"
     assert version("qc-contracts") == qc_contracts.__version__
 
 
@@ -31,6 +31,15 @@ def test_readme_has_version_history_row() -> None:
     rows = [line for line in readme.splitlines() if line.startswith("| 0.3.0 |")]
     assert len(rows) == 1
     assert "SPEC-026" in rows[0]
+    rows = [line for line in readme.splitlines() if line.startswith("| 0.4.0 |")]
+    assert len(rows) == 1
+    assert "SPEC-016" in rows[0]
+    rows = [line for line in readme.splitlines() if line.startswith("| 0.5.0 |")]
+    assert len(rows) == 1
+    assert "SPEC-018" in rows[0]
+    rows = [line for line in readme.splitlines() if line.startswith("| 0.6.0 |")]
+    assert len(rows) == 1
+    assert "SPEC-021" in rows[0]
 
 
 def test_public_api_is_exported() -> None:

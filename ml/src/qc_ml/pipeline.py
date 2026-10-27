@@ -51,7 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         result = train.run(config, resume=args.resume)
         step = "export"
-        export.run(config, model=result.model)
+        export.run(config, model=result.model, labels=result.labels)
         step = "thresholds"
         thresholds.run(config)
         step = "evaluate"

@@ -22,6 +22,12 @@ This CLI is the only way such a file enters ``DATASET_DIR``::
   ``rename``. The manifest row is appended before the ``sources.csv`` row, and a failure of the
   second one rolls back the first (SPEC-036 section 4.4).
 
+Since SPEC-038: the inbox and the plan are refused inside a Git repository (section 4.7); the
+image is saved without the metadata inherited from the input (a PNG ``comment``, section 4.3);
+the directories created for a row that fails are removed (section 4.5); a hash imported by
+another run meanwhile is skipped under the lock (section 4.6); and the ``PIL`` logger stays at
+``INFO`` at least (section 4.4).
+
 The input files are only read: never changed, renamed nor deleted, and their bytes (with the
 EXIF) are never written under ``DATASET_DIR`` nor printed; only their SHA-256 enters the dataset
 (R-14). Nothing here opens a network connection (R-02). Every path printed goes through
@@ -62,12 +68,13 @@ from qc_edge.collect import (
     CAPTURED_AT_FORMAT,
     FILE_TIMESTAMP_FORMAT,
     GRADE_VALUES,
-    ITEM_PREFIX_TYPES,
+    GRADED_DATASET_TYPES,
     LABELERS,
     MANIFEST_COLUMNS,
     MANIFEST_NAME,
     NO_GRADE_DIR,
     RAW_SUBDIR,
+    UNGRADED_DATASET_TYPES,
     CsvHeaderMismatchError,
     CsvUnreadableError,
     DatasetObjectType,
@@ -78,6 +85,7 @@ from qc_edge.collect import (
     ManifestUnreadableError,
     append_csv_row,
     has_forbidden_char,
+    item_prefix_matches,
     manifest_file_lock,
     read_csv_rows,
     read_manifest_entries,
@@ -86,7 +94,7 @@ from qc_edge.collect import (
     write_private_file_atomically,
 )
 from qc_edge.fsutil import fsync_dir, make_private_dirs
-from qc_edge.privacy import printable_path
+from qc_edge.privacy import limit_pil_logging, printable_path
 from qc_preprocess import InvalidImageError, PreprocessParams, load_image
 
 logger = logging.getLogger("qc_edge.importer")
@@ -153,9 +161,9 @@ ORIGIN_CONTRIBUTOR = "contributor"
 ORIGIN_EXTERNAL = "external"
 ORIGINS = frozenset({ORIGIN_CONTRIBUTOR, ORIGIN_EXTERNAL})
 # Whole-string patterns, always with ``re.fullmatch`` (SPEC-036 section 4.2).
-CONTRIBUTOR_ITEM_PATTERN = r"[SNO]-[0-9]{3}"
-EXTERNAL_ITEM_PATTERN = r"X[SNO]-[0-9]{4}"
-TOOLS_PREFIXES = ("T-", "XT-")
+# ``T``/``XT``: hand tools (SPEC-016 section 4.4) and power tools (SPEC-021).
+CONTRIBUTOR_ITEM_PATTERN = r"[SNOT]-[0-9]{3}"
+EXTERNAL_ITEM_PATTERN = r"X[SNOT]-[0-9]{4}"
 CONTRIBUTOR_PATTERN = r"c[0-9]{2}"
 SOURCE_ID_PATTERN = r"[a-z0-9][a-z0-9-]{2,39}"
 ANGLE_PATTERN = r"[0-4]"
@@ -163,7 +171,8 @@ SOURCE_REF_MAX_LENGTH = 200
 FILE_MAX_LENGTH = 255
 IMPORT_MAX_BYTES = 40 * 1024 * 1024
 _OBJECT_TYPE_VALUES = frozenset(member.value for member in DatasetObjectType)
-_GRADED_TYPES = frozenset({DatasetObjectType.SCREW.value, DatasetObjectType.NUT.value})
+_GRADED_TYPES = frozenset(member.value for member in GRADED_DATASET_TYPES)
+_UNGRADED_TYPES = frozenset(member.value for member in UNGRADED_DATASET_TYPES)
 
 # ------------------------------------------------------------------------------ normalisation
 
@@ -207,6 +216,9 @@ MISSING_PRIVACY_MESSAGE = (
 )
 INBOX_NOT_DIR_MESSAGE = "--inbox must be an existing directory"
 INBOX_INSIDE_MESSAGE = "inbox must be outside the dataset"
+INBOX_IN_GIT_MESSAGE = "inbox must be outside any git repository"
+PLAN_IN_GIT_MESSAGE = "plan must be outside any git repository"
+GIT_ENTRY_NAME = ".git"
 DATASET_NOT_DIR_MESSAGE = "--dataset-dir must be a directory"
 PLAN_NOT_READABLE_MESSAGE = "cannot read --plan"
 REGISTRY_NOT_FOUND_MESSAGE = "external sources registry not found"
@@ -272,6 +284,10 @@ class _RowFailed(Exception):
         super().__init__(reason)
 
 
+class _AlreadyImported(Exception):
+    """The input hash entered ``sources.csv`` after phase 1 (another run): the row is skipped."""
+
+
 class _ImportStopped(Exception):
     """The import stops at once (I/O failure, header changed meanwhile): exit code 1."""
 
@@ -321,6 +337,9 @@ def normalize_imported_image(data: bytes) -> tuple[bytes, int, int]:
         raise ImageRejectedError(REASON_TOO_SMALL)
 
     buffer = io.BytesIO()
+    # Nothing inherited from the input goes to the encoder, such as the ``comment`` of a PNG
+    # text chunk, which Pillow would write as a COM segment (SPEC-038 section 4.3).
+    image.info.clear()
     image.save(buffer, "JPEG", quality=OUTPUT_JPEG_QUALITY)
     output = buffer.getvalue()
     if not _output_is_clean(output, (width, height)):
@@ -440,8 +459,6 @@ def _item_formats(item_id: str) -> tuple[bool, bool]:
 
 
 def _item_problem(item_id: str, origin: str) -> str | None:
-    if item_id.startswith(TOOLS_PREFIXES):
-        return "tools_not_supported"
     own, external = _item_formats(item_id)
     if origin == ORIGIN_CONTRIBUTOR:
         expected, other = own, external
@@ -461,13 +478,15 @@ def _object_type_problem(object_type: str, item_id: str) -> str | None:
     if not own and not external:
         return None  # the item_id problem is already reported
     letter = item_id[1] if external else item_id[0]
-    if ITEM_PREFIX_TYPES[letter].value != object_type:
+    if not item_prefix_matches(letter, object_type):
         return "item_prefix_mismatch"
     return None
 
 
 def _grade_problem(grade: str, object_type: str) -> str | None:
-    if object_type == DatasetObjectType.OTHER.value:
+    # ``other`` and the power tools (SPEC-021) never have a grade; a filled grade is the same
+    # problem for both (``grade_on_other``, the code of SPEC-036 section 4.2).
+    if object_type in _UNGRADED_TYPES:
         return "grade_on_other" if grade else None
     if object_type in _GRADED_TYPES:
         if not grade:
@@ -647,10 +666,24 @@ def _read_plan(plan: Path) -> tuple[list[tuple[int, list[str]]], list[PlanProble
     return records, []
 
 
+def inside_git_repository(path: Path) -> bool:
+    """Whether ``path`` or a directory above it, up to the root, has a ``.git`` entry.
+
+    The entry may be a directory or a file (a worktree), checked with ``os.path.lexists``
+    (SPEC-038 section 4.7). ``path`` is used as given: the caller resolves it first.
+    """
+    return any(os.path.lexists(directory / GIT_ENTRY_NAME) for directory in (path, *path.parents))
+
+
 def load_plan(
     *, dataset_dir: Path, inbox: Path, plan: Path, external_sources: Path
 ) -> list[PlanRow]:
     """Phase 1 (SPEC-036 sections 4.1 and 4.2): validate everything, write nothing.
+
+    Before the dataset and the plan are read, the inbox (after ``realpath``) and the directory
+    of the plan (after the ``realpath`` of the plan) must be outside any Git repository
+    (SPEC-038 section 4.7): a ``git add -A`` would publish photos of third parties with their
+    EXIF. ``external_sources`` and ``dataset_dir`` are not checked.
 
     Raises:
         UsageError: a fixed message (exit code 2).
@@ -662,6 +695,10 @@ def load_plan(
     dataset_real = Path(os.path.realpath(dataset_dir))
     if inbox_real.is_relative_to(dataset_real) or dataset_real.is_relative_to(inbox_real):
         raise UsageError(INBOX_INSIDE_MESSAGE)
+    if inside_git_repository(inbox_real):
+        raise UsageError(INBOX_IN_GIT_MESSAGE)
+    if inside_git_repository(Path(os.path.realpath(plan)).parent):
+        raise UsageError(PLAN_IN_GIT_MESSAGE)
     if os.path.lexists(dataset_dir) and not dataset_dir.is_dir():
         raise UsageError(DATASET_NOT_DIR_MESSAGE)
     state = _read_dataset(dataset_dir)
@@ -808,10 +845,19 @@ class _Importer:
         logger.error("dataset write failed: %s", exc.strerror or type(exc).__name__)
         return _ImportStopped(REASON_WRITE_FAILED)
 
-    def _check_headers(self) -> list[ManifestEntry]:
+    @property
+    def exclusions_path(self) -> Path:
+        return self._root / EXCLUSIONS_NAME
+
+    def _check_headers(self) -> tuple[list[ManifestEntry], frozenset[str]]:
+        """Step 2: the manifest entries and the input hashes already imported.
+
+        A hash counts as imported when its ``sources.csv`` row is not of an image of
+        ``exclusions.csv`` (the rule of phase 1, SPEC-038 section 4.6).
+        """
         try:
             entries = read_manifest_entries(self.manifest_path)
-            read_csv_rows(self.sources_path, SOURCES_COLUMNS)
+            sources = read_csv_rows(self.sources_path, SOURCES_COLUMNS) or []
         except ManifestHeaderMismatchError:
             raise _ImportStopped(MANIFEST_MISMATCH_MESSAGE) from None
         except ManifestUnreadableError:
@@ -820,13 +866,31 @@ class _Importer:
             raise _ImportStopped(SOURCES_MISMATCH_MESSAGE) from None
         except CsvUnreadableError:
             raise _ImportStopped(SOURCES_UNREADABLE_MESSAGE) from None
-        return entries
+        try:
+            exclusions = read_csv_rows(self.exclusions_path, EXCLUSIONS_COLUMNS) or []
+        except CsvHeaderMismatchError:
+            raise _ImportStopped(EXCLUSIONS_MISMATCH_MESSAGE) from None
+        except CsvUnreadableError:
+            raise _ImportStopped(EXCLUSIONS_UNREADABLE_MESSAGE) from None
+        excluded = {line[0] for line in exclusions if line}
+        imported = frozenset(
+            line[5]
+            for line in sources
+            if len(line) == len(SOURCES_COLUMNS) and line[0] not in excluded
+        )
+        return entries, imported
 
     def _store_locked(self, row: PlanRow, data: bytes) -> str | None:
-        """Steps 2 to 6 under the lock; ``None`` when the name is already taken (step 3)."""
-        entries = self._check_headers()  # step 2
+        """Steps 2 to 6 under the lock; ``None`` when the name is already taken (step 3).
+
+        Raises:
+            _AlreadyImported: the input hash entered ``sources.csv`` after phase 1.
+        """
+        entries, imported = self._check_headers()  # step 2
         if any(e.item_id == row.item_id and e.object_type != row.object_type for e in entries):
             raise _RowFailed(REASON_ITEM_CONFLICT)
+        if row.input_sha256 in imported:  # another run imported it (SPEC-038 section 4.6)
+            raise _AlreadyImported()
 
         ts = self._clock().astimezone(UTC)  # step 3
         grade_dir = row.grade or NO_GRADE_DIR
@@ -836,7 +900,18 @@ class _Importer:
         if os.path.lexists(target) or any(e.image_path == image_path for e in entries):
             return None
 
-        make_private_dirs(target.parent, sync=True, relative_to=self._root)  # step 4
+        created = make_private_dirs(target.parent, sync=True, relative_to=self._root)  # step 4
+        try:
+            self._write_row(row, data, target, image_path, ts)
+        except BaseException:
+            self._remove_dirs(created)  # SPEC-038 section 4.5
+            raise
+        return image_path
+
+    def _write_row(
+        self, row: PlanRow, data: bytes, target: Path, image_path: str, ts: datetime
+    ) -> None:
+        """Steps 4 (the image) to 6; on failure the image and the manifest row are undone."""
         write_private_file_atomically(target, lambda handle: handle.write(data), root=self._root)
         manifest_row = (
             image_path,
@@ -875,12 +950,24 @@ class _Importer:
                 )
             self._remove_image(target)
             raise
-        return image_path
 
     def _remove_image(self, target: Path) -> None:
         with contextlib.suppress(OSError):
             target.unlink(missing_ok=True)
         fsync_dir(target.parent, relative_to=self._root)
+
+    def _remove_dirs(self, created: Sequence[Path]) -> None:
+        """Remove the directories created for this row, innermost first (SPEC-038 section 4.5).
+
+        ``created`` is the list of ``make_private_dirs`` (outermost first), so a directory that
+        existed before the row is never touched. One that is not empty stays (``OSError``).
+        """
+        for directory in reversed(created):
+            try:
+                os.rmdir(directory)
+            except OSError:
+                continue
+            fsync_dir(directory.parent, relative_to=self._root)
 
 
 def _phase2_input(row: PlanRow) -> bytes:
@@ -925,6 +1012,10 @@ def run_import(
             continue
         try:
             image_path = importer.store(row, normalized)
+        except _AlreadyImported:
+            out.write(f"skipped {shown}: already imported\n")
+            skipped += 1
+            continue
         except _RowFailed as exc:
             logger.warning("plan line %d not imported: %s", row.line, exc.reason)
             out.write(f"failed {shown}: {exc.reason}\n")
@@ -986,6 +1077,7 @@ def main(
 ) -> int:
     """Entry point; returns the exit code (0, 1 or 2, section 4.6)."""
     _configure_logging()
+    limit_pil_logging()
     arguments = resolve_argv(argv)
     try:
         args, unknown = _parser().parse_known_args(arguments)

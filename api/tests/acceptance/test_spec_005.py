@@ -372,7 +372,12 @@ def test_ca06_summary_without_filters(d_env: DEnv) -> None:
     assert body["needs_review_count"] == 2
     assert body["defect_rate"] == approx(3 / 7)
     assert body["by_grade"] == {"perfect": 1, "good": 2, "fair": 1, "poor": 2, "unusable": 1}
-    assert body["by_object_type"] == {"screw": 4, "nut": 3, "unknown": 1}
+    # SPEC-016 section 4.1: every ObjectType key (the 5 hand tools too), 0 when absent.
+    assert body["by_object_type"] == {o.value: 0 for o in ObjectType} | {
+        "screw": 4,
+        "nut": 3,
+        "unknown": 1,
+    }
     assert body["mean_type_confidence"] == approx(0.8225)
     assert body["mean_grade_score"] == approx(14.4 / 7)
 
@@ -415,7 +420,8 @@ def test_ca08_summary_without_rows(d_env: DEnv) -> None:
     assert body["by_grade"] == {g.value: 0 for g in Grade}
     assert len(body["by_grade"]) == 5
     assert body["by_object_type"] == {o.value: 0 for o in ObjectType}
-    assert len(body["by_object_type"]) == 3
+    # SPEC-016 section 4.1: plus the 5 hand tools; SPEC-021 section 3.1: plus the 4 power tools.
+    assert len(body["by_object_type"]) == 3 + 5 + 4
 
 
 # --------------------------------------------------------------------------- CA-09

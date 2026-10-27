@@ -9,6 +9,10 @@ onnxruntime; a failure deletes ``model.onnx``.
 The 8 parity inputs come from ``make_synthetic_dataset(seed=0)`` (never a real photo in Git,
 R-02/R-14), preprocessed by ``qc_preprocess``.
 
+SPEC-016 section 4.8: the type head and ``labels.json`` (with ``ungraded_object_types``) follow
+the labels of the training (``best.pt``, else ``training_config.json``; a checkpoint of a model
+without them is a model of the MVP types).
+
 CLI::
 
     python -m qc_ml.export --config ml/configs/partqc-mnv3-v1.json
@@ -17,6 +21,7 @@ CLI::
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import tempfile
@@ -24,6 +29,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import onnx
@@ -35,13 +41,17 @@ from qc_ml.artifacts import (
     MODEL_FILE,
     PARITY_FILE,
     PREPROCESSING_FILE,
+    TRAINING_CONFIG_FILE,
+    UNGRADED_KEY,
+    as_labels,
+    check_labels,
     sha256_file,
     write_labels,
     write_model_sha256,
 )
 from qc_ml.config import TrainConfig, load_config
 from qc_ml.data import DEFAULT_LABELS, ModelLabels, configure_logging, load_manifest
-from qc_ml.errors import ExportError, TrainError
+from qc_ml.errors import ExportError, ModelArtifactError, TrainError
 from qc_ml.model import ProbabilityWrapper, build_model
 from qc_ml.parity import check_parity
 from qc_ml.steps import EXIT_ERROR, EXIT_OK, report_step_error
@@ -224,17 +234,55 @@ def write_model_dir(
     return digest
 
 
-def run(config: TrainConfig, model: nn.Module | None = None) -> str:
-    """Export the best checkpoint of ``config`` (or ``model``) to ``<models_root>/<v>/``."""
+def training_labels(config: TrainConfig, checkpoint: dict | None = None) -> ModelLabels:
+    """The labels of the trained model (SPEC-016 section 4.8).
+
+    The first source found wins: ``labels`` of the ``best.pt`` checkpoint; ``labels`` and
+    ``ungraded_object_types`` of ``<model_dir>/training_config.json``; ``DEFAULT_LABELS`` (a
+    checkpoint written before SPEC-016, always of the MVP types).
+
+    Raises:
+        ExportError: the labels found are invalid.
+    """
+    data: Any = None
+    if checkpoint is not None and "labels" in checkpoint:
+        data = checkpoint["labels"]
+    else:
+        path = config.model_dir / TRAINING_CONFIG_FILE
+        if path.is_file():
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ExportError(f"{path} is not valid JSON: {exc}") from exc
+            if isinstance(record, dict) and isinstance(record.get("labels"), dict):
+                data = {**record["labels"], UNGRADED_KEY: record.get(UNGRADED_KEY, [])}
+    if data is None:
+        return DEFAULT_LABELS
+    try:
+        return check_labels(as_labels(data))
+    except ModelArtifactError as exc:
+        raise ExportError(f"invalid labels of the trained model: {exc}") from exc
+
+
+def run(
+    config: TrainConfig, model: nn.Module | None = None, labels: ModelLabels | None = None
+) -> str:
+    """Export the best checkpoint of ``config`` (or ``model``) to ``<models_root>/<v>/``.
+
+    ``labels`` (from ``qc_ml.train``) go to ``labels.json``; ``None`` = ``training_labels``.
+    """
+    checkpoint: dict | None = None
     if model is None:
         best = config.checkpoints_dir / "best.pt"
         if not best.is_file():
             raise TrainError(f"{best} not found: run qc_ml.train first")
-        model = build_model(
-            config.backbone, len(DEFAULT_LABELS.object_types), config.grade_head, False
-        )
-        model.load_state_dict(torch.load(best, map_location="cpu", weights_only=True)["model"])
-    return write_model_dir(model, config.model_dir)
+        checkpoint = torch.load(best, map_location="cpu", weights_only=True)
+    if labels is None:
+        labels = training_labels(config, checkpoint)
+    if model is None:
+        model = build_model(config.backbone, len(labels.object_types), config.grade_head, False)
+        model.load_state_dict(checkpoint["model"])
+    return write_model_dir(model, config.model_dir, labels)
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -32,7 +32,13 @@ import numpy as np
 import onnxruntime
 from PIL import Image
 
-from qc_contracts import GRADE_ORDER, MODEL_VERSION_PATTERN, ObjectType
+from qc_contracts import (
+    GRADE_FORBIDDEN_OBJECT_TYPES,
+    GRADE_OPTIONAL_OBJECT_TYPES,
+    GRADE_ORDER,
+    MODEL_VERSION_PATTERN,
+    ObjectType,
+)
 from qc_edge.decision import (
     GRADE_COUNT,
     OTHER_LABEL,
@@ -73,6 +79,14 @@ EXPECTED_GRADES = [grade.value for grade in GRADE_ORDER]
 ALLOWED_OBJECT_TYPES = frozenset(
     {OTHER_LABEL} | {member.value for member in ObjectType if member is not ObjectType.UNKNOWN}
 )
+# ``labels.json``: the optional key of SPEC-016 section 4.4 (ADR-021, decision 4). Its values may
+# only be types without a grade or with an optional grade; every grade-forbidden type of the
+# model must be in it.
+UNGRADED_KEY = "ungraded_object_types"
+UNGRADEABLE_OBJECT_TYPES = frozenset(
+    member.value for member in GRADE_OPTIONAL_OBJECT_TYPES | GRADE_FORBIDDEN_OBJECT_TYPES
+)
+GRADE_FORBIDDEN_VALUES = frozenset(member.value for member in GRADE_FORBIDDEN_OBJECT_TYPES)
 _HEX64 = re.compile(r"[0-9a-fA-F]{64}")
 _READ_BLOCK = 1 << 20
 # model.sha256 is one line (``<hash>  model.onnx``); anything bigger is not a hash file.
@@ -128,20 +142,25 @@ def _read_json(path: Path) -> Any:
         raise ModelLoadError(f"{path.name}: not valid UTF-8 JSON") from None
 
 
-def _require_keys(name: str, data: Any, keys: tuple[str, ...]) -> dict[str, Any]:
-    """A JSON object with exactly ``keys`` (an unknown key is refused, like a missing one)."""
+def _require_keys(
+    name: str, data: Any, keys: tuple[str, ...], optional: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """A JSON object with exactly ``keys``, plus any of ``optional`` (an unknown key is refused,
+    like a missing one)."""
     if not isinstance(data, dict):
         raise ModelLoadError(f"{name}: expected a JSON object")
     missing = sorted(set(keys) - data.keys())
-    unknown = sorted(data.keys() - set(keys))
+    unknown = sorted(data.keys() - set(keys) - set(optional))
     if missing or unknown:
         raise ModelLoadError(f"{name}: missing keys {missing}, unknown keys {unknown}")
     return data
 
 
 def _load_labels(path: Path) -> ModelLabels:
-    """Section 4.2, item 4."""
-    data = _require_keys(LABELS_FILE, _read_json(path), ("object_types", "grades"))
+    """Section 4.2, item 4, and ``ungraded_object_types`` (SPEC-016 section 4.4)."""
+    data = _require_keys(
+        LABELS_FILE, _read_json(path), ("object_types", "grades"), optional=(UNGRADED_KEY,)
+    )
     grades = data["grades"]
     if grades != EXPECTED_GRADES:
         raise ModelLoadError(f"{LABELS_FILE}: grades must be exactly {EXPECTED_GRADES}")
@@ -155,7 +174,38 @@ def _load_labels(path: Path) -> ModelLabels:
             )
     if len(set(object_types)) != len(object_types):
         raise ModelLoadError(f"{LABELS_FILE}: object_types has repeated labels")
-    return ModelLabels(object_types=tuple(object_types), grades=tuple(grades))
+    ungraded = _ungraded_object_types(data.get(UNGRADED_KEY, []), object_types)
+    return ModelLabels(
+        object_types=tuple(object_types),
+        grades=tuple(grades),
+        ungraded_object_types=ungraded,
+    )
+
+
+def _ungraded_object_types(value: Any, object_types: list[str]) -> tuple[str, ...]:
+    """``ungraded_object_types`` of ``labels.json`` (SPEC-016 section 4.4; default ``[]``).
+
+    A list of strings without repetition, each one in ``object_types`` and a type without a
+    grade or with an optional grade (never ``other``, ``screw`` nor ``nut``); every
+    grade-forbidden type of ``object_types`` must be listed. The messages never echo a value.
+    """
+    if not isinstance(value, list) or not all(isinstance(label, str) for label in value):
+        raise ModelLoadError(f"{LABELS_FILE}: {UNGRADED_KEY} must be a list of strings")
+    if len(set(value)) != len(value):
+        raise ModelLoadError(f"{LABELS_FILE}: {UNGRADED_KEY} has repeated labels")
+    if any(label not in object_types for label in value):
+        raise ModelLoadError(f"{LABELS_FILE}: {UNGRADED_KEY} may only contain object_types")
+    if any(label not in UNGRADEABLE_OBJECT_TYPES for label in value):
+        raise ModelLoadError(
+            f"{LABELS_FILE}: {UNGRADED_KEY} may only contain types without a grade or with an "
+            f"optional grade ({sorted(UNGRADEABLE_OBJECT_TYPES)})"
+        )
+    missing = [label for label in object_types if label in GRADE_FORBIDDEN_VALUES]
+    if any(label not in value for label in missing):
+        raise ModelLoadError(
+            f"{LABELS_FILE}: {UNGRADED_KEY} must list every grade-forbidden type of object_types"
+        )
+    return tuple(value)
 
 
 def _load_preprocessing(path: Path) -> PreprocessParams:

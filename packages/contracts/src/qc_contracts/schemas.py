@@ -1,6 +1,7 @@
 """Contract schemas, Pydantic v2 (docs/architecture.md sections 3.2 to 3.4).
 
-Input models (``InspectionCreate``, ``BatchCreate``) reject unknown fields (``extra="forbid"``).
+Input models (``InspectionCreate``, ``BatchCreate`` and, from 0.5.0, ``HeartbeatCreate``) reject
+unknown fields (``extra="forbid"``).
 Response models ignore unknown fields (``extra="ignore"``) so a reader tolerates fields added
 by a later minor version of the contract.
 """
@@ -20,13 +21,21 @@ from pydantic import (
     model_validator,
 )
 
-from qc_contracts.enums import Grade, ObjectType, Source
+from qc_contracts.enums import (
+    GRADE_FORBIDDEN_OBJECT_TYPES,
+    GRADE_REQUIRED_OBJECT_TYPES,
+    Grade,
+    ObjectType,
+    Source,
+)
 
 # Public regexes, reused by the API and the scripts without redefinition.
 DEVICE_ID_PATTERN = r"^[a-z0-9-]{3,32}$"
 LOT_ID_PATTERN = r"^[A-Za-z0-9_-]{1,40}$"
 MODEL_VERSION_PATTERN = r"^[a-z0-9.-]{3,40}$"
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
+# Version of the edge application in a heartbeat (SPEC-018, contract 0.5.0).
+APP_VERSION_PATTERN = r"^[0-9A-Za-z.+-]{1,40}$"
 
 # Maximum tolerated clock skew of ``inspected_at`` into the future (InspectionCreate only).
 MAX_FUTURE_SKEW = timedelta(minutes=5)
@@ -36,6 +45,10 @@ MAX_BATCH_SIZE = 100
 # Upper bound of ``latency_ms``: 2**31 - 1, the maximum of the ``integer`` column (section 5).
 # A larger value would fail the insert with SQLSTATE 22003 instead of a validation error.
 MAX_LATENCY_MS: int = 2_147_483_647
+
+# Upper bound of the counters of a heartbeat (``uptime_s``, ``outbox_pending``, ``outbox_dead``):
+# the same ``integer`` column limit as ``MAX_LATENCY_MS`` (SPEC-018 section 4.1).
+MAX_HEARTBEAT_COUNT: int = 2_147_483_647
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -57,6 +70,8 @@ ModelVersion = Annotated[str, Field(pattern=MODEL_VERSION_PATTERN)]
 Sha256Hex = Annotated[str, Field(pattern=SHA256_PATTERN)]
 Probability = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 GradeScore = Annotated[float, Field(ge=0.0, le=4.0, allow_inf_nan=False)]
+AppVersion = Annotated[str, Field(pattern=APP_VERSION_PATTERN)]
+HeartbeatCount = Annotated[int, Field(ge=0, le=MAX_HEARTBEAT_COUNT)]
 
 
 class _InspectionBase(BaseModel):
@@ -79,8 +94,12 @@ class _InspectionBase(BaseModel):
 
     @model_validator(mode="after")
     def _check_grade_invariants(self) -> Self:
-        if (self.grade is None) != (self.object_type == ObjectType.UNKNOWN):
-            raise ValueError("grade must be null if and only if object_type is 'unknown'")
+        # Grade groups of ADR-021: required (screw, nut), forbidden (unknown and the power
+        # tools) or optional (the hand tools). The messages name the rule, never the values.
+        if self.grade is None and self.object_type in GRADE_REQUIRED_OBJECT_TYPES:
+            raise ValueError("grade must not be null for a grade-required object_type")
+        if self.grade is not None and self.object_type in GRADE_FORBIDDEN_OBJECT_TYPES:
+            raise ValueError("grade must be null for a grade-forbidden object_type")
         if (self.grade_score is None) != (self.grade is None):
             raise ValueError("grade_score must be null if and only if grade is null")
         if (self.grade_confidence is None) != (self.grade is None):
@@ -226,3 +245,57 @@ class HealthResponse(_ResponseModel):
         if (self.status == "ok") != (self.db == "ok"):
             raise ValueError("status must be 'ok' if and only if db is 'ok'")
         return self
+
+
+class HeartbeatCreate(BaseModel):
+    """Health of the edge gateway, sent every ``HEARTBEAT_INTERVAL_S`` (SPEC-018, 0.5.0).
+
+    ``model_version`` and ``model_sha256`` are null together (no model loaded). ``sent_at`` is
+    the edge clock, kept only for diagnosis: the API decides ``online`` by its own clock. No
+    image and no personal data (R-02).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sent_at: UtcDatetime
+    model_version: ModelVersion | None
+    model_sha256: Sha256Hex | None
+    app_version: AppVersion
+    uptime_s: HeartbeatCount
+    outbox_pending: HeartbeatCount
+    outbox_dead: HeartbeatCount
+
+    @field_validator("sent_at", mode="after")
+    @classmethod
+    def _not_in_future(cls, value: datetime) -> datetime:
+        if value > datetime.now(UTC) + MAX_FUTURE_SKEW:
+            raise ValueError("sent_at must not be more than 5 minutes in the future")
+        return value
+
+    @model_validator(mode="after")
+    def _check_model_pair(self) -> Self:
+        if (self.model_version is None) != (self.model_sha256 is None):
+            raise ValueError("model_sha256 must be null if and only if model_version is null")
+        return self
+
+
+class DeviceStatus(_ResponseModel):
+    """One device as returned by ``GET /api/v1/devices`` (SPEC-018 section 4.3, 0.5.0).
+
+    ``last_heartbeat_at`` is the server time when the last heartbeat arrived, and ``online`` is
+    computed by the server from it (less than 180 s ago). The heartbeat fields are null for a
+    device that never sent one. ``last_source`` is the ``source`` of the most recently received
+    inspection of the device, or null without inspections (R-06).
+    """
+
+    device_id: str
+    last_seen_at: UtcDatetime | None
+    last_heartbeat_at: UtcDatetime | None
+    online: bool
+    model_version: str | None
+    model_sha256: str | None
+    app_version: str | None
+    uptime_s: int | None
+    outbox_pending: int | None
+    outbox_dead: int | None
+    last_source: Source | None

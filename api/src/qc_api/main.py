@@ -1,9 +1,14 @@
-"""FastAPI application of the cloud API (SPEC-004 section 4.2, SPEC-005, docs/architecture.md §4).
+"""FastAPI application of the cloud API (SPEC-004 §4.2, SPEC-005, SPEC-017, SPEC-018,
+architecture §4).
 
 ``uvicorn qc_api.main:app`` serves the module-level ``app``; its settings are read from the
 environment when the server starts (``lifespan``), not at import time. The connection pool is
 opened without waiting, so the API starts even with the database down (``/health`` then answers
 503). There is no CORS middleware on purpose: the dashboard calls the API from its server.
+
+With ``ALERTS_ENABLED`` and a valid configuration, the ``lifespan`` also starts the Telegram
+alert loop (SPEC-017 §4.2) and cancels it on shutdown; ``app.state.alerts_task`` is the task, or
+``None`` when no loop was started. An invalid alert configuration never stops the API.
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 
 import qc_api
@@ -23,7 +29,8 @@ from qc_api.middleware import (
     RequestLogMiddleware,
     UnhandledErrorMiddleware,
 )
-from qc_api.routers import health, inspections, lots, metrics
+from qc_api.routers import devices, health, inspections, lots, metrics
+from qc_api.services import alerts
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
@@ -39,8 +46,15 @@ def configure_logging(level: str) -> None:
         logger.addHandler(handler)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the API. With ``settings=None``, ``Settings()`` is loaded at startup."""
+def create_app(
+    settings: Settings | None = None,
+    *,
+    alerts_transport: httpx.BaseTransport | None = None,
+) -> FastAPI:
+    """Build the API. With ``settings=None``, ``Settings()`` is loaded at startup.
+
+    ``alerts_transport`` replaces the network transport of the Telegram alerts (tests only).
+    """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -51,9 +65,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool.open(wait=False)
         app.state.pool = pool
         logger.info("qc-api %s started", qc_api.__version__)
+        app.state.alerts_task = alerts.start_alerts_task(pool, current, transport=alerts_transport)
         try:
             yield
         finally:
+            await alerts.stop_alerts_task(app.state.alerts_task)
             pool.close()
             logger.info("qc-api stopped")
 
@@ -65,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     if settings is not None:
         app.state.settings = settings
+    app.state.alerts_task = None
 
     install_exception_handlers(app)
     # Added last = outermost: the log sees every status, including 413 and 500.
@@ -76,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(inspections.router)
     app.include_router(metrics.router)
     app.include_router(lots.router)
+    app.include_router(devices.router)
     return app
 
 

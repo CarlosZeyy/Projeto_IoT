@@ -18,6 +18,7 @@ from qc_contracts import (
     GRADE_LABELS_PT,
     OBJECT_TYPE_LABELS_PT,
     SOURCE_LABELS_PT,
+    DeviceStatus,
     Grade,
     InspectionRead,
     ObjectType,
@@ -27,6 +28,7 @@ from qc_contracts import (
 
 LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
 EMPTY = "—"
+UNGRADED = "sem grau"
 YES = "Sim"
 NO = "Não"
 DATETIME_FORMAT = "%d/%m/%Y %H:%M"
@@ -133,6 +135,15 @@ def object_type_label(object_type: ObjectType | str | None) -> str:
     return EMPTY if object_type is None else OBJECT_TYPE_LABELS_PT[ObjectType(object_type)]
 
 
+def inspection_grade_label(item: InspectionRead) -> str:
+    """The ``Grau`` of one inspection: the PT-BR grade; ``sem grau`` for a known type without a
+    grade (a hand tool the model does not grade, SPEC-016 section 4.5, or a power tool, never
+    graded, SPEC-021); ``—`` for ``unknown``."""
+    if item.grade is None and item.object_type is not ObjectType.UNKNOWN:
+        return UNGRADED
+    return grade_label(item.grade)
+
+
 def source_label(source: Source | str | None) -> str:
     return EMPTY if source is None else SOURCE_LABELS_PT[Source(source)]
 
@@ -145,7 +156,7 @@ def history_rows(items: Iterable[InspectionRead]) -> list[dict[str, str]]:
             "Lote": item.lot_id,
             "Dispositivo": item.device_id,
             "Tipo": object_type_label(item.object_type),
-            "Grau": grade_label(item.grade),
+            "Grau": inspection_grade_label(item),
             "Nota de grau": fmt_decimal(item.grade_score, 2),
             "Conf. tipo": fmt_decimal(item.type_confidence, 3),
             "Conf. grau": fmt_decimal(item.grade_confidence, 3),
@@ -191,6 +202,63 @@ def spc_rows(spc: SpcResponse) -> list[dict[str, str]]:
     ]
 
 
+DEVICE_COLUMNS: tuple[str, ...] = (
+    "Dispositivo",
+    "Situação",
+    "Origem",
+    "Último sinal",
+    "Modelo",
+    "Versão",
+    "Pendentes",
+    "Com falha",
+    "Ligado há",
+)
+ONLINE = "online"
+OFFLINE = "offline"
+NEVER = "nunca"
+
+
+def fmt_uptime(seconds: int | None) -> str:
+    """Whole hours and minutes: ``7500`` -> ``2 h 05 min``; ``None`` -> ``—``.
+
+    The seconds left over are dropped (never rounded up); the hours are not split into days.
+    """
+    if seconds is None:
+        return EMPTY
+    hours, rest = divmod(max(int(seconds), 0), 3600)
+    return f"{fmt_int(hours)} h {rest // 60:02d} min"
+
+
+def device_rows(items: Iterable[DeviceStatus]) -> list[dict[str, str]]:
+    """Rows of the device table (SPEC-018 §4.5), columns of ``DEVICE_COLUMNS``, as display text.
+
+    ``Último sinal`` is the local time of the last heartbeat (``nunca`` without one) and
+    ``Ligado há`` the uptime it reported (``—`` without one). ``Origem`` is the origin of the
+    latest inspection of the device (``—`` without inspections, R-06).
+    """
+    return [
+        {
+            "Dispositivo": item.device_id,
+            "Situação": ONLINE if item.online else OFFLINE,
+            "Origem": source_label(item.last_source),
+            "Último sinal": (
+                NEVER if item.last_heartbeat_at is None else fmt_datetime(item.last_heartbeat_at)
+            ),
+            "Modelo": item.model_version or EMPTY,
+            "Versão": item.app_version or EMPTY,
+            "Pendentes": fmt_int(item.outbox_pending),
+            "Com falha": fmt_int(item.outbox_dead),
+            "Ligado há": fmt_uptime(item.uptime_s),
+        }
+        for item in items
+    ]
+
+
+def has_simulated_device(items: Iterable[DeviceStatus]) -> bool:
+    """True when the latest inspection of any device is ``simulated`` (the R-06 badge)."""
+    return any(item.last_source is Source.SIMULATED for item in items)
+
+
 def _csv_number(value: float | None) -> str:
     """Exact value, decimal comma, no exponent: ``0.875`` -> ``0,875``; ``None`` -> ``""``."""
     if value is None:
@@ -214,7 +282,7 @@ def history_csv(items: Sequence[InspectionRead]) -> bytes:
                 item.lot_id,
                 item.device_id,
                 _csv_text(object_type_label(item.object_type)),
-                _csv_text(grade_label(item.grade)),
+                _csv_text(inspection_grade_label(item)),
                 _csv_number(item.grade_score),
                 _csv_number(item.type_confidence),
                 _csv_number(item.grade_confidence),

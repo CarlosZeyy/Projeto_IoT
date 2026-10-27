@@ -121,7 +121,8 @@ def test_ca22_metrics_file(tiny_config: Path) -> None:
     _, model_dir, reports_dir = _paths(tiny_config)
     metrics = json.loads((model_dir / "metrics.json").read_text())
     assert list(metrics) == list(METRIC_KEYS)
-    assert len(METRIC_KEYS) == 32
+    assert len(METRIC_KEYS) == 33  # SPEC-012's 32 + tool_grade_metrics (SPEC-016)
+    assert metrics["tool_grade_metrics"] == {}  # model without tools
     for key in ("grade_qwk_ci95", "unusable_recall_ci95", "defective_recall_ci95"):
         value = metrics[key]
         assert value is None or (len(value) == 2 and value[0] <= value[1])

@@ -70,7 +70,7 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
 )
 
 # Whole-string patterns, always used with ``re.fullmatch`` (``$`` would accept a trailing "\n").
-ITEM_ID_PATTERN = r"[SNOT]-\d{3}"
+ITEM_ID_PATTERN = r"[SNOT]-\d{3}"  # T: hand tools (SPEC-016) and power tools (SPEC-021)
 # Images imported from a public source (ADR-020, SPEC-036 section 4.7): never counted in the
 # coverage targets, and never accepted by the collect route (``ITEM_ID_PATTERN`` above).
 EXTERNAL_ITEM_ID_PATTERN = r"X[SNOT]-[0-9]{4}"
@@ -94,23 +94,84 @@ GRADED_TARGET_ITEMS = 12
 GRADED_MIN_ITEMS = 8  # shown on the console only; the target stays 12
 OTHER_TARGET_IMAGES = 150
 OTHER_TARGET_ITEMS = 30
+# Hand tools (SPEC-016 section 3.3): a tool cell (type x grade) is complete with the grade
+# criterion of section 4.6 (60 images from 5 physical items, only for the optional grade); the
+# identification target and minimum are per tool, shown on the console only.
+TOOL_GRADE_TARGET_IMAGES = 60
+TOOL_GRADE_TARGET_ITEMS = 5
+TOOL_TARGET_IMAGES = 90
+TOOL_TARGET_ITEMS = 6
+TOOL_MIN_ITEMS = 3
+# Power tools (SPEC-021 section 3.3): never graded, so one coverage cell per tool, complete with
+# the identification target (90 images from 6 physical items; at least 3 items to have a test).
+POWER_TOOL_TARGET_IMAGES = TOOL_TARGET_IMAGES
+POWER_TOOL_TARGET_ITEMS = TOOL_TARGET_ITEMS
+POWER_TOOL_MIN_ITEMS = TOOL_MIN_ITEMS
 
 
 class DatasetObjectType(StrEnum):
-    """Classes of the model's type head. ``other`` is mapped to ``unknown`` only in the contract."""
+    """Classes of the model's type head. ``other`` is mapped to ``unknown`` only in the contract.
+
+    The hand tools (SPEC-016) and the power tools (SPEC-021) have the values of
+    ``qc_contracts.ObjectType``, in its order.
+    """
 
     SCREW = "screw"
     NUT = "nut"
     OTHER = "other"
+    PLIERS = "pliers"
+    ADJUSTABLE_WRENCH = "adjustable_wrench"
+    ALLEN_KEY = "allen_key"
+    FLAT_SCREWDRIVER = "flat_screwdriver"
+    PHILLIPS_SCREWDRIVER = "phillips_screwdriver"
+    ANGLE_GRINDER = "angle_grinder"
+    SAW = "saw"
+    DRILL = "drill"
+    CORDLESS_SCREWDRIVER = "cordless_screwdriver"
 
 
-# Prefix of ``item_id`` -> object type. ``T`` (tools, phase 2) is refused until SPEC-016.
-ITEM_PREFIX_TYPES: Mapping[str, DatasetObjectType] = {
-    "S": DatasetObjectType.SCREW,
-    "N": DatasetObjectType.NUT,
-    "O": DatasetObjectType.OTHER,
+TOOL_OBJECT_TYPES: tuple[DatasetObjectType, ...] = (
+    DatasetObjectType.PLIERS,
+    DatasetObjectType.ADJUSTABLE_WRENCH,
+    DatasetObjectType.ALLEN_KEY,
+    DatasetObjectType.FLAT_SCREWDRIVER,
+    DatasetObjectType.PHILLIPS_SCREWDRIVER,
+)
+# Power tools (SPEC-021): identification only, never graded (``GRADE_FORBIDDEN_OBJECT_TYPES`` of
+# the contract). Their photos go to ``raw/<type>/_/``, the no-grade directory of ``other``.
+POWER_TOOL_OBJECT_TYPES: tuple[DatasetObjectType, ...] = (
+    DatasetObjectType.ANGLE_GRINDER,
+    DatasetObjectType.SAW,
+    DatasetObjectType.DRILL,
+    DatasetObjectType.CORDLESS_SCREWDRIVER,
+)
+# Types whose grade is mandatory in the dataset (the collect form and the import plan): ``screw``,
+# ``nut`` and the hand tools. The grade of a hand tool is optional only for the model (ADR-021),
+# never for the labels (SPEC-016 section 4.4).
+GRADED_DATASET_TYPES: frozenset[DatasetObjectType] = frozenset(
+    {DatasetObjectType.SCREW, DatasetObjectType.NUT, *TOOL_OBJECT_TYPES}
+)
+# Types whose grade must be empty in the dataset: ``other`` and the power tools (SPEC-021).
+UNGRADED_DATASET_TYPES: frozenset[DatasetObjectType] = frozenset(
+    {DatasetObjectType.OTHER, *POWER_TOOL_OBJECT_TYPES}
+)
+
+# Prefix of ``item_id`` -> the object types it admits (``T``: the hand tools, SPEC-016, and the
+# power tools, SPEC-021).
+ITEM_PREFIX_TYPES: Mapping[str, frozenset[DatasetObjectType]] = {
+    "S": frozenset({DatasetObjectType.SCREW}),
+    "N": frozenset({DatasetObjectType.NUT}),
+    "O": frozenset({DatasetObjectType.OTHER}),
+    "T": frozenset({*TOOL_OBJECT_TYPES, *POWER_TOOL_OBJECT_TYPES}),
 }
 _OBJECT_TYPE_VALUES = frozenset(member.value for member in DatasetObjectType)
+_POWER_TOOL_VALUES = frozenset(member.value for member in POWER_TOOL_OBJECT_TYPES)
+
+
+def item_prefix_matches(letter: str, object_type: str) -> bool:
+    """Whether the type letter of an ``item_id`` (``S``, ``N``, ``O``, ``T``) admits
+    ``object_type`` (a ``DatasetObjectType`` value)."""
+    return object_type in {member.value for member in ITEM_PREFIX_TYPES.get(letter, ())}
 
 
 # --------------------------------------------------------------------------------------- errors
@@ -206,7 +267,7 @@ class CollectRequest:
         if not isinstance(raw_type, str) or raw_type not in _OBJECT_TYPE_VALUES:
             raise InvalidCollectFieldError("object_type")
         object_type = DatasetObjectType(raw_type)
-        if ITEM_PREFIX_TYPES.get(item_id[0]) is not object_type:
+        if not item_prefix_matches(item_id[0], object_type.value):
             raise InvalidCollectFieldError("item_id", "item_id prefix does not match object_type")
 
         grade = _parse_grade(fields.get("grade"), object_type)
@@ -236,12 +297,17 @@ class CollectRequest:
 
 
 def _parse_grade(value: object, object_type: DatasetObjectType) -> Grade | None:
-    """Absent or empty for ``other``; one of the 5 ``Grade`` values for ``screw``/``nut``."""
+    """Absent or empty for ``other`` and the power tools (``UNGRADED_DATASET_TYPES``); one of the
+    5 ``Grade`` values for ``screw``, ``nut`` and the hand tools (``GRADED_DATASET_TYPES``)."""
     if value is not None and not isinstance(value, str):
         raise InvalidCollectFieldError("grade")
     if object_type is DatasetObjectType.OTHER:
         if value:
             raise InvalidCollectFieldError("grade", "grade must be empty for other")
+        return None
+    if object_type in UNGRADED_DATASET_TYPES:
+        if value:
+            raise InvalidCollectFieldError("grade", "grade must be empty for a power tool")
         return None
     if value not in GRADE_VALUES:
         raise InvalidCollectFieldError("grade")
@@ -308,13 +374,35 @@ class CoverageCell:
 _CellKey = tuple[str, str | None]
 
 
+# Rows of the coverage table: ``screw`` and ``nut`` (the MVP), then the hand tools in the order of
+# the contract, each with the 5 grades, then one row per power tool (no grade, SPEC-021), and
+# ``other`` last.
+_GRADED_COVERAGE_TYPES: tuple[DatasetObjectType, ...] = (
+    DatasetObjectType.SCREW,
+    DatasetObjectType.NUT,
+    *TOOL_OBJECT_TYPES,
+)
+
+
 def _coverage_keys() -> list[_CellKey]:
     graded = [
         (object_type.value, grade.value)
-        for object_type in (DatasetObjectType.SCREW, DatasetObjectType.NUT)
+        for object_type in _GRADED_COVERAGE_TYPES
         for grade in GRADE_ORDER
     ]
-    return [*graded, (DatasetObjectType.OTHER.value, None)]
+    ungraded = [(object_type.value, None) for object_type in POWER_TOOL_OBJECT_TYPES]
+    return [*graded, *ungraded, (DatasetObjectType.OTHER.value, None)]
+
+
+def _targets(object_type: str) -> tuple[int, int]:
+    """``(target_images, target_items)`` of a cell of ``object_type``."""
+    if object_type == DatasetObjectType.OTHER.value:
+        return OTHER_TARGET_IMAGES, OTHER_TARGET_ITEMS
+    if object_type in {member.value for member in TOOL_OBJECT_TYPES}:
+        return TOOL_GRADE_TARGET_IMAGES, TOOL_GRADE_TARGET_ITEMS
+    if object_type in {member.value for member in POWER_TOOL_OBJECT_TYPES}:
+        return POWER_TOOL_TARGET_IMAGES, POWER_TOOL_TARGET_ITEMS
+    return GRADED_TARGET_IMAGES, GRADED_TARGET_ITEMS
 
 
 def _cells(
@@ -322,32 +410,35 @@ def _cells(
 ) -> list[CoverageCell]:
     cells = []
     for key in _coverage_keys():
-        is_other = key[1] is None
+        target_images, target_items = _targets(key[0])
         cells.append(
             CoverageCell(
                 object_type=key[0],
                 grade=key[1],
                 images=images.get(key, 0),
                 items=len(items.get(key, ())),
-                target_images=OTHER_TARGET_IMAGES if is_other else GRADED_TARGET_IMAGES,
-                target_items=OTHER_TARGET_ITEMS if is_other else GRADED_TARGET_ITEMS,
+                target_images=target_images,
+                target_items=target_items,
             )
         )
     return cells
 
 
 def empty_coverage() -> list[CoverageCell]:
-    """The 11 cells with zero images and items."""
+    """The 40 cells (7 graded types x 5 grades, the 4 power tools and ``other``) with zero images
+    and items."""
     return _cells({}, {})
 
 
 def compute_coverage(manifest_path: Path) -> list[CoverageCell]:
-    """Images and distinct ``item_id`` per cell: ``screw`` x 5 grades, ``nut`` x 5, ``other``.
+    """Images and distinct ``item_id`` per cell: ``screw``, ``nut`` and each hand tool x 5 grades,
+    each power tool (no grade) and ``other``.
 
     A missing manifest gives the zeroed table. Rows that fit no cell (unknown type, missing or
-    unknown grade for ``screw``/``nut``, no ``item_id``) are not counted; any ``other`` row
-    counts in the ``other`` cell. Rows of external images (``is_external_item``) are never
-    counted: they do not count for the targets (ADR-020, SPEC-036 section 4.7).
+    unknown grade for a graded type, a grade on a power tool, no ``item_id``) are not counted;
+    any ``other`` row counts in the ``other`` cell. Rows of external images
+    (``is_external_item``) are never counted: they do not count for the targets (ADR-020,
+    SPEC-036 section 4.7).
 
     Raises:
         OSError, UnicodeDecodeError, csv.Error: the manifest exists but cannot be read.
@@ -394,6 +485,8 @@ def _coverage_key(row: Mapping[str, str | None]) -> _CellKey | None:
     if object_type == DatasetObjectType.OTHER.value:
         return (object_type, None)
     grade = row.get("grade")
+    if object_type in _POWER_TOOL_VALUES:
+        return (object_type, None) if not grade else None
     if object_type in _OBJECT_TYPE_VALUES and grade in GRADE_VALUES:
         return (object_type, grade)
     return None

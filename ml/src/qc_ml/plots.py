@@ -14,7 +14,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from qc_contracts import GRADE_LABELS_PT, OBJECT_TYPE_LABELS_PT, Grade, ObjectType
+from qc_contracts import (
+    GRADE_FORBIDDEN_OBJECT_TYPES,
+    GRADE_LABELS_PT,
+    GRADE_OPTIONAL_OBJECT_TYPES,
+    OBJECT_TYPE_LABELS_PT,
+    Grade,
+    ObjectType,
+)
 
 CELL = 96
 LEFT = 170
@@ -29,6 +36,13 @@ TYPE_LABELS_PT: dict[str, str] = {
     "screw": OBJECT_TYPE_LABELS_PT[ObjectType.SCREW],
     "nut": OBJECT_TYPE_LABELS_PT[ObjectType.NUT],
     "other": "outro",
+    # SPEC-016 and SPEC-021: the hand and power tools, with the PT-BR labels of the contract.
+    **{
+        member.value: OBJECT_TYPE_LABELS_PT[member]
+        for member in ObjectType
+        if member in GRADE_OPTIONAL_OBJECT_TYPES
+        or (member in GRADE_FORBIDDEN_OBJECT_TYPES and member is not ObjectType.UNKNOWN)
+    },
 }
 
 

@@ -479,6 +479,7 @@ def test_report(dataset: Path, tmp_path: Path, capsys) -> None:
         "n_contributors",
         "by_source",
         "external_fraction_train",
+        "tool_grade_coverage",  # SPEC-016 section 4.6
     }
     assert report["n_images"] == 88 and report["n_items"] == 44
     assert report["split_file"] == "split_v1.csv"

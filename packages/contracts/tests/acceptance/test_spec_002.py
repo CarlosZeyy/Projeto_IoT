@@ -117,7 +117,8 @@ def test_ca01_contracts_version() -> None:
 
 
 def test_ca02_enum_values_grade_order_and_patterns() -> None:
-    assert [m.value for m in ObjectType] == ["screw", "nut", "unknown"]
+    # SPEC-016 section 4.1: the 5 hand tools come after the MVP members, in this order.
+    assert [m.value for m in ObjectType][:3] == ["screw", "nut", "unknown"]
     assert [m.value for m in Grade] == ["perfect", "good", "fair", "poor", "unusable"]
     assert [m.value for m in Source] == ["live", "simulated"]
     assert [m.value for m in CaptureMode] == ["inspect", "collect"]
@@ -564,7 +565,22 @@ EXPECTED_LABELS = [
     (
         OBJECT_TYPE_LABELS_PT,
         ObjectType,
-        {"screw": "parafuso", "nut": "porca", "unknown": "desconhecido"},
+        {
+            "screw": "parafuso",
+            "nut": "porca",
+            "unknown": "desconhecido",
+            # SPEC-016 section 4.1: labels of the 5 hand tools.
+            "pliers": "alicate",
+            "adjustable_wrench": "chave inglesa",
+            "allen_key": "chave Allen",
+            "flat_screwdriver": "chave de fenda",
+            "phillips_screwdriver": "chave Phillips",
+            # SPEC-021 section 3.1: labels of the 4 power tools.
+            "angle_grinder": "esmerilhadeira",
+            "saw": "serra",
+            "drill": "furadeira",
+            "cordless_screwdriver": "parafusadeira",
+        },
     ),
     (SOURCE_LABELS_PT, Source, {"live": "real", "simulated": "simulado"}),
     (CAPTURE_MODE_LABELS_PT, CaptureMode, {"inspect": "inspeção", "collect": "coleta"}),

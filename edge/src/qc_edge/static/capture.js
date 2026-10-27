@@ -4,12 +4,14 @@
 (function () {
   "use strict";
 
-  var MAX_SIDE = 1280, JPEG_QUALITY = 0.9;
-  var STORE_PREFIX = "partqc.";
+  var MAX_SIDE = 1280, JPEG_QUALITY = 0.9, STORE_PREFIX = "partqc.";
   var COLLECT = ["item_id", "object_type", "grade", "labeler", "angle", "notes"];
   var SAVED = ["lot_id", "mode"].concat(COLLECT);
   var ITEM_ID_RE = /^[SNOT]-[0-9]{3}$/;  // same rule as the server (re.fullmatch)
-  var PREFIX_TYPES = { S: "screw", N: "nut", O: "other" };  // T (tools) is refused until SPEC-016
+  var POWER = ["angle_grinder", "saw", "drill", "cordless_screwdriver"];  // SPEC-021, no grade
+  var NO_GRADE = ["other"].concat(POWER);  // types whose grade stays empty (server rule)
+  var PREFIX_TYPES = { S: ["screw"], N: ["nut"], O: ["other"], T: ["pliers", "adjustable_wrench",
+    "allen_key", "flat_screwdriver", "phillips_screwdriver"].concat(POWER) };  // T: all tools
 
   function el(id) { return document.getElementById(id); }
   var token = new URLSearchParams(window.location.search).get("t") || "";
@@ -27,7 +29,8 @@
     415: "Imagem inválida ou formato não suportado.",
     422: "Dados inválidos: o lote aceita só letras, números, - e _ (até 40).",
     collect422: "Dados da coleta inválidos: confira peça, tipo, grau, ângulo e observações.",
-    itemId: "Peça inválida: use S-000 (parafuso), N-000 (porca) ou O-000 (outro), conforme o tipo.",
+    itemId: "Peça inválida: use S-000 (parafuso), N-000 (porca), T-000 (ferramenta) ou O-000 "
+      + "(outro), conforme o tipo.",
     noGrade: "Escolha o grau da peça.",
     other: "Erro na borda. Tente de novo.",
   };
@@ -63,18 +66,19 @@
   }
   function collecting() { return fields.mode.value === "collect"; }
 
-  // Shows the collect fields; the grade is disabled and empty for "other".
+  // Shows the collect fields; the grade is disabled and empty for "other" and the power tools.
   function syncForm() {
     el("collect-fields").hidden = !collecting();
-    var isOther = fields.object_type.value === "other";
-    if (isOther) fields.grade.value = "";
-    fields.grade.disabled = isOther;
+    var noGrade = NO_GRADE.indexOf(fields.object_type.value) >= 0;
+    if (noGrade) fields.grade.value = "";
+    fields.grade.disabled = noGrade;
   }
 
   function collectProblem() {
     var itemId = value("item_id"), type = value("object_type");
-    if (!ITEM_ID_RE.test(itemId) || PREFIX_TYPES[itemId[0]] !== type) return MESSAGES.itemId;
-    if (type !== "other" && !value("grade")) return MESSAGES.noGrade;
+    var types = ITEM_ID_RE.test(itemId) ? PREFIX_TYPES[itemId[0]] : [];
+    if (types.indexOf(type) < 0) return MESSAGES.itemId;
+    if (NO_GRADE.indexOf(type) < 0 && !value("grade")) return MESSAGES.noGrade;
     return "";
   }
 

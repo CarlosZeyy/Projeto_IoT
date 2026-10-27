@@ -7,8 +7,13 @@ rounded nor clamped. Only after every comparison are the returned numbers clampe
 the contract (section 4.1, item 6): the confidences to ``[0, 1]`` and ``grade_score`` to
 ``[0, 4]``. Item 1 accepts values slightly outside ``[0, 1]``, and a float32 ``Softmax`` alone
 gives ``p4 == 1.0`` with ``p3 > 0`` (``sum(i * p_i) > 4``), which ``InspectionCreate`` would refuse.
-The clamp never changes ``object_type``, ``grade`` nor ``needs_review``. The invariant
-``grade is None <=> object_type == unknown`` is checked again by ``InspectionCreate``.
+The clamp never changes ``object_type``, ``grade`` nor ``needs_review``.
+
+SPEC-016 section 4.4 (ADR-021): a decided type listed in ``labels.ungraded_object_types`` (a
+hand tool the model does not grade, or a power tool, which is always listed there: SPEC-021 and
+the load rule of ``OnnxInferencer``) comes out with ``grade``, ``grade_score`` and
+``grade_confidence`` ``None``, and ``needs_review`` depends only on the type confidence. The
+grade groups of the contract are checked again by ``InspectionCreate``.
 """
 
 from __future__ import annotations
@@ -66,10 +71,20 @@ THRESHOLD_NAMES: tuple[str, ...] = tuple(field.name for field in fields(Threshol
 
 @dataclass(frozen=True)
 class ModelLabels:
-    """Class order of the model outputs (``labels.json``)."""
+    """Class order of the model outputs (``labels.json``).
+
+    ``ungraded_object_types`` lists the types of the model that it does not grade (ADR-021,
+    SPEC-016 section 4.4); empty by default. A list given here is stored as a tuple. The rules
+    of its content are checked when ``labels.json`` is loaded (``OnnxInferencer``).
+    """
 
     object_types: tuple[str, ...]
     grades: tuple[str, ...]
+    ungraded_object_types: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("object_types", "grades", "ungraded_object_types"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
 
 
 @dataclass(frozen=True)
@@ -148,6 +163,12 @@ def decide(
         grade: Grade | None = None
         grade_score: float | None = None
         grade_confidence: float | None = None
+    elif label in labels.ungraded_object_types:
+        # A type the model does not grade (SPEC-016 section 4.4): known type, no grade.
+        object_type = ObjectType(label)
+        grade = None
+        grade_score = None
+        grade_confidence = None
     else:
         object_type = ObjectType(label)
         if grades[UNUSABLE_INDEX] >= thresholds.unusable_threshold:

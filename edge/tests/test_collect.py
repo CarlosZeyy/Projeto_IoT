@@ -19,11 +19,15 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from qc_contracts import Grade
+from qc_contracts import GRADE_OPTIONAL_OBJECT_TYPES, Grade, ObjectType
 from qc_edge import collect as collect_module
 from qc_edge import jpeg as jpeg_module
 from qc_edge.collect import (
+    GRADED_DATASET_TYPES,
+    ITEM_PREFIX_TYPES,
     MANIFEST_COLUMNS,
+    POWER_TOOL_OBJECT_TYPES,
+    TOOL_OBJECT_TYPES,
     CaptureExistsError,
     CollectRequest,
     DatasetObjectType,
@@ -40,6 +44,7 @@ from qc_edge.collect import (
     compute_coverage,
     count_external_images,
     empty_coverage,
+    item_prefix_matches,
     read_csv_rows,
     rollback_append,
 )
@@ -140,7 +145,12 @@ def test_valid_fields() -> None:
         ({"item_id": " S-012"}, "item_id"),
         ({"item_id": "S-٠١٢"}, "item_id"),  # Arabic-Indic digits: \d is ASCII only here
         ({"item_id": "N-001"}, "item_id"),  # prefix does not match screw
-        ({"item_id": "T-001"}, "item_id"),  # tools: SPEC-016
+        ({"item_id": "T-001"}, "item_id"),  # T- only with a hand tool (SPEC-016)
+        ({"object_type": "pliers"}, "item_id"),  # a hand tool only with T-
+        ({"item_id": "T-001", "object_type": "other", "grade": ""}, "item_id"),
+        ({"item_id": "T-001", "object_type": "pliers", "grade": ""}, "grade"),
+        ({"item_id": "T-001", "object_type": "pliers", "grade": None}, "grade"),
+        ({"item_id": "XT-0001", "object_type": "pliers"}, "item_id"),
         ({"object_type": None}, "object_type"),
         ({"object_type": "unknown"}, "object_type"),
         ({"object_type": "screw\n"}, "object_type"),
@@ -640,8 +650,11 @@ def test_coverage_of_a_missing_manifest(tmp_path: Path) -> None:
     assert [(c.object_type, c.grade) for c in cells] == [
         *[("screw", g.value) for g in Grade],
         *[("nut", g.value) for g in Grade],
+        *[(tool, g.value) for tool in TOOLS for g in Grade],
+        *[(tool, None) for tool in POWER_TOOLS],
         ("other", None),
     ]
+    assert len(cells) == 40
     assert all(c.images == 0 and c.items == 0 for c in cells)
 
 
@@ -670,7 +683,7 @@ def test_coverage_counts_images_and_items(tmp_path: Path) -> None:
         30,
     )
     rest = [c for c in cells if c not in (perfect, poor, other)]
-    assert len(rest) == 8 and all((c.images, c.items) == (0, 0) for c in rest)
+    assert len(rest) == 37 and all((c.images, c.items) == (0, 0) for c in rest)
     assert not perfect.complete
 
 
@@ -1022,3 +1035,78 @@ def test_append_adds_a_missing_final_line_break(tmp_path: Path) -> None:
     path.write_bytes(b"a,b\n1,2")
     append_csv_row(path, ("a", "b"), ("3", "4"), root=tmp_path)
     assert path.read_bytes() == b"a,b\n1,2\n3,4\n"
+
+
+TOOLS = ("pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver")
+POWER_TOOLS = ("angle_grinder", "saw", "drill", "cordless_screwdriver")
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_every_tool_with_t_prefix_and_grade_is_valid(tool: str) -> None:
+    request = CollectRequest.from_fields(
+        _fields(item_id="T-007", object_type=tool, grade="unusable")
+    )
+    assert request.object_type == tool
+    assert request.grade is Grade.UNUSABLE
+
+
+def test_tool_types_mirror_the_contract() -> None:
+    """The hand tools of the collect mode are the grade-optional types of the contract."""
+    assert [t.value for t in TOOL_OBJECT_TYPES] == [
+        member.value for member in ObjectType if member in GRADE_OPTIONAL_OBJECT_TYPES
+    ]
+    assert {t.value for t in GRADED_DATASET_TYPES} == {"screw", "nut", *TOOLS}
+    assert ITEM_PREFIX_TYPES["T"] == frozenset({*TOOL_OBJECT_TYPES, *POWER_TOOL_OBJECT_TYPES})
+
+
+@pytest.mark.parametrize(
+    ("letter", "object_type", "expected"),
+    [
+        ("T", "pliers", True),
+        ("T", "phillips_screwdriver", True),
+        ("T", "screw", False),
+        ("T", "other", False),
+        ("S", "pliers", False),
+        ("S", "screw", True),
+        ("O", "other", True),
+        ("X", "pliers", False),
+        ("T", "unknown", False),
+    ],
+)
+def test_item_prefix_matches(letter: str, object_type: str, expected: bool) -> None:
+    assert item_prefix_matches(letter, object_type) is expected
+
+
+def test_tool_capture_goes_to_its_grade_directory(
+    make_writer: Callable[..., DatasetWriter], root: Path
+) -> None:
+    writer = make_writer(_Clock(step=timedelta(seconds=1)))
+    request = CollectRequest.from_fields(
+        _fields(item_id="T-001", object_type="allen_key", grade="good")
+    )
+    result = writer.write(request, *_encoded(), "UA")
+    assert result.image_path.startswith("raw/allen_key/good/T-001__")
+    assert (root / result.image_path).is_file()
+    assert [(r["item_id"], r["object_type"], r["grade"]) for r in _rows(root)] == [
+        ("T-001", "allen_key", "good")
+    ]
+
+
+def test_coverage_counts_tool_rows(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.csv"
+    rows = [(f"T-{i % 5:03d}", "pliers", "fair", str(i % 5)) for i in range(60)]
+    rows += [("T-010", "allen_key", "good", "0"), ("XT-0001", "pliers", "fair", "0")]
+    rows += [("T-011", "allen_key", "", "0")]  # a tool without grade fits no cell
+    _write_manifest(manifest, rows)
+    cells = compute_coverage(manifest)
+    pliers = _cell(cells, "pliers", "fair")
+    assert (pliers.images, pliers.items, pliers.target_images, pliers.target_items) == (
+        60,
+        5,
+        60,
+        5,
+    )
+    assert pliers.complete
+    allen = _cell(cells, "allen_key", "good")
+    assert (allen.images, allen.items) == (1, 1) and not allen.complete
+    assert sum(c.images for c in cells) == 61

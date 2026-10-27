@@ -38,6 +38,10 @@ Vale a partir do merge da SPEC-016 (Parte A), quando o modo coleta passa a aceit
 
 Mesma precedência do §1 (dano funcional primeiro). O protocolo de captura das ferramentas está no §3.
 
+### 1.2 Ferramentas elétricas (Fase 3, SPEC-021): sem rubrica de grau
+
+Vale a partir do merge da SPEC-021. Esmerilhadeira (`angle_grinder`), serra (`saw`), furadeira (`drill`) e parafusadeira (`cordless_screwdriver`) são **só identificadas**: o estado interno (motor, escovas) está fora do escopo (PRD §4.4), e o grau é **sempre vazio** (grupo "sem grau" do ADR-021, como o `unknown`). Furadeira e parafusadeira são tipos separados; a confusão entre as duas aparece na `type_confusion` do modelo (R-11). O protocolo de captura delas está no §3.
+
 ## 2. Geração das peças (corrosão controlada)
 
 **Peças que a dupla já tem (2026-10-12):** parafusos e porcas novos, parafusos e pregos velhos e enferrujados, e ferramentas manuais.
@@ -46,6 +50,7 @@ Mesma precedência do §1 (dano funcional primeiro). O protocolo de captura das 
 - A corrosão induzida abaixo serve principalmente para **completar `good` e `fair`**, que costumam faltar.
 - **Pregos** entram como **negativos difíceis da classe `other`** (`item_id` `O-xxx`): parecem parafusos e ensinam o modelo a separar os dois. Se a dupla quiser inspecionar pregos como um tipo próprio, isso vira uma SPEC com a tag `contrato` (novo valor de enum).
 - **Ferramentas** são catalogadas (`T-xxx`) e fotografadas desde já para a Fase 2 (SPEC-016), mas ficam fora do treino do MVP.
+- **Ferramentas elétricas** (Fase 3, SPEC-021 §3.3): cada tipo precisa de pelo menos **3 unidades físicas diferentes** (meta: 6) para ter teste (ADR-022). Cada unidade é uma peça `T-xxx`, na mesma sequência das manuais. Unidades de conhecidos (`T-501`…, importação da §10) contam. Um tipo com menos de 3 unidades fica adiado (§7) e fora do modelo.
 - Pode ser que uma parte das peças velhas seja zincada (prateada); ainda assim valem para `perfect`/`good`, se estiverem conservadas.
 
 
@@ -77,6 +82,12 @@ Mesma precedência do §1 (dano funcional primeiro). O protocolo de captura das 
 - **Classe `other` (negativos):** objetos variados (moeda, tampinha, caneta, chave de casa, pregos, arruela, a mesa vazia) e, opcionalmente, imagens públicas com licença da lista da §10.4, importadas por ela: só no treino e com a fonte registrada. Mínimo de 150 imagens de pelo menos 30 objetos diferentes, **sem contar as externas**.
 - **Fotos que não passam pela página** (de conhecidos ou de datasets públicos): só pela importação da §10, nunca copiadas para `raw/`.
 - **Ferramentas manuais (Fase 2, SPEC-016 §4.11; vale a partir do merge da SPEC-016, Parte A):** fundo liso maior que a ferramenta (cartolina ou A3), a ferramenta ocupando 40–70% da foto (cerca de 30 a 50 cm), de 3 a 5 ângulos, sem mãos nem pessoas no quadro (R-14). O grau segue a rubrica do §1.1.
+- **Ferramentas elétricas (Fase 3, SPEC-021 §3.3; vale a partir do merge da SPEC-021):**
+  - ferramenta **desligada e fora da tomada** (ou sem bateria);
+  - fundo liso maior que a ferramenta (lençol ou parede clara), a cerca de 50 a 80 cm, com a ferramenta ocupando 40–70% da foto;
+  - de 3 a 5 ângulos; sem mãos nem pessoas no quadro (R-14);
+  - grau **sempre vazio** (§1.2): no modo coleta, o campo de grau fica vazio e desabilitado para as elétricas, a borda recusa com 422 uma elétrica com grau, e a foto vai para `raw/<tipo>/_/`, o mesmo diretório sem grau do `other`;
+  - imagens públicas só no treino (`XT-`), pela importação da §10, com a licença e o conteúdo conferidos na página oficial e a fonte registrada (§10.4). As fontes candidatas estão na SPEC-021 §3.3, ainda não verificadas.
 
 ## 4. Metas de volume
 
@@ -85,6 +96,7 @@ Mesma precedência do §1 (dano funcional primeiro). O protocolo de captura das 
 | Parafuso | ≥ 120 imagens | ≥ 12 (mínimo 8) | ≥ 600 |
 | Porca | ≥ 120 imagens | ≥ 12 (mínimo 8) | ≥ 600 |
 | `other` | — | ≥ 30 objetos | ≥ 150 |
+| Cada ferramenta elétrica (Fase 3, SPEC-021) | — (sem grau) | ≥ 6 unidades no tipo (mínimo 3) | ≥ 90 (ex.: 6 unidades × 5 ângulos × 3 situações) |
 
 Marcos de coleta:
 - **S2:** cerca de 500 imagens.
@@ -101,9 +113,9 @@ Se algum grau ficar abaixo da meta, registre em `ml/reports/` e use pesos de cla
 | Coluna | Tipo | Exemplo | Observação |
 |---|---|---|---|
 | `image_path` | str | `raw/screw/fair/S-012__2__20261022T141503Z.jpg` | relativo a `DATASET_DIR` |
-| `item_id` | str | `S-012` | `^[SNOT]-\d{3}$` (S = parafuso, N = porca, O = other, T = ferramenta na Fase 2). A partir da SPEC-035, também `^X[SNOT]-\d{4}$` para as imagens externas (§10.3) |
-| `object_type` | str | `screw` | `screw`, `nut`, `other` (+ Fase 2) |
-| `grade` | str | `fair` | vazio para `other` |
+| `item_id` | str | `S-012` | `^[SNOT]-\d{3}$` (S = parafuso, N = porca, O = other, T = ferramenta manual na Fase 2 ou, a partir da SPEC-021, elétrica na Fase 3). A partir da SPEC-035, também `^X[SNOT]-\d{4}$` para as imagens externas (§10.3) |
+| `object_type` | str | `screw` | `screw`, `nut`, `other` (+ as 5 manuais da Fase 2 e, a partir da SPEC-021, `angle_grinder`, `saw`, `drill`, `cordless_screwdriver`) |
+| `grade` | str | `fair` | vazio para `other` e, a partir da SPEC-021, para as ferramentas elétricas (pasta `raw/<tipo>/_/`); preenchido, dá o problema `grade_on_other` no pipeline e na importação |
 | `labeler` | str | `a` ou `b` | quem rotulou |
 | `angle` | int | `2` | 0–4 |
 | `captured_at` | str | `2026-10-22T14:15:03Z` | UTC |
@@ -136,6 +148,7 @@ Uma imagem que precisa **sair** do dataset (por exemplo, com uma pessoa no quadr
 - **Origem da imagem** (ADR-020, SPEC-035):
   - as **fotos de conhecidos** seguem as mesmas regras das peças da dupla. Só as importadas **antes** do `split_v1` podem cair no teste; as importadas depois são peças novas e vão para treino e validação;
   - as **imagens externas** (`item_id` `X…`) vão **sempre** para o treino, em todas as versões do split, e ficam fora da estratificação. O split sai com erro se uma delas aparecer em validação ou teste em qualquer versão, e se a fração delas no treino passar do teto (padrão 30%, registrado no `split_v<N>.json`).
+- **Ferramentas elétricas** (SPEC-021, ADR-022): como as manuais, entram no teste uma única vez, pela extensão (`--extend-test-types`), só quando o tipo tiver pelo menos 3 unidades não externas; o estrato é o tipo inteiro (sem grau). Até lá, ou se o tipo nunca chegar a 3 unidades, ele fica em `--defer-types`, fora do split e do modelo. A CLI recusa (saída 2, `too few items to extend the test: <tipo>`) estender um tipo com menos de 3 peças não externas. O split que estende o teste vai para a `main` por PR.
 - Opcional, mas recomendado: um teste de "condição de demo", com 50 fotos capturadas no local e no dia do ensaio (S7), relatado separadamente.
 
 ## 8. Armazenamento
@@ -204,7 +217,7 @@ Em todas as origens, o `item_id` e o grau são decididos pela dupla, com a rubri
 | `S-001`…`S-499`, `N-001`…`N-499`, `O-001`…`O-499` | peças da dupla | recomendação |
 | `S-500`…`S-999`, `N-500`…`N-999`, `O-500`…`O-999` | peças de conhecidos | recomendação: deixa claro no catálogo de quem é a peça |
 | `XS-0001`…`XS-9999`, `XN-…`, `XO-…` | imagens externas | **obrigatória** (SPEC-035): o prefixo `X` decide sozinho que a imagem fica no treino |
-| `T-…`, `XT-…` | ferramentas (Fase 2) | recusadas até a SPEC-016; as fotos ficam na pasta de entrada |
+| `T-…`, `XT-…` | ferramentas manuais (Fase 2) e, a partir da SPEC-021, elétricas (Fase 3); `T-501`… para unidades de conhecidos | recusadas até a SPEC-016 (manuais) e até a SPEC-021 (elétricas); até lá, as fotos ficam na pasta de entrada. Elétricas sempre com grau vazio |
 
 Cada imagem externa é, em geral, uma "peça" própria (`XS-0001`, `XS-0002`…). Se a fonte tiver várias fotos do mesmo objeto, elas podem dividir o `item_id`.
 
@@ -260,3 +273,4 @@ Cada imagem externa é, em geral, uma "peça" própria (`XS-0001`, `XS-0002`…)
 | 2026-10-23 | §10.4: lista de licenças sem NonCommercial nem ShareAlike (`CC0-1.0`, `PDDL-1.0`, `CC-BY-4.0`, `MIT`, `Apache-2.0`, `BSD-3-Clause`); "Escolha" sem o MVTec AD (o `unusable` fica sem fonte externa permitida). §3: classe `other` sem o MVTec AD como exemplo | Decisão do humano de 2026-10-23 (o `model.onnx` é publicado num Release público; ADR-020, decisão 3). Architect, a pedido do humano |
 | 2026-10-24 | §1.1: a rubrica das ferramentas manuais deixa de ser rascunho e passa a ser o texto da SPEC-016 §4.11 (tabela por grau, mesma precedência do §1). §3: protocolo de captura das ferramentas manuais (SPEC-016 §4.11). Vale a partir do merge da SPEC-016 (Parte A). As ferramentas elétricas (SPEC-021, Fase 3) não entram aqui agora: a SPEC-021 não manda copiar a captura delas na aprovação, e a Fase 3 só roda depois do portão da Fase 2. Limpeza de consistência pós-aprovação, sem mudança de requisito | SPEC-016 `Ready` desde o PR #45 (2026-10-24); a §4.11 dela manda copiar o texto para cá quando ela virasse `Ready`. Architect, a pedido do orquestrador |
 | 2026-10-26 | §8, passo 1: sai o trecho "Até o merge da SPEC-030" (já mergeada); ficam três conferências antes de compactar: o código de saída da varredura, o `find ml/data/raw -type f ! -name '*.jpg'` e, até o merge da SPEC-040, a conferência de permissões | RV-04 de `reviews/SPEC-030/r1-review-report.md` e SEC-30-02/SEC-30-04 de `reviews/SPEC-030/r1-security-report.md` (R-14). Architect, junto com a SPEC-040 (`Draft`) |
+| 2026-10-27 | Ferramentas elétricas (Fase 3, só identificação, SPEC-021 §3.3): §1.2 nova (sem rubrica, grau sempre vazio); §2: unidades por tipo (mínimo 3, meta 6, conhecidos `T-501`… contam, tipo abaixo de 3 adiado); §3: protocolo de captura (desligada, fundo liso maior que a ferramenta, 50 a 80 cm, 40–70% da foto, 3 a 5 ângulos, R-14, `raw/<tipo>/_/`, externas só no treino); §4: meta de 90 imagens por tipo; §5: `item_id` `T`, os 4 valores de `object_type` e grau vazio (`grade_on_other`); §7: extensão única do teste e adiamento (ADR-022); §10.3: faixa `T-`/`XT-` com as elétricas. Vale a partir do merge da SPEC-021. Sem decisão nova: texto da SPEC-021 e do que foi implementado na r1 | Definição de pronto da SPEC-021 (§8). Architect, a pedido do orquestrador |

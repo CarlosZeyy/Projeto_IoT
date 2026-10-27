@@ -586,14 +586,16 @@ CA04_CASES: list[tuple[str, PlanBuilder, str, str]] = [
     (
         "item_tool",
         lambda e: ([contributor_row(_ok(e), item_id="T-001", object_type="other", grade="")], 2),
-        "tools_not_supported",
-        "item_id",
+        # SPEC-016 section 4.4: T- is accepted with a tool; with other it is a prefix mismatch.
+        "item_prefix_mismatch",
+        "object_type",
     ),
     (
         "item_external_tool",
         lambda e: ([external_row(_ok(e), item_id="XT-0001", object_type="other", grade="")], 2),
-        "tools_not_supported",
-        "item_id",
+        # SPEC-016 section 4.4: XT- is accepted with a tool; with other it is a prefix mismatch.
+        "item_prefix_mismatch",
+        "object_type",
     ),
     (
         "item_prefix",

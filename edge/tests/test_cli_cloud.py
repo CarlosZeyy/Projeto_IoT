@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from qc_edge import cli
 from qc_edge.config import EdgeSettings, check_cloud_api_url
+from qc_edge.heartbeat import HeartbeatLoop
 from qc_edge.outbox import SqliteOutbox
 from qc_edge.publish_loop import ConnectivityState, PublishLoop
 from qc_edge.publisher import HttpPublisher
@@ -234,8 +235,10 @@ def test_loop_with_key_and_local_url(
     monkeypatch.setenv("OUTBOX_PATH", str(outbox_path))
     with caplog.at_level(logging.DEBUG):
         cli.main([])
-    (loop,) = spy.background
+    # SPEC-018: the heartbeat loop comes after the publish loop (HEARTBEAT_INTERVAL_S=60).
+    loop, heartbeat_loop = spy.background
     assert isinstance(loop, PublishLoop)
+    assert isinstance(heartbeat_loop, HeartbeatLoop)
     assert spy.sink.path == outbox_path
     assert spy.sink.stats().connectivity == "offline"
     assert "cloud publishing enabled" in caplog.text

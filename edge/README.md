@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-025, SPEC-030, SPEC-034, SPEC-036)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -39,6 +39,12 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 | `DEVICE_API_KEY` | vazio | segredo (R-03): chave do dispositivo, gerada por `scripts/register_device.py` e mostrada uma única vez. Vazio = nada é enviado à nuvem. Só ASCII visível (sem espaço nem acento); outro valor → código 2 citando a variável, nunca o valor |
 | `CLOUD_API_URL` | vazio | URL base da `qc-api`, sem `/api/v1` no fim (ex.: `https://<seu-servico>.onrender.com`). `https://` obrigatório; `http://` só com `localhost` ou `127.0.0.1` (testes locais). Sem usuário/senha, query ou fragmento. Outro valor → código 2 citando `CLOUD_API_URL`. Vazio = nada é enviado |
 | `OUTBOX_PATH` | `EDGE_DATA_DIR/outbox.sqlite3` | arquivo SQLite do outbox (ignorado com `--stub-model`: nem aberto nem criado); as pastas que faltarem são criadas com `0700` e o arquivo novo com `0600`. Se não abrir (ex.: é um diretório) → código 2 citando `OUTBOX_PATH` |
+| `HEARTBEAT_INTERVAL_S` | `60` | segundos entre dois heartbeats (seção "Heartbeat"); inteiro de 10 a 3600, ou `0` para desligar. Outro valor (ex.: `5`, `abc`) → código 2 citando a variável, com ou sem `--stub-model` |
+| `EDGE_PUBLISHER` | `http` | `http` (envio direto à `qc-api`) ou `mqtt` (Mosquitto local + ponte; seção "Transporte MQTT"). Outro valor → código 2 com `EDGE_PUBLISHER must be http or mqtt` |
+| `MQTT_HOST` | `127.0.0.1` | só `127.0.0.1`, `::1` ou `localhost` (o broker fica no notebook); outro → código 2 citando a variável |
+| `MQTT_PORT` | `1883` | 1 a 65535 |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | vazios | obrigatórias com `EDGE_PUBLISHER=mqtt` (com ou sem `--stub-model`) e na ponte; faltando uma → código 2 citando a variável. A senha é segredo (R-03): nunca aparece em log, no `/api/status` nem no console |
+| `MQTT_RESPONSE_TIMEOUT_S` | `15` | segundos que a borda espera a resposta da ponte a cada lote; número de 1 a 60 |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -77,7 +83,7 @@ O `MODEL_DIR` é resolvido antes de tudo (links simbólicos, `.` e `..`; a barra
 |---|---|
 | `model.onnx` | carrega no `onnxruntime` (CPU), tem uma entrada `image` e as saídas `type_probs` e `grade_probs`; uma inferência de aquecimento com zeros `[1, 3, crop, crop]`, com o `crop` do `preprocessing.json` (a mesma forma que cada inferência envia; `[1,3,224,224]` com o `crop` padrão), tem de devolver as formas `[1, T]` (T = número de tipos do `labels.json`) e `[1, 5]`. Um `crop` que a entrada do modelo não aceita (ex.: `crop=256` com entrada fixa `[N,3,224,224]`) falha aqui, na subida, e não em cada captura; um modelo com dimensões espaciais dinâmicas aceita qualquer `crop` |
 | `model.sha256` | o primeiro token (64 hexadecimais, maiúsculas ou minúsculas; aceita a saída do `sha256sum`, `<hash>  model.onnx`) é igual ao SHA-256 do `model.onnx`. Senão: `model.onnx does not match model.sha256: expected <12 caracteres>, got <12 caracteres>` |
-| `labels.json` | exatamente as chaves `object_types` e `grades`; `grades` exatamente `["perfect","good","fair","poor","unusable"]`; `object_types` sem repetição, só com `other` e os tipos do contrato (`screw`, `nut`), nunca `unknown` |
+| `labels.json` | as chaves `object_types` e `grades` e, opcional, `ungraded_object_types` (SPEC-016); `grades` exatamente `["perfect","good","fair","poor","unusable"]`; `object_types` sem repetição, só com `other` e os tipos do contrato (`screw`, `nut`, as ferramentas manuais e as elétricas), nunca `unknown`; `ungraded_object_types` (padrão `[]`) lista os tipos do modelo que ele não gradua, só ferramentas, e tem de listar toda ferramenta elétrica presente em `object_types` (elas nunca têm grau, SPEC-021); senão, erro de carregamento. Um tipo da lista sai sem grau, com o veredito "sem grau" |
 | `preprocessing.json` | lido por `qc_preprocess.PreprocessParams.from_json` |
 | `decision.json` | exatamente as chaves `type_threshold`, `unusable_threshold` e `grade_review_threshold`, cada uma um número de 0 a 1 |
 
@@ -115,12 +121,16 @@ Na página do celular, escolha **coleta** no seletor de modo e preencha:
 
 | Campo | Regra (a borda responde 422 se não bater) |
 |---|---|
-| Peça (`item_id`) | `S-000` (parafuso), `N-000` (porca) ou `O-000` (outro), com o prefixo do tipo escolhido. `T-` (ferramentas) fica para a SPEC-016 |
-| Tipo (`object_type`) | parafuso, porca ou outro |
-| Grau (`grade`) | um dos 5 graus para parafuso e porca; desabilitado e vazio para "outro" |
+| Peça (`item_id`) | `S-000` (parafuso), `N-000` (porca), `T-000` (ferramenta manual ou elétrica) ou `O-000` (outro), com o prefixo do tipo escolhido: `T-` só com uma das 9 ferramentas, e as ferramentas só com `T-` (SPEC-016, SPEC-021) |
+| Tipo (`object_type`) | parafuso, porca, alicate, chave inglesa, chave Allen, chave de fenda, chave Phillips, esmerilhadeira, serra, furadeira, parafusadeira ou outro |
+| Grau (`grade`) | um dos 5 graus para parafuso, porca e as ferramentas manuais (rubrica das ferramentas no `docs/dataset-protocol.md`); desabilitado e vazio para as ferramentas elétricas e para "outro" |
 | Rotulador (`labeler`) | `a` ou `b` |
 | Ângulo (`angle`) | 0 a 4 |
 | Observações (`notes`) | opcional, até 200 caracteres, sem quebra de linha, tabulação, separador de linha ou parágrafo (U+2028/U+2029) nem caracteres de formatação invisíveis (controles bidi, hífen suave) |
+
+Ferramentas manuais (SPEC-016): numere as peças a partir de `T-001`, em sequência entre todas as ferramentas (cada chave Allen de um jogo é uma peça); o grau é obrigatório na coleta, mesmo que o modelo ainda não gradue aquela ferramenta (o `labels.json` diz quais ele não gradua, ADR-021). Fundo liso maior que a ferramenta (cartolina ou A3), a ferramenta ocupando de 40% a 70% da foto, de 3 a 5 ângulos, sem mãos nem pessoas no quadro. Não danifique ferramenta para fotografar `unusable`.
+
+Ferramentas elétricas (SPEC-021, só identificação): esmerilhadeira (`angle_grinder`), serra (`saw`), furadeira (`drill`) e parafusadeira (`cordless_screwdriver`), com `T-` na mesma sequência das manuais e **grau vazio** (com grau, 422 sem gravar nada). A foto vai para `raw/<tipo>/_/`, a mesma pasta sem grau do "outro". Ferramenta desligada e fora da tomada (ou sem bateria), fundo liso maior que ela (lençol ou parede clara), a cerca de 50 a 80 cm, ocupando de 40% a 70% da foto, de 3 a 5 ângulos, sem mãos nem pessoas no quadro (R-14). Meta: 6 unidades e 90 imagens por tipo; com menos de 3 unidades, o tipo fica fora do modelo.
 
 O lote é ignorado nesse modo. Os campos ficam guardados no navegador (`localStorage`) entre as fotos e depois de recarregar a página. A cada foto salva, o ângulo avança 1; depois do 4, volta a 0 e a página mostra "Peça completa — troque o item_id". O cartão mostra "Salvo: <item_id>, ângulo <n> (fotos desta peça: <total>)". Lembrete fixo: **sem pessoas no quadro** (R-14).
 
@@ -149,7 +159,7 @@ Respostas além das da tabela de rotas:
 
 As gravações passam por um lock de processo e por um `flock` em `DATASET_DIR/manifest.csv.lock` (só POSIX). Cada diretório novo e a imagem renomeada recebem `fsync` do diretório antes da linha do manifest, para que uma queda de energia não deixe uma linha sem imagem (se o sistema de arquivos não aceitar, o log mostra um `WARNING` e a coleta segue). Tudo o que a coleta **cria** sob `DATASET_DIR` (o próprio `DATASET_DIR`, quando é ela que o cria, `raw/`, as pastas de tipo e grau) fica com `0700`, e as imagens, o `manifest.csv` e o `manifest.csv.lock` com `0600`, seja qual for o `umask`. O que já existia não é alterado. Se o `chmod` falhar, o log mostra um `WARNING` com o caminho e a coleta segue.
 
-O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada. As imagens externas importadas (`XS-0001`, `XN-…`, `XO-…`, seção abaixo) não contam na tabela: logo abaixo dela, o console mostra só o total, em "Imagens externas (só treino): <n>".
+O console (<http://127.0.0.1:8000/>) mostra a tabela de cobertura (`imagens/meta` e `peças/meta`) por tipo e grau: 120 imagens e 12 peças por grau (mínimo 8) para parafuso e porca; 60 imagens e 5 peças por grau para cada ferramenta manual (o critério de grau da SPEC-016, opcional; a meta de identificação é de 90 imagens e 6 peças por ferramenta, mínimo 3, somando os graus); uma linha por ferramenta elétrica, sem grau, com 90 imagens e 6 peças (mínimo 3, SPEC-021); e, para "outro", 150 imagens e 30 objetos. Em verde, as células que atingiram as duas metas. Sem `manifest.csv`, a tabela fica zerada. As imagens externas importadas (`XS-0001`, `XN-…`, `XT-…`, `XO-…`, seção abaixo) não contam na tabela: logo abaixo dela, o console mostra só o total, em "Imagens externas (só treino): <n>".
 
 O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backup é o do `docs/dataset-protocol.md` §8 (Drive pessoal, compactado por data). Correções de rótulo e dupla rotulagem são da SPEC-011 (`labels_overrides.csv`), nunca editando a linha original.
 
@@ -157,14 +167,15 @@ O `DATASET_DIR` nunca vai para o Git nem para a nuvem do projeto (R-02). O backu
 
 Serve para colocar no dataset as fotos que **não** passam pela página `/capture` (ADR-020): fotos de conhecidos, tiradas em outros celulares e recebidas como arquivo (origem `contributor`), e imagens de datasets públicos com licença aceita (origem `external`, só treino). É o único caminho de entrada desses arquivos: nunca os copie para `raw/` (`docs/dataset-protocol.md` §8). O passo a passo completo, com o guia para quem fotografa, o consentimento, a numeração e as licenças, está em `docs/dataset-protocol.md` §10.
 
-1. **Pasta de entrada fora do `DATASET_DIR`** (ex.: `~/partqc-entrada/`). A CLI recusa com `inbox must be outside the dataset` uma pasta igual ao dataset, dentro dele ou que o contenha: os arquivos recebidos têm EXIF e não podem ir para o backup.
+1. **Pasta de entrada e plano fora do repositório e fora do `DATASET_DIR`** (ex.: `~/partqc-entrada/`, nunca dentro do checkout do projeto nem de `ml/data/`). A CLI recusa com `inbox must be outside the dataset` uma pasta igual ao dataset, dentro dele ou que o contenha: os arquivos recebidos têm EXIF e não podem ir para o backup. Desde a SPEC-038, ela também recusa, com código `2` e antes de ler qualquer coisa, a pasta de entrada (`inbox must be outside any git repository`) e o plano (`plan must be outside any git repository`) dentro de um repositório Git, isto é, quando a pasta (depois de resolver os links simbólicos) ou alguma pasta acima dela tem uma entrada `.git` (diretório ou arquivo, como numa worktree). O repositório é público, e um `git add -A` publicaria as fotos de terceiros com EXIF e GPS, porque o `.gitignore` não cobre todos os formatos de celular nem o plano CSV. Se a sua pasta pessoal for um repositório Git (dotfiles), use uma pasta fora dela (por exemplo, num disco externo).
 2. **Olhe cada foto** no tamanho real: sem pessoa, rosto, mão identificável, documento, tela ou endereço (`docs/dataset-protocol.md` §10.5). A opção `--privacy-checked` é a confirmação de que isso foi feito; sem ela, a CLI sai com `2` sem ler nada.
-3. **Plano CSV** (UTF-8 sem BOM, até 5.000 linhas), com o cabeçalho exato abaixo. `file` é o caminho relativo à pasta de entrada (com `/`, sem `..`, nunca um link simbólico, até 40 MiB). Uma linha `contributor` usa `S-`/`N-`/`O-` com 3 dígitos (sugestão: a partir de 500) e o código do conhecido (`c01`), com `source_id` e `source_ref` vazios. Uma linha `external` usa `XS-`/`XN-`/`XO-` com 4 dígitos, `contributor` vazio, a fonte registrada em `ml/external_sources.csv` (licença da lista do ADR-020) e o arquivo dentro da fonte em `source_ref`. Ferramentas (`T-`, `XT-`) são recusadas até a SPEC-016.
+3. **Plano CSV** (UTF-8 sem BOM, até 5.000 linhas), com o cabeçalho exato abaixo. `file` é o caminho relativo à pasta de entrada (com `/`, sem `..`, nunca um link simbólico, até 40 MiB). Uma linha `contributor` usa `S-`/`N-`/`T-`/`O-` com 3 dígitos (sugestão: a partir de 500) e o código do conhecido (`c01`), com `source_id` e `source_ref` vazios. Uma linha `external` usa `XS-`/`XN-`/`XT-`/`XO-` com 4 dígitos, `contributor` vazio, a fonte registrada em `ml/external_sources.csv` (licença da lista do ADR-020) e o arquivo dentro da fonte em `source_ref`. Ferramentas manuais (SPEC-016): `T-`/`XT-` só com `pliers`, `adjustable_wrench`, `allen_key`, `flat_screwdriver` ou `phillips_screwdriver` ou com uma ferramenta elétrica (SPEC-021: `angle_grinder`, `saw`, `drill`, `cordless_screwdriver`), e essas só com `T-`/`XT-` (senão, `item_prefix_mismatch`); o grau é obrigatório para as manuais, como na coleta, e tem de ficar vazio para as elétricas, como para `other` (senão, `grade_on_other`).
 
    ```csv
    file,item_id,object_type,grade,labeler,angle,origin,contributor,source_id,source_ref,notes
    IMG_20261022_101500.jpg,S-501,screw,fair,a,2,contributor,c01,,,dúvida fair/poor
    sdnet/0001.png,XS-0001,screw,perfect,b,0,external,,fonte-teste,dataset/train/0001.png,
+   IMG_20261023_090000.jpg,T-501,flat_screwdriver,good,a,1,contributor,c01,,,
    ```
 
    Se montar o plano numa planilha, exporte como CSV UTF-8 e confira as células de `notes` e `source_ref` que começam com `=`, `+`, `-` ou `@`, que a planilha pode ter transformado em fórmula.
@@ -183,7 +194,9 @@ O que acontece:
 - **Normalização, como a página faz:** a rotação EXIF é aplicada, o EXIF (GPS, aparelho, data), o XMP, o IPTC, os comentários e o vídeo da "foto com movimento" são descartados, o lado maior fica com no máximo 1280 px e a imagem é reencodada em JPEG q = 90, sem metadados (o perfil de cor também sai). O resultado é conferido antes de gravar. HEIC, WebP e outros formatos são recusados (`unsupported image`), assim como imagens cujo lado menor ficaria abaixo de 256 px (`image too small`).
 - **Gravação como a da coleta:** mesmo nome e mesma pasta (`raw/<tipo>/<grau ou _>/<item_id>__<ângulo>__<AAAAMMDDTHHMMSSZ>.jpg`), mesmo lock, `0700`/`0600`. O `manifest.csv` ganha a linha com `captured_at` igual ao instante da importação e `capture_device = qc-edge-import`, e o `DATASET_DIR/sources.csv` (`image_path,origin,contributor,source_id,source_ref,input_sha256`) ganha a origem, com o SHA-256 do arquivo recebido. Os arquivos da pasta de entrada nunca são alterados nem apagados.
 - **Saída:** uma linha por linha do plano (`imported <arquivo> -> <image_path>`, `skipped <arquivo>: already imported`, `failed <arquivo>: <motivo>` ou, no `--dry-run`, `would import <arquivo>`) e o total `imported <n>, skipped <k>, failed <f>`. Código `0` sem falha, `1` com alguma linha `failed` (uma imagem recusada não para as outras; uma falha de disco para na hora, sem deixar imagem sem linha) e `2` para argumentos, plano, registro ou cabeçalho.
-- **Retomada:** rodar o mesmo plano de novo pula (`skipped`) o que já entrou, pelo SHA-256 do arquivo recebido. Uma foto excluída por engano (registrada em `exclusions.csv`) pode ser importada de novo.
+- **Retomada:** rodar o mesmo plano de novo pula (`skipped`) o que já entrou, pelo SHA-256 do arquivo recebido. Uma foto excluída por engano (registrada em `exclusions.csv`) pode ser importada de novo. A conferência é repetida sob o lock, linha a linha, então duas execuções simultâneas do mesmo plano não gravam a mesma foto duas vezes: a segunda pula a linha com `skipped <arquivo>: already imported` (SPEC-038).
+- **Falha de disco no meio de uma linha:** além da imagem e da linha do manifest, as pastas criadas para aquela linha (por exemplo, `raw/screw/fair/`) são removidas se tiverem ficado vazias; as que já existiam antes nunca são removidas (SPEC-038).
+- **PNG com comentário:** um PNG com chunk de texto `comment` (comum em datasets públicos) é importado sem o comentário; nenhum metadado da entrada vai para o JPEG gravado (SPEC-038).
 
 Depois de importar, rode `uv run --package qc-edge python -m qc_edge.privacy --dataset-dir ml/data` (deve terminar com `0 with private data`) e `uv run --package qc-ml python -m qc_ml.data validate --dataset-dir ml/data` (sem problemas), e só então apague os arquivos da pasta de entrada (`docs/dataset-protocol.md` §10.6).
 
@@ -244,6 +257,16 @@ uv run --package qc-edge python -m qc_edge.requeue --outbox-path edge/data/outbo
 - A idempotência por `inspection_id` da API impede duplicatas na nuvem, mesmo que parte dos itens já tenha chegado lá (R-05).
 - Pode rodar com o `qc-edge` ligado (o outbox está em WAL; o comando espera até 5 s por um lock). O arquivo nunca é criado: caminho inexistente, que não é arquivo regular ou que não é um outbox sai com código 2; uma falha do SQLite durante a leitura ou a alteração (por exemplo, o lock não liberado em 5 s) sai com código 1.
 - A saída nunca mostra o `payload` (lote, dispositivo, confianças) nem o `DEVICE_API_KEY`, e o comando não faz nenhuma requisição de rede: só altera o arquivo. Argumento desconhecido ou `--id` que não é UUID sai com código 2, e o log mostra só os nomes das opções, nunca os valores.
+- Um arquivo que não pode ser aberto (permissão, pasta sem escrita para o `-shm`, E/S) sai com código 2 e `cannot open --outbox-path (OperationalError)`; um arquivo que não é SQLite ou não tem a tabela do outbox sai com código 2 e `--outbox-path is not an outbox file (<Classe>)` (SPEC-038).
+- **Linha inválida** (editada à mão ou corrompida, por exemplo um `created_at` que não é data ou um `attempts` que não é inteiro): a listagem a pula e imprime só os itens válidos, com um aviso no log (stderr) que cita só o `rowid` e a coluna, nunca o valor (`invalid dead row skipped (rowid=<n>, column=<coluna>)`). Se uma linha `pending` estiver inválida, o laço a move para `dead` com `last_error = invalid outbox row` (aviso `invalid outbox row marked dead (rowid=<n>, column=<coluna>)`) e continua enviando os outros itens. O `--yes` corrige `attempts` e `next_attempt_at` (zera as tentativas e agenda para agora), e a linha sobe normalmente. Com `inspection_id` ou `created_at` inválidos, o laço a devolve a `dead` com `invalid outbox row` no ciclo seguinte: ela precisa ser corrigida ou retirada à mão no `sqlite3` (SPEC-038).
+
+### Heartbeat (SPEC-018)
+
+Quando o envio está ligado (sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL`, a primeira linha da tabela acima) e `HEARTBEAT_INTERVAL_S` não é `0`, uma segunda thread envia um heartbeat logo na subida e depois a cada `HEARTBEAT_INTERVAL_S` segundos (padrão 60) para `POST {CLOUD_API_URL}/api/v1/devices/<DEVICE_ID>/heartbeat`, com o header `X-API-Key`, o timeout de 5 s, o prazo de 15 s e o teto de 512 KiB do envio. O corpo é o `HeartbeatCreate` de `qc_contracts`: versão e sha256 do modelo carregado (nulos sem modelo), versão do `qc-edge`, tempo ligado (`uptime_s`, pelo relógio monotônico) e as contagens de pendentes e `dead` do outbox. Nada de imagem nem de dado pessoal (R-02). A página "Dispositivos" do dashboard mostra o dispositivo como online enquanto o último heartbeat tiver menos de 180 s, pela hora do servidor.
+
+- O heartbeat **não** passa pelo outbox: uma falha (rede fora, timeout, 5xx, 404 de uma API anterior à SPEC-018) vira um `WARNING` `heartbeat failed: ...` no log, e o laço tenta de novo no ciclo seguinte, sem afetar as inspeções.
+- 401 ou 403 → um único `ERROR` (`check DEVICE_API_KEY and restart qc-edge; heartbeats are paused`) e nenhum heartbeat até reiniciar o `qc-edge`, como o envio.
+- Com `--stub-model`, sem a chave ou sem a URL, ou com `HEARTBEAT_INTERVAL_S=0`, não há heartbeat (R-06). O simulador (`scripts/simulate.py`) também não envia heartbeat.
 
 ### Demo offline (CA-17 da SPEC-009, manual)
 
@@ -256,6 +279,58 @@ Registre o resultado no test-report da SPEC-009.
 5. Em até 90 s, o console mostra `online` e pendentes `0`, e as 3 inspeções aparecem no dashboard.
 
 O que registrar: horários dos passos 2 a 5, o que o console mostrou em cada um e os `inspection_id` das 3 inspeções no dashboard.
+
+## Transporte MQTT (SPEC-020, opcional)
+
+Com `EDGE_PUBLISHER=mqtt`, o laço de envio entrega os lotes do outbox a um **Mosquitto que escuta só em loopback no notebook**, e uma **ponte** (`python -m qc_edge.mqtt_bridge`) os repassa à mesma rota HTTP autenticada da `qc-api` (opção C do ADR-009). O protocolo aparece na demo, a rede não fica exposta (nenhuma porta nova, nenhum broker na nuvem, R-01) e a nuvem continua recebendo como na seção anterior. O padrão continua `http`.
+
+```text
+outbox → MqttPublisher ──MQTT 5, QoS 1──► Mosquitto (127.0.0.1:1883) ──► ponte → HttpPublisher ──HTTPS──► qc-api
+                       ◄──── resposta (result) ────────────────────────────┘
+```
+
+Como funciona:
+
+- a borda publica o `BatchCreate` em `partqc/v1/<DEVICE_ID>/batch` com as propriedades do MQTT 5 `ResponseTopic` (`partqc/v1/<DEVICE_ID>/reply/<sessão>`, aleatória a cada subida) e `CorrelationData` (16 bytes aleatórios). O health check usa `partqc/v1/<DEVICE_ID>/health`, com payload vazio;
+- a ponte valida o lote pelo contrato, chama a API com o `HttpPublisher` (mesmos limites: 5 s por operação, 15 s por envio, 512 KiB de resposta) e responde com a propriedade `result`: `ok` (com o `BatchResult`), `rejected` (com o resumo `HTTP <status>: ...`, nunca o corpo da API), `auth` ou `transient`;
+- **o item só vira `sent` com a resposta `ok` da ponte**, que só existe depois da resposta da API. O PUBACK do broker não confirma nada. Sem resposta em `MQTT_RESPONSE_TIMEOUT_S`, com o broker fora do ar ou com a ponte desligada, as inspeções continuam pendentes e seguem o backoff, a bissecção, o `dead` e o `auth_error` da seção anterior;
+- a ponte não guarda estado: se ela cair entre a API e a resposta, a borda reenvia o lote e a API responde `duplicate` (R-05);
+- os payloads são só o JSON do contrato, nunca imagem (R-02). O heartbeat continua por HTTP, direto da borda (SPEC-018). Com `--stub-model`, nada muda: nada é publicado (R-06).
+
+Passo a passo (trabalho humano, uma vez por máquina):
+
+```bash
+sudo pacman -S mosquitto                                   # repositório extra do Arch; software livre
+mkdir -p ~/.config/partqc && chmod 700 ~/.config/partqc
+mosquitto_passwd -c ~/.config/partqc/mosquitto.passwd partqc-edge   # pede a senha (fora do Git, R-03)
+# edite edge/mosquitto/partqc.conf (ou uma cópia fora do repositório) e troque <usuario> no password_file
+mosquitto -c edge/mosquitto/partqc.conf                    # terminal 1: o broker (127.0.0.1:1883, sem anônimo)
+```
+
+No `.env`, além de `DEVICE_ID`, `DEVICE_API_KEY` e `CLOUD_API_URL` (que a ponte usa), ponha `EDGE_PUBLISHER=mqtt`, `MQTT_USERNAME=partqc-edge` e `MQTT_PASSWORD=<a senha do mosquitto_passwd>`. Depois:
+
+```bash
+uv run --env-file .env --package qc-edge python -m qc_edge.mqtt_bridge   # terminal 2: a ponte
+uv run --env-file .env --package qc-edge qc-edge                         # terminal 3: a borda
+mosquitto_sub -h 127.0.0.1 -u partqc-edge -P '<senha>' -t 'partqc/v1/#' -v   # opcional: ver os lotes
+```
+
+- A ponte não lê o `.env` sozinha (use `--env-file`), não aceita argumentos e exige `DEVICE_API_KEY`, `CLOUD_API_URL`, `MQTT_USERNAME` e `MQTT_PASSWORD`; faltando uma, ou com `MQTT_HOST` fora do loopback, sai com código 2 citando a variável, nunca o valor. Sai com 0 no Ctrl+C (SIGINT) ou SIGTERM. Com o broker fora do ar, ela continua ligada e reconecta sozinha.
+- A ponte assina só os tópicos `batch` e `health` do seu `DEVICE_ID` e responde só em `partqc/v1/<DEVICE_ID>/reply/<sessão>`; um pedido sem `ResponseTopic` ou sem `CorrelationData` é ignorado com um aviso.
+- O log da ponte mostra só contagens, `result` e o tópico (ex.: `batch of 3 item(s) on partqc/v1/edge-01/batch: ok`), nunca o payload, a senha nem o `DEVICE_API_KEY`.
+- O console continua mostrando **Pendentes** e **Conectividade com a nuvem**: com a ponte desligada, os pendentes crescem e a conectividade fica `offline`; ao religar a ponte, eles saem no ciclo seguinte do backoff.
+- Testes com o broker real (marcador `mqtt`): `PARTQC_MQTT_TESTS=1 uv run pytest -q -m mqtt edge/tests` (pulados sem a variável ou sem o `mosquitto` e o `mosquitto_passwd` no `PATH`; nunca rodam no CI).
+
+### Teste manual MQTT (CA-12 da SPEC-020)
+
+Registre o resultado no test-report da SPEC-020.
+
+1. Broker local pelo passo a passo acima.
+2. Ponte e borda com `EDGE_PUBLISHER=mqtt` (modelo real, sem `--stub-model`).
+3. Inspecione 10 peças.
+4. Confira as 10 na nuvem (dashboard).
+5. Derrube a ponte (Ctrl+C no terminal 2), inspecione 3 peças, confira no console que ficam pendentes, religue a ponte e confira as 3 na nuvem.
+6. Com o `mosquitto_sub` acima, confira que os lotes aparecem no tópico `partqc/v1/<DEVICE_ID>/batch`, só com o JSON do resultado, sem imagem.
 
 ## Firewall no Arch
 

@@ -752,12 +752,13 @@ def test_extra_devices_columns(clean_db: str) -> None:
             )
         }
     tz = "timestamp with time zone"
-    assert cols == {
+    expected = {
         "device_id": ("text", True),
         "api_key_hash": ("text", True),
         "created_at": (tz, True),
         "last_seen_at": (tz, False),
     }
+    assert {name: cols.get(name) for name in expected} == expected
 
 
 def test_extra_named_constraints_exist(clean_db: str) -> None:

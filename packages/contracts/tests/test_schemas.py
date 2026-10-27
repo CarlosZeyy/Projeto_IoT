@@ -10,6 +10,8 @@ from pydantic import ValidationError
 
 from qc_contracts import (
     DEVICE_ID_PATTERN,
+    GRADE_FORBIDDEN_OBJECT_TYPES,
+    GRADE_REQUIRED_OBJECT_TYPES,
     LOT_ID_PATTERN,
     MAX_LATENCY_MS,
     MODEL_VERSION_PATTERN,
@@ -134,14 +136,146 @@ def test_future_limit_with_other_timezone() -> None:
 
 
 def test_unknown_with_grade_rejected() -> None:
-    with pytest.raises(ValidationError, match="if and only if object_type"):
+    with pytest.raises(ValidationError, match="grade must be null for a grade-forbidden"):
         InspectionCreate.model_validate(base_payload(object_type="unknown"))
 
 
-def test_known_type_without_grade_rejected() -> None:
-    with pytest.raises(ValidationError, match="if and only if object_type"):
+@pytest.mark.parametrize("object_type", ["screw", "nut"])
+def test_grade_required_type_without_grade_rejected(object_type: str) -> None:
+    with pytest.raises(ValidationError, match="grade must not be null for a grade-required"):
         InspectionCreate.model_validate(
+            base_payload(
+                object_type=object_type, grade=None, grade_score=None, grade_confidence=None
+            )
+        )
+
+
+TOOLS = ["pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver"]
+
+
+@pytest.mark.parametrize("object_type", TOOLS)
+def test_grade_optional_type_accepts_null_grade(object_type: str) -> None:
+    m = InspectionCreate.model_validate(unknown_payload() | {"object_type": object_type})
+    assert m.object_type == object_type
+    assert m.grade is None and m.grade_score is None and m.grade_confidence is None
+
+
+@pytest.mark.parametrize("object_type", TOOLS)
+def test_grade_optional_type_accepts_a_grade(object_type: str) -> None:
+    m = InspectionCreate.model_validate(base_payload(object_type=object_type))
+    assert m.grade is Grade.FAIR
+    assert m.grade_score == 2.1 and m.grade_confidence == 0.66
+
+
+@pytest.mark.parametrize("field", ["grade_score", "grade_confidence"])
+def test_grade_optional_type_keeps_the_null_together_rule(field: str) -> None:
+    with pytest.raises(ValidationError, match=f"{field} must be null"):
+        InspectionCreate.model_validate(base_payload(object_type="pliers", **{field: None}))
+    with pytest.raises(ValidationError, match=f"{field} must be null"):
+        InspectionCreate.model_validate(unknown_payload() | {"object_type": "pliers", field: 0.5})
+
+
+POWER_TOOLS = ["angle_grinder", "saw", "drill", "cordless_screwdriver"]
+
+
+@pytest.mark.parametrize("object_type", POWER_TOOLS)
+def test_power_tool_without_grade_accepted(object_type: str) -> None:
+    m = InspectionCreate.model_validate(unknown_payload() | {"object_type": object_type})
+    assert m.object_type == object_type
+    assert m.grade is None and m.grade_score is None and m.grade_confidence is None
+
+
+@pytest.mark.parametrize("object_type", POWER_TOOLS)
+def test_power_tool_with_grade_rejected(object_type: str) -> None:
+    payload = base_payload(object_type=object_type, grade="fair", grade_score=2.0)
+    payload["grade_confidence"] = 0.7
+    with pytest.raises(ValidationError, match="grade must be null for a grade-forbidden"):
+        InspectionCreate.model_validate(payload)
+
+
+@pytest.mark.parametrize("object_type", POWER_TOOLS)
+def test_power_tool_with_only_score_or_confidence_rejected(object_type: str) -> None:
+    for field, value in (("grade_score", 1.0), ("grade_confidence", 0.5)):
+        with pytest.raises(ValidationError, match=f"{field} must be null"):
+            InspectionCreate.model_validate(
+                unknown_payload() | {"object_type": object_type, field: value}
+            )
+
+
+def test_power_tool_message_carries_no_values() -> None:
+    with pytest.raises(ValidationError) as info:
+        InspectionCreate.model_validate(base_payload(object_type="drill", grade="unusable"))
+    (error,) = info.value.errors()
+    assert "drill" not in error["msg"] and "unusable" not in error["msg"]
+
+
+def test_inspection_read_of_a_power_tool() -> None:
+    read = unknown_payload() | {
+        "object_type": "drill",
+        "received_at": datetime.now(UTC).isoformat(),
+        "is_defective": False,
+    }
+    m = InspectionRead.model_validate(read)
+    assert m.object_type is ObjectType.DRILL and m.grade is None
+    with pytest.raises(ValidationError, match="grade-forbidden"):
+        InspectionRead.model_validate(base_payload(object_type="drill") | read | {"grade": "good"})
+
+
+def test_power_tool_round_trip() -> None:
+    m = InspectionCreate.model_validate(unknown_payload() | {"object_type": "cordless_screwdriver"})
+    again = InspectionCreate.model_validate_json(m.model_dump_json())
+    assert again == m
+    assert json.loads(m.model_dump_json())["object_type"] == "cordless_screwdriver"
+
+
+@pytest.mark.parametrize("object_type", list(ObjectType))
+@pytest.mark.parametrize("grade", [None, *Grade])
+def test_invariant_follows_the_grade_groups(object_type: ObjectType, grade: Grade | None) -> None:
+    payload = base_payload(object_type=object_type.value)
+    if grade is None:
+        payload |= {"grade": None, "grade_score": None, "grade_confidence": None}
+    else:
+        payload |= {"grade": grade.value}
+    if grade is None:
+        accepted = object_type not in GRADE_REQUIRED_OBJECT_TYPES
+    else:
+        accepted = object_type not in GRADE_FORBIDDEN_OBJECT_TYPES
+    if accepted:
+        InspectionCreate.model_validate(payload)
+    else:
+        with pytest.raises(ValidationError):
+            InspectionCreate.model_validate(payload)
+
+
+def test_invariant_messages_carry_no_values() -> None:
+    for payload in (
+        base_payload(object_type="unknown", grade="unusable"),
+        base_payload(object_type="nut", grade=None, grade_score=None, grade_confidence=None),
+    ):
+        with pytest.raises(ValidationError) as info:
+            InspectionCreate.model_validate(payload)
+        (error,) = info.value.errors()
+        assert "unusable" not in error["msg"]
+        assert "nut" not in error["msg"]
+
+
+def test_inspection_read_accepts_a_tool_without_grade() -> None:
+    m = InspectionRead.model_validate(
+        unknown_payload()
+        | {
+            "object_type": "pliers",
+            "received_at": datetime.now(UTC).isoformat(),
+            "is_defective": False,
+        }
+    )
+    assert m.object_type is ObjectType.PLIERS and m.grade is None
+
+
+def test_inspection_read_keeps_the_grade_groups() -> None:
+    with pytest.raises(ValidationError, match="grade-required"):
+        InspectionRead.model_validate(
             base_payload(grade=None, grade_score=None, grade_confidence=None)
+            | {"received_at": datetime.now(UTC).isoformat(), "is_defective": False}
         )
 
 

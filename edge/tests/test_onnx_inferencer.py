@@ -271,7 +271,7 @@ def test_invalid_model_version(tmp_path: Path, dummy_model: types.ModuleType, na
     "labels",
     [
         {
-            "object_types": ["screw", "pliers", "other"],
+            "object_types": ["screw", "hammer", "other"],
             "grades": list(onnx_inferencer.EXPECTED_GRADES),
         },
         {"object_types": ["screw", "unknown"], "grades": list(onnx_inferencer.EXPECTED_GRADES)},

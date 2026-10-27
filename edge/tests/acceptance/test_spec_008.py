@@ -595,12 +595,13 @@ def test_ca09_real_process_exits_2(tmp_path: Path, models: Path) -> None:
 @pytest.mark.parametrize(
     ("object_types", "grades"),
     [
-        (("screw", "pliers", "other"), GRADES),
+        # SPEC-016 section 3.1: pliers is a valid label now; a value still outside the contract.
+        (("screw", "hammer", "other"), GRADES),
         (("screw", "unknown"), GRADES),
         (("screw", "nut", "other"), ("good", "perfect", "fair", "poor", "unusable")),
         (("screw", "nut", "other"), ("perfect", "good", "fair", "unusable", "poor")),
     ],
-    ids=["pliers", "unknown", "grades-swapped", "grades-swapped-tail"],
+    ids=["hammer", "unknown", "grades-swapped", "grades-swapped-tail"],
 )
 def test_ca10_invalid_labels(
     models: Path, object_types: Sequence[str], grades: Sequence[str]

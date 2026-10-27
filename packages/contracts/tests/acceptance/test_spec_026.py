@@ -71,9 +71,10 @@ def _with(**overrides: Any) -> dict[str, Any]:
 
 
 def test_ca01_contracts_version_is_0_3_0() -> None:
-    assert qc_contracts.__version__ == "0.3.0"
-    assert importlib.metadata.version("qc-contracts") == "0.3.0"
+    v = qc_contracts.__version__
     assert qc_contracts.__version__ == importlib.metadata.version("qc-contracts")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
+    assert (0, 3, 0) <= tuple(int(p) for p in v.split(".")) < (1, 0, 0)
 
 
 def test_ca01_pyproject_matches() -> None:

@@ -30,6 +30,8 @@ INSPECTIONS = "/api/v1/inspections"
 SUMMARY = "/api/v1/metrics/summary"
 TIMESERIES = "/api/v1/metrics/timeseries"
 LOTS = "/api/v1/lots"
+TOOLS = ("pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver")
+POWER_TOOLS = ("angle_grinder", "saw", "drill", "cordless_screwdriver")
 
 # (device, lot, source, object_type, grade, grade_score, type_confidence, needs_review, minutes)
 DATASET_D: list[tuple[Any, ...]] = [
@@ -246,7 +248,9 @@ def test_summary_without_filters(reader: TestClient) -> None:
     assert summary.needs_review_count == 2
     assert summary.defect_rate == pytest.approx(3 / 7, rel=1e-6)
     assert summary.by_grade == {"perfect": 1, "good": 2, "fair": 1, "poor": 2, "unusable": 1}
-    assert summary.by_object_type == {"screw": 4, "nut": 3, "unknown": 1}
+    assert summary.by_object_type == {"screw": 4, "nut": 3, "unknown": 1} | dict.fromkeys(
+        (*TOOLS, *POWER_TOOLS), 0
+    )
     assert summary.mean_type_confidence == pytest.approx(0.8225, rel=1e-6)
     assert summary.mean_grade_score == pytest.approx(14.4 / 7, rel=1e-6)
 
@@ -254,7 +258,20 @@ def test_summary_without_filters(reader: TestClient) -> None:
 def test_summary_json_keys(reader: TestClient) -> None:
     body = reader.get(SUMMARY, headers=R).json()
     assert list(body["by_grade"]) == ["perfect", "good", "fair", "poor", "unusable"]
-    assert list(body["by_object_type"]) == ["screw", "nut", "unknown"]
+    assert list(body["by_object_type"]) == [
+        "screw",
+        "nut",
+        "unknown",
+        "pliers",
+        "adjustable_wrench",
+        "allen_key",
+        "flat_screwdriver",
+        "phillips_screwdriver",
+        "angle_grinder",
+        "saw",
+        "drill",
+        "cordless_screwdriver",
+    ]
 
 
 def test_summary_by_source_and_lot(reader: TestClient) -> None:
@@ -277,7 +294,9 @@ def test_summary_without_rows(reader: TestClient) -> None:
     assert summary.mean_type_confidence is None
     assert summary.mean_grade_score is None
     assert summary.by_grade == dict.fromkeys(("perfect", "good", "fair", "poor", "unusable"), 0)
-    assert summary.by_object_type == dict.fromkeys(("screw", "nut", "unknown"), 0)
+    assert summary.by_object_type == dict.fromkeys(
+        ("screw", "nut", "unknown", *TOOLS, *POWER_TOOLS), 0
+    )
 
 
 def test_summary_only_unknown(reader: TestClient) -> None:

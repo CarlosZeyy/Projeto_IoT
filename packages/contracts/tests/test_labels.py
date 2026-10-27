@@ -16,7 +16,24 @@ from qc_contracts import labels as labels_module
 
 CASES = [
     (GRADE_LABELS_PT, Grade, ["perfeito", "bom", "mediano", "ruim", "inutilizável"]),
-    (OBJECT_TYPE_LABELS_PT, ObjectType, ["parafuso", "porca", "desconhecido"]),
+    (
+        OBJECT_TYPE_LABELS_PT,
+        ObjectType,
+        [
+            "parafuso",
+            "porca",
+            "desconhecido",
+            "alicate",
+            "chave inglesa",
+            "chave Allen",
+            "chave de fenda",
+            "chave Phillips",
+            "esmerilhadeira",
+            "serra",
+            "furadeira",
+            "parafusadeira",
+        ],
+    ),
     (SOURCE_LABELS_PT, Source, ["real", "simulado"]),
     (CAPTURE_MODE_LABELS_PT, CaptureMode, ["inspeção", "coleta"]),
 ]

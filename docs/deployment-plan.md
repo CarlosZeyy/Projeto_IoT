@@ -10,7 +10,9 @@ Histórico do arquivo:
 - 2026-10-25: decisão do humano: deploy automático por webhook a cada merge na `main` (passo 7A) e variáveis opcionais de alertas da SPEC-017 no compose;
 - 2026-10-25: comandos conferidos contra o `infra/compose.yaml`, o `infra/Caddyfile` e o `infra/docker/caddy.Dockerfile` da SPEC-039, e fontes do Coolify conferidas de novo pelo autor (security-devops);
 - 2026-10-25: correção do SEC-39-01 pelo architect (emenda 1 do ADR-023): o Coolify entrega o `.env` do recurso a todos os serviços dele, então a API passa a ser um recurso separado (`partqc-api`, `infra/compose.api.yaml`), ligado ao `partqc-web` pela rede `partqc-api-link`; passos 4 a 7A, §3, §6, §7, §8 e §9 ajustados, com o SEC-39-03 (passo 5) e o SEC-39-04 (passo 7A). O autor da SPEC-039 confere os comandos contra os arquivos da correção;
-- 2026-10-25: comandos conferidos pelo autor (security-devops) contra o `infra/compose.api.yaml` e o `infra/compose.yaml` da correção do SEC-39-01, inclusive com os dois projetos de pé localmente (a rede `partqc-api-link` criada pelo primeiro e usada pelo segundo); nome do botão do 2FA conferido na página oficial.
+- 2026-10-25: comandos conferidos pelo autor (security-devops) contra o `infra/compose.api.yaml` e o `infra/compose.yaml` da correção do SEC-39-01, inclusive com os dois projetos de pé localmente (a rede `partqc-api-link` criada pelo primeiro e usada pelo segundo); nome do botão do 2FA conferido na página oficial;
+- 2026-10-26: junção da SPEC-017 (alertas no Telegram) com o layout do Coolify pelo autor (security-devops): §3, passo 1 (item 4), passo 5, §6, §7 (item 11), §8 (item 5) e o CA manual da SPEC-017 refeitos para as variáveis só no recurso `partqc-api`, com o token colado só no painel e lido do ambiente do contêiner nas conferências, e a conferência de RLS e grants da `alerts_sent` (SEC-17-01);
+- 2026-10-26: SPEC-038, Parte B, pelo autor (security-devops): `handle_errors` no Caddy (§2, linha "Caddy: respostas de erro", e §7, item 9), `0` ou `-1` no `pids_limit` (§2), o diagnóstico no passo 3 da "Atualização" (§4) e o CA manual da SPEC-038 (§9).
 
 > **Estado em 2026-10-25:** o ADR-023 está `Aceito`, e a SPEC-039, em desenvolvimento. Os passos da §4 descrevem o deploy pelo Coolify e **só podem ser executados depois do merge da SPEC-039**. Até lá, o `infra/compose.yaml` da `main` publica as portas 80 e 443, que o proxy do Coolify já ocupa, e o deploy falharia.
 
@@ -51,6 +53,7 @@ Os agentes não têm acesso à VPS, ao painel do Coolify, ao Supabase, ao DNS ne
 | Coolify (auto-hospedado, já instalado) | Deploy do recurso Docker Compose a partir do GitHub; domínio e certificado no proxy (Traefik, resolvedor `letsencrypt`); variáveis dos dois recursos | Software livre (Apache-2.0); auto-hospedado é "Free and open source", sem conta paga (R-01). Rolling update não suportado em Compose; o rollback do painel não está documentado para Compose (usar a §6). Versão instalada na VPS: preenchida pelo humano no passo 2 (CA-14 da SPEC-039), na tabela "Conferência da VPS". Referência: a última versão publicada no GitHub era a `v4.5.0` (marcada "Latest", de 23/10) | <https://github.com/coollabsio/coolify>, <https://github.com/coollabsio/coolify/releases>, <https://coolify.io/docs/knowledge-base/docker/compose>, <https://coolify.io/docs/applications/build-packs/docker-compose>, <https://coolify.io/docs/knowledge-base/proxy/traefik/overview>, <https://coolify.io/docs/knowledge-base/rolling-updates> | 2026-10-25 (versão instalada: a completar pelo humano no CA-14) |
 | Imagens base | `python:3.12.15-slim-trixie` (API e dashboard), `ghcr.io/astral-sh/uv:0.13.2` (cópia do binário `uv` no build), `caddy:2.11.7` (o `FROM` de `infra/docker/caddy.Dockerfile`, a partir da SPEC-039), todas fixadas também pelo digest `@sha256:` do índice multi-arquitetura | Software livre; nenhuma conta. Atualizar: conferir a tag nova na fonte, trocar a tag e o digest (`docker buildx imagetools inspect <imagem>:<tag>`) e abrir PR | <https://hub.docker.com/_/python>, <https://docs.astral.sh/uv/guides/integration/docker/>, <https://hub.docker.com/_/caddy> | 2026-10-19 |
 | Caddy: headers da resposta | `infra/Caddyfile` (SPEC-032 §4.3): `Strict-Transport-Security`, `X-Content-Type-Options`, `Referrer-Policy "no-referrer"`, `Content-Security-Policy "frame-ancestors 'self'"`, `-Server` e `-Via` | "Prefix with `-` to delete the field"; apagar um campo ativa o `defer`, que "defers the execution of header operations until the response is being sent to the client", ou seja, depois do `reverse_proxy`. Conferido também na prática com a imagem `caddy:2.11.7` fixada: atrás de um `reverse_proxy` cuja origem responde `Server: uvicorn`, a resposta sai sem `Server` e sem `Via` e com os 4 headers. Com o Coolify, os headers passam pelo Traefik até o cliente (conferido no CA-13 da SPEC-015 e no CA-09 da SPEC-032) | <https://caddyserver.com/docs/caddyfile/directives/header> | 2026-10-24 |
+| Caddy: respostas de erro | `infra/Caddyfile` (SPEC-038 §4.9, SEC-32-01): `handle_errors` sem códigos de status, com as mesmas 6 linhas do `header` do site e `respond ""` (corpo vazio, sem status) | "When the normal HTTP request handlers return an error, normal processing stops and the error handlers are invoked"; uma resposta de erro da origem que passa pelo `reverse_proxy` não aciona as rotas de erro. No `respond`, um único argumento que não é um número de 3 dígitos é o corpo; sem status, "if this handler exists in an error route, use the recommended status code as the default; otherwise 200" (comentário de `ServeHTTP`). Conferido na prática com a imagem `caddy:2.11.7` fixada, sem a API e o dashboard: `502` com os 4 headers, sem `Server` e sem `Via` e com `Content-Length: 0`, em `/api/v1/health` e em `/` | <https://caddyserver.com/docs/caddyfile/directives/handle_errors>, <https://github.com/caddyserver/caddy/blob/master/modules/caddyhttp/staticresp.go> | 2026-10-26 |
 | Docker Compose: `pids_limit`, `read_only` e `tmpfs` | `infra/compose.yaml` (SPEC-032 §4.4; no Caddy, `tmpfs` também em `/data` e `/config` a partir da SPEC-039) | `pids_limit` "tunes a container's PIDs limit" (conta processos **e threads**); `read_only` cria o contêiner com sistema de arquivos só de leitura; `tmpfs` na forma curta `<path>:<options>`. A opção `size` da forma curta não aparece na referência, mas foi conferida com `docker compose run` no Compose 5.6.1 e no Docker Engine 29.9.2: `/tmp` montado com `size=65536k` e com `nosuid,nodev,noexec` (os padrões do Docker). Se o Coolify preserva esses campos é conferido no CA-16 da SPEC-039 | <https://docs.docker.com/reference/compose-file/services/> | 2026-10-24 |
 | Supabase Free | Postgres | 500 MB de banco por projeto, 2 projetos ativos, **pausa com pouca atividade num período de 7 dias** ("a few user requests to the database each day over the previous week is enough"), 5 GB de egress | <https://supabase.com/pricing>, <https://supabase.com/docs/guides/platform/free-project-pausing> | 2026-10-19 |
 | Let's Encrypt (via proxy do Coolify) | Certificado TLS de `<subdominio>`, emitido e renovado pelo Traefik do Coolify | 5 certificados por conjunto exato de nomes a cada 7 dias; todo certificado emitido vai para os logs de CT | <https://letsencrypt.org/docs/rate-limits/>, <https://letsencrypt.org/docs/ct-logs/>, <https://coolify.io/docs/core/networking/domains> | 2026-10-25 |
@@ -89,7 +92,7 @@ Regra dos limites (SPEC-015 §4.12): a soma dos três `mem_limit` fica abaixo da
 
 `256` é pelo menos 5 vezes o pico medido. Na VPS, o CA-09 da SPEC-032 confere a coluna `PIDS` do `docker stats --no-stream` com 3 abas do painel abertas: no máximo metade do `pids_limit`.
 
-- **Se um contêiner bater no `pids_limit`:** o Python registra `can't start new thread` (`RuntimeError`) e o Caddy (Go) sai com `failed to create new OS thread` e é reiniciado pelo `restart: unless-stopped`. Subir o valor da variável do serviço nas Environment Variables do recurso dele no Coolify (§3; por exemplo, `DASHBOARD_PIDS_LIMIT=512` no `partqc-web`) e fazer **Redeploy** desse recurso.
+- **Se um contêiner bater no `pids_limit`:** o Python registra `can't start new thread` (`RuntimeError`) e o Caddy (Go) sai com `failed to create new OS thread` e é reiniciado pelo `restart: unless-stopped`. Subir o valor da variável do serviço nas Environment Variables do recurso dele no Coolify (§3; por exemplo, `DASHBOARD_PIDS_LIMIT=512` no `partqc-web`) e fazer **Redeploy** desse recurso. O valor é sempre um inteiro positivo: `0` ou `-1` removem o limite, sem aviso do compose (conferido com o Compose 5.6.1 em 2026-10-26: com `0`, o `config` resolvido perde o campo; com `-1`, mostra `pids_limit: -1`), então nunca use nenhum dos dois.
 - **Se um serviço quebrar por causa do `read_only`** depois de uma atualização (uma dependência nova que escreve em disco): o log mostra `Read-only file system` (ou `EROFS`, ou `PermissionError` num caminho fora de `/tmp`), na aba de logs do serviço no painel ou em `docker logs --tail 200 <contêiner>`. Fazer o rollback da §6 e abrir uma SPEC (ou uma manutenção) que meça e acrescente o `tmpfs` necessário, com no máximo `64m`. Nunca tirar o `read_only` direto na VPS.
 
 ## 3. Segredos e variáveis
@@ -110,7 +113,7 @@ Regra para os segredos no painel: **build desligado (só runtime)**, **Locked** 
 | `MAX_BODY_BYTES`, `LOG_LEVEL` (opcionais) | Environment Variables do recurso `partqc-api` (padrões `262144` e `INFO` no compose) | `qc-api` |
 | `API_BASE_URL` | Definida pelo próprio `infra/compose.yaml` como `https://${PUBLIC_HOST}`; localmente, em `.streamlit/secrets.toml` | `qc-dashboard` |
 | `MODEL_METRICS_PATH` (opcional) | Environment Variables do recurso `partqc-web`, vazia (vale o padrão `ml/models/partqc-mnv3-v1/metrics.json`, relativo a `/app`) | `qc-dashboard` |
-| `ALERTS_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e os demais `ALERTS_*` (opcionais, SPEC-017) | Environment Variables do recurso **`partqc-api`**, e **nunca** do `partqc-web`; sem valor, valem os padrões do compose, com os alertas desligados. O `TELEGRAM_BOT_TOKEN` é segredo (só runtime, Locked, Literal). Instruções completas quando a SPEC-017 for mergeada | `qc-api` |
+| `ALERTS_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e os demais `ALERTS_*` (opcionais, SPEC-017) | Environment Variables do recurso **`partqc-api`**, e **nunca** do `partqc-web`; sem valor, valem os padrões do compose, com os alertas desligados. O `TELEGRAM_BOT_TOKEN` é segredo (só runtime, Locked, Literal). No painel do Render, só se a reserva estiver ativa (§6). Passo a passo na §8, item 5 | `qc-api` |
 | Segredo do webhook de deploy | Só no campo Webhook secret dos dois recursos no Coolify (o mesmo valor) e no webhook do repositório no GitHub (passo 7A) | Coolify (confere a assinatura do GitHub) |
 | `DEVICE_ID`, `DEVICE_API_KEY`, `CLOUD_API_URL` (`https://<subdominio>`) | `.env` do notebook da borda | `qc-edge` |
 | `SIM_DEVICE_ID`, `SIM_DEVICE_API_KEY` | `.env` local de quem roda o simulador e o smoke test (lido com `uv run --env-file`) | `scripts/simulate.py`, `scripts/smoke_test.py` |
@@ -166,11 +169,11 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
 
    ```sql
    select relname, relrowsecurity, relforcerowsecurity from pg_class
-   where relname in ('devices','inspections','schema_migrations');
-   -- esperado: 3 linhas, relrowsecurity = true e relforcerowsecurity = false
+   where relname in ('devices','inspections','schema_migrations','alerts_sent');
+   -- esperado: 4 linhas, relrowsecurity = true e relforcerowsecurity = false
 
    select count(*) from pg_policies
-   where tablename in ('devices','inspections','schema_migrations');
+   where tablename in ('devices','inspections','schema_migrations','alerts_sent');
    -- esperado: 0
 
    select grantee, table_name, privilege_type from information_schema.role_table_grants
@@ -178,7 +181,7 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
    -- esperado: nenhuma linha
    ```
 
-   Se a última consulta devolver linhas, rodar `revoke all on devices, inspections, schema_migrations from anon, authenticated;` e repeti-la (SEC-02 da SPEC-003). Depois, chamar a API REST do Supabase em `/rest/v1/inspections` com a chave anon (painel → API) e conferir que nenhuma linha volta, mesmo com dados na tabela.
+   Se a última consulta devolver linhas, rodar `revoke all on devices, inspections, schema_migrations, alerts_sent from anon, authenticated;` e repeti-la (SEC-02 da SPEC-003; `alerts_sent` desde a SPEC-017, SEC-17-01). Depois, chamar a API REST do Supabase em `/rest/v1/inspections` com a chave anon (painel → API) e conferir que nenhuma linha volta, mesmo com dados na tabela.
 5. Copiar a connection string do pooler em modo **transaction** (porta 6543) para a variável `DATABASE_URL` do recurso `partqc-api` no Coolify (passo 5), e de nenhum outro. A API conecta com `prepare_threshold=None` (ADR-006).
 
 ### Passo 2. Conferência da VPS e do Coolify
@@ -221,7 +224,7 @@ Criar **dois** recursos no mesmo projeto do painel, com os itens 1 a 4 abaixo re
      - `DATABASE_URL`: a URL do pooler em modo transaction (passo 1, item 5);
      - `READ_API_KEY`: a chave do item 1;
      - opcionais: `API_MEM_LIMIT`, `API_CPUS`, `API_PIDS_LIMIT`, `MAX_BODY_BYTES` e `LOG_LEVEL`. Sem valor, vale o padrão do compose;
-     - `ALERTS_*` e `TELEGRAM_*` (SPEC-017): deixar com os padrões do compose (`ALERTS_ENABLED=false`, alertas desligados) até a SPEC-017 ser mergeada e este plano explicar como ligá-los;
+     - `ALERTS_*` e `TELEGRAM_*` (SPEC-017): no primeiro deploy, deixar com os padrões do compose (`ALERTS_ENABLED=false`, alertas desligados); para ligá-los, depois da migração `005`, seguir a §8, item 5;
    - no **`partqc-web`**:
      - `PUBLIC_HOST`: o subdomínio real, sem `https://` e sem barra;
      - `READ_API_KEY`: a **mesma** chave do item 1;
@@ -339,7 +342,7 @@ Cada merge na `main` dispara o deploy dos dois recursos pelo webhook (passo 7A),
 
 1. confere no painel que apareceu, em cada recurso, o deploy do webhook com o commit do merge, e acompanha os logs até o fim (sem o webhook, ou depois de voltar de um rollback, clicar em **Deploy** no `partqc-api` e depois no `partqc-web`)
 2. confere no painel que os dois deploys terminaram com sucesso e que os dois recursos estão em execução; se algum falhou, vale o fim do passo 7A
-3. listar os contêineres (convenções acima): os 3 `Up`; `api` e `dashboard` `(healthy)`
+3. listar os contêineres (convenções acima): os 3 `Up`; `api` e `dashboard` `(healthy)`; se algum serviço não subir ou reiniciar em loop, veja §2, "Endurecimento dos contêineres" (`Read-only file system`, `can't start new thread`)
 4. smoke test (passo 11, item 2)
 5. na VPS, `docker image prune -f --filter label=partqc.component` (remove só as imagens órfãs do PartQC)
 
@@ -386,7 +389,7 @@ A imagem do dashboard leva o `metrics.json` e os PNGs de `ml/reports/` **do comm
 - **Parar:** o botão **Stop** de cada recurso no painel, primeiro o `partqc-web` e depois o `partqc-api`. Nunca apague um recurso nem rode `docker compose down -v` nos contêineres do PartQC. O Caddy não guarda mais certificados, mas apagar um recurso perde as variáveis do painel. Para voltar, **Deploy** do `partqc-api` e depois do `partqc-web` (a rede `partqc-api-link` pode ter sido removida com os dois parados).
 - **Modelo:** trocar `MODEL_DIR` para a versão anterior. O `model_version` de cada inspeção permite filtrar.
 - **Reserva fria** (VPS ou Coolify fora do ar por mais de 24 h, ou no dia da demo; SPEC-015 §4.16, item 5):
-  1. no Render (conta pessoal, sem cartão), "New → Blueprint" com `infra/render.yaml`; na criação, preencher `DATABASE_URL` (pooler em modo transaction) e `READ_API_KEY` (os dois com `sync: false`);
+  1. no Render (conta pessoal, sem cartão), "New → Blueprint" com `infra/render.yaml`; na criação, preencher `DATABASE_URL` (pooler em modo transaction) e `READ_API_KEY` (os dois com `sync: false`); para ter os alertas no Telegram durante a reserva, acrescentar no painel do Render as variáveis `ALERTS_*` e `TELEGRAM_*` com os mesmos valores do recurso `partqc-api` (o `TELEGRAM_BOT_TOKEN` como segredo, nunca no `infra/render.yaml`; §8, item 5), sabendo que eles só rodam enquanto o serviço está acordado (§7, item 11);
   2. na borda, `CLOUD_API_URL=https://<servico>.onrender.com`;
   3. rodar o dashboard no notebook com `.streamlit/secrets.toml` apontando para essa URL (SPEC-028 §4.6);
   4. o secret `KEEPALIVE_URL` passa a ser `https://<servico>.onrender.com` enquanto a reserva estiver em uso;
@@ -420,11 +423,13 @@ Cada linha tem a fonte e a data da verificação. Os riscos são do MVP (projeto
 6. **Limite de emissão de certificados.** "Up to 5 certificates can be issued per exact same set of identifiers every 7 days" (<https://letsencrypt.org/docs/rate-limits/>, conferido em 2026-10-19). O certificado agora fica no proxy do Coolify. Trocar o domínio do recurso várias vezes, ou apagar e recriar o recurso repetidamente, força emissões novas. Nunca usar `docker compose down -v` nos contêineres do PartQC.
 7. **Segredos no disco da VPS, gravados pelo Coolify (ADR-023).** No deploy, o Coolify grava as variáveis de runtime num `.env` no diretório de cada recurso (um do `partqc-api`, com a `DATABASE_URL`, e um do `partqc-web`, sem ela), além de guardá-las no banco dele. Modo e dono dos arquivos, conferidos no CA-17 da SPEC-039: a preencher. A VPS é de um único usuário (o humano). O arquivo fica fora das imagens pelo `.dockerignore` de cada Dockerfile (CA-13 da SPEC-039). Não altere a permissão à mão: o Coolify reescreve o arquivo a cada deploy. (Até a SPEC-039, este item tratava do aviso do HTTP/3 sem `NET_ADMIN`, que deixou de existir, porque o Caddy não publica mais 443/udp.)
 8. **Contêiner só de leitura e com limite de processos (SPEC-032 §4.4).** Uma atualização de dependência que passe a escrever em disco fora de `/tmp`, ou que crie muito mais threads, pode derrubar o serviço depois do deploy. Mitigação: as medições da §2 (pico de 15, 51 e 11 PIDs para um limite de 256), o smoke da atualização (§4, "Atualização", item 4), o diagnóstico pelo log (`Read-only file system`, `can't start new thread`) e o rollback da §6.
-9. **Respostas que não passam pelo bloco de headers do Caddy (SPEC-032 §4.3).** O bloco `header` do site é adiado (`defer`) e só age nas respostas que passam pelo `reverse_proxy`. Conferido com a imagem `caddy:2.11.7` em 2026-10-24: o `502` que o Caddy devolve quando a API ou o dashboard estão fora do ar sai com `Server: Caddy` e sem os 4 headers do bloco (a SPEC-038 cobre isso com `handle_errors`). Com o Coolify (ADR-023), também saem sem os nossos headers o redirecionamento HTTP → HTTPS, feito pelo proxy do Coolify (o navegador ignora HSTS em HTTP), e os erros gerados pelo próprio proxy, como o `404`/`No available server` com o contêiner do Caddy parado. As respostas da API e do Streamlit por HTTPS saem sem `server` e sem `via`. Nenhuma dessas respostas tem conteúdo que possa ser emoldurado. **Decisão:** risco aceito no MVP. Uma política CSP completa também ficou fora (SPEC-032 §3.2).
+9. **Respostas que não passam pelo bloco de headers do Caddy (SPEC-032 §4.3, SPEC-038 §4.9).** O bloco `header` do site é adiado (`defer`) e só age nas respostas que passam pelo `reverse_proxy`. Até a SPEC-038, o `502` que o Caddy devolve quando a API ou o dashboard estão fora do ar saía com `Server: Caddy` e sem os 4 headers do bloco (conferido com a imagem `caddy:2.11.7` em 2026-10-24). Desde a SPEC-038, as respostas de erro geradas pelo próprio Caddy (o `502` com a origem fora do ar, o `504` por timeout) saem com os 4 headers, sem `Server` e sem `Via` e com corpo vazio, pelo `handle_errors` do `infra/Caddyfile`: um `respond` sem status, dentro da rota de erro, usa o status do erro original (comentário de `ServeHTTP` em <https://github.com/caddyserver/caddy/blob/master/modules/caddyhttp/staticresp.go>, consultado em 2026-10-26; conferido em 2026-10-26 com a imagem fixada, que devolveu `502` sem a API e o dashboard), e nenhum placeholder do erro vai para o cliente. Com o Coolify (ADR-023), o redirecionamento HTTP → HTTPS e os erros gerados pelo próprio proxy do Coolify (por exemplo, o `404`/`No available server` com o contêiner do Caddy parado) continuam sem eles (o navegador ignora HSTS em HTTP). As respostas da API e do Streamlit por HTTPS saem sem `server` e sem `via`. Nenhuma dessas respostas tem conteúdo que possa ser emoldurado. **Decisão:** risco aceito no MVP. Uma política CSP completa também ficou fora (SPEC-032 §3.2).
 10. **O que cada contêiner recebe no Coolify (SEC-39-01, ADR-023, emenda 1).** O Coolify entrega a todos os serviços de um recurso o `.env` com todas as variáveis de runtime do recurso. Com os dois recursos, a `DATABASE_URL` e o `TELEGRAM_BOT_TOKEN` ficam só na `api`, conferido pelo CA-20 da SPEC-039 (depois do primeiro deploy e de cada atualização do Coolify). Ficam aceitos:
     - a `READ_API_KEY` e o `PUBLIC_HOST` no ambiente do Caddy, pelo `.env` do `partqc-web`. O Caddy já recebe a chave de leitura no header de cada requisição do dashboard;
     - o `dashboard` na rede `partqc-api-link`, porque o Coolify liga as redes do topo do arquivo a todos os serviços do recurso. Ele alcança a `api` direto, inclusive o `/docs` interno, como já alcançava no recurso único, e a API exige as chaves de sempre;
     - o isolamento depende de um comportamento do Coolify que a documentação não descreve, conferido no código-fonte (`v4.x` e `v4.5.0`, 2026-10-25). Se o CA-20 falhar, vale o "Quando revisitar" do ADR-023.
+
+11. **Alertas no Telegram na reserva (SPEC-017 §7).** O laço de alertas roda dentro do processo da API. O serviço `free` do Render dorme depois de 15 min sem tráfego (linha do Render na §2), e, enquanto dorme, nenhum lote é verificado. Com a reserva ativa, um alerta só sai quando a API está acordada (o keep-alive e o uso do painel a acordam) e o lote ainda está na janela de `ALERTS_LOOKBACK_HOURS`. Na VPS, a API fica sempre ligada. **Decisão:** risco aceito; a reserva é só para incidentes.
 
 ## 8. Operação do banco e das chaves (SPEC-015 §4.9)
 
@@ -521,9 +526,44 @@ O `statement_timeout` do papel da API é o **teto do custo de banco** da carta p
 - A chave vai sempre pelo arquivo de ambiente (`SIM_DEVICE_API_KEY`). Nunca use `--api-key` em demo gravada, terminal projetado, CI ou workflow. Se for inevitável, use a forma `--api-key=<valor>` com um espaço no início do comando, para que ele não entre no histórico do shell.
 - Se uma chave aparecer numa gravação, num log compartilhado ou num print, rotacioná-la com `uv run --env-file .env.migrate --package qc-api python scripts/register_device.py --device-id sim-01 --rotate` e atualizar o `.env` local.
 
-## 9. Registro dos CAs manuais (SPECs 015, 032 e 039)
+### 5. Alertas no Telegram (SPEC-017)
 
-Preenchido pelo humano (e copiado no dev-report), sem o subdomínio real, o IP nem os UUIDs dos recursos. Os comandos estão na SPEC-015 §5, na SPEC-032 §5 (com a equivalência da SPEC-039 §4.7) e na SPEC-039 §5.
+Desligados por padrão (`ALERTS_ENABLED=false`). O comportamento e as regras das variáveis estão no [`api/README.md`](../api/README.md), seção "Alertas no Telegram"; na VPS, valem os passos abaixo, pelo Coolify. Todas as variáveis dos alertas ficam **só** nas Environment Variables do recurso **`partqc-api`**, nunca no `partqc-web` (§3), e nenhuma vai para um arquivo criado à mão na VPS.
+
+- **Custo (R-01):** a Bot API do Telegram é gratuita para mensagens comuns (<https://core.telegram.org/bots/faq>, conferido pelo architect em 2026-10-24); o teto padrão de 10 mensagens por hora fica muito abaixo do limite de 20 por minuto num grupo. Nenhum cartão, nenhum serviço novo.
+- **Migração (antes de ligar):** a tabela `alerts_sent` vem da `infra/migrations/005_alerts.sql`. Depois do merge da SPEC-017, aplicá-la da máquina do humano com o `.env.migrate`, pelo modo session (passo 1, item 3, subitens 4 a 6 da §4: `--status`, aplicar e `0 pending`). Sem a tabela, cada verificação registra `alerts check failed: type=UndefinedTable sqlstate=42P01` e a ingestão segue normal.
+- **RLS e grants da tabela nova (SEC-17-01)**, no SQL Editor, logo depois da migração:
+
+  ```sql
+  select relname, relrowsecurity, relforcerowsecurity from pg_class where relname = 'alerts_sent';
+  -- esperado: 1 linha, relrowsecurity = true e relforcerowsecurity = false
+
+  select count(*) from pg_policies where tablename = 'alerts_sent';
+  -- esperado: 0
+
+  select grantee, privilege_type from information_schema.role_table_grants
+  where table_schema = 'public' and table_name = 'alerts_sent' and grantee in ('anon','authenticated');
+  -- esperado: nenhuma linha
+  ```
+
+  Se a última consulta devolver linhas, rodar `revoke all on alerts_sent from anon, authenticated;` e repeti-la. Registrar as três saídas no dev-report (elas não trazem host nem IP).
+- **Bot:** no Telegram, `/newbot` no `@BotFather`. O token que ele devolve vai **direto** para o campo da variável `TELEGRAM_BOT_TOKEN` do recurso `partqc-api` no Coolify, com **build desligado (só runtime)**, **Locked** e **Literal** (passo 5, item 4), e para nenhum outro lugar: nunca no Git, num arquivo, num chat, num print ou na linha de comando (R-03). Deixar `ALERTS_ENABLED=false` por enquanto e fazer **Redeploy** (ou **Restart**, que basta para variáveis só de runtime, <https://coolify.io/docs/knowledge-base/environment-variables>, conferido em 2026-10-26) **só** do `partqc-api`.
+- **`chat_id`:** mandar uma mensagem ao bot (conversa direta) ou adicioná-lo ao grupo do supervisor e mandar uma mensagem no grupo. Depois, na VPS, ler o token do ambiente do contêiner da API e entregá-lo ao `curl` por um descritor, sem deixá-lo no `argv` nem no histórico do shell (o `docker exec` recebe só o nome da variável). O `chat_id` é o `id` do objeto `chat` (negativo nos grupos):
+
+  ```bash
+  t=$(docker exec <contêiner da api> printenv TELEGRAM_BOT_TOKEN)
+  curl -s -K <(printf 'url = "https://api.telegram.org/bot%s/getUpdates"\n' "$t") | python3 -m json.tool | grep -A4 '"chat"'
+  unset t
+  ```
+
+  O `chat_id` não é colado em lugar público.
+- **Ligar:** nas Environment Variables do `partqc-api`, `TELEGRAM_CHAT_ID=<id>` e `ALERTS_ENABLED=true` (e, se quiser, os outros `ALERTS_*`, com as faixas do `.env.example`); depois, **Redeploy** (ou **Restart**) só do `partqc-api`. Na aba de logs da `api` no painel, ou com `docker logs --tail 200 <contêiner da api> 2>&1 | grep -E 'alerts (enabled|disabled)'`, deve aparecer `alerts enabled: ...` e nenhum `alerts disabled: invalid configuration (...)`, que cita só o nome da variável inválida.
+- **Token vazado ou revogado:** `/revoke` no `@BotFather`, colar o novo token no campo `TELEGRAM_BOT_TOKEN` do `partqc-api` (um valor Locked se edita na visão Normal das Environment Variables) e fazer **Redeploy** (ou **Restart**) só desse recurso; se a reserva no Render estiver ativa, trocar também no painel dele na mesma sessão. O token nunca aparece no log da API (nem nos registros do `httpx`), então colar o log do alerta não o expõe; o resto da regra de colagem da §9 continua valendo.
+- **Desligar:** `ALERTS_ENABLED=false` no `partqc-api` e **Redeploy** (ou **Restart**) só desse recurso.
+
+## 9. Registro dos CAs manuais (SPECs 015, 017, 032, 038 e 039)
+
+Preenchido pelo humano (e copiado no dev-report), sem o subdomínio real, o IP nem os UUIDs dos recursos. Os comandos estão na SPEC-015 §5, na SPEC-032 §5 (com a equivalência da SPEC-039 §4.7), na SPEC-038 §5 (CA-18, com a nota do topo) e na SPEC-039 §5.
 
 **Antes de colar qualquer saída** aqui, no dev-report ou no PR (todos públicos), troque o subdomínio real por `<subdominio>`, o IP por `<IP>` e o UUID de cada recurso por `<uuid>` (R-13). Estas saídas os trazem:
 
@@ -590,3 +630,39 @@ Depois da atualização da §4 ("Atualização") com a SPEC-032 e a SPEC-039 na 
 | CA | O que | Resultado | Data |
 |---|---|---|---|
 | SPEC-032 CA-09 | Serviços de pé com `read_only` e `pids_limit`; headers novos e sem `server`/`via`; painel de ponta a ponta (CA-17, passos 1 a 3, da SPEC-015); `PIDS` ≤ metade do limite; nenhum `Read-only file system` no log | pendente | — |
+
+### CA manual da SPEC-017 (alertas no Telegram)
+
+Depois do merge da SPEC-017, da migração `005` (§8, item 5) e da atualização da §4 ("Atualização"), na VPS e no celular. Antes de colar, troque o subdomínio por `<subdominio>`; o token e o `chat_id` nunca são colados.
+
+1. Criar o bot e obter o `chat_id` (§8, item 5).
+2. Nas Environment Variables do recurso **`partqc-api`** no Coolify (nunca no `partqc-web`): `ALERTS_ENABLED=true`, `TELEGRAM_BOT_TOKEN` (já preenchido, só runtime, Locked, Literal), `TELEGRAM_CHAT_ID` e `ALERTS_INCLUDE_SIMULATED=true`; depois, **Redeploy** (ou **Restart**) **só** do `partqc-api`. Conferir no log da `api` o `alerts enabled: ...` (§8, item 5, "Ligar").
+3. Rodar o simulador (SPEC-014) com um lote fora de controle **entre os 3 últimos** (a regra avalia só os 3 lotes válidos mais recentes de cada origem), dentro dos limites da §8, item 4: por exemplo, `uv run --env-file .env.prod --package qc-api python scripts/simulate.py --lots 10 --lot-size 50 --defect-rate 0.2 --out-of-control-lots 10 --seed <n>`. No painel ("Controle estatístico", origem `Simulado`), conferir que o último lote ficou fora de controle; se não ficou, repetir com outro `--seed`.
+4. Conferir **uma única** mensagem `[SIMULADO] Lote ... fora de controle (...)` no celular depois de `ALERTS_LOT_IDLE_MINUTES` (10 min por padrão) a partir da última inspeção do lote, e nenhuma repetição nas verificações seguintes.
+5. Conferir que o token não aparece no log. Na VPS, o comando lê o valor do ambiente do contêiner da API (o `docker exec` recebe só o nome da variável) e o passa ao `grep` por um descritor (nunca no `argv` nem no histórico do shell). O `2>&1` inclui o log de erro, onde o Uvicorn escreve:
+
+   ```bash
+   s=$(docker exec <contêiner da api> printenv TELEGRAM_BOT_TOKEN | cut -d: -f2)
+   if [ -n "$s" ]; then docker logs <contêiner da api> 2>&1 | grep -cF -f <(printf '%s\n' "$s"); else echo "TELEGRAM_BOT_TOKEN vazio ou ausente"; fi
+   unset s
+   ```
+
+   Esperado: `0`. Sem o teste de valor vazio, uma variável ausente viraria um padrão vazio, que casa todas as linhas.
+6. Voltar `ALERTS_INCLUDE_SIMULATED=false` nas Environment Variables do `partqc-api` e fazer **Redeploy** (ou **Restart**) só desse recurso.
+
+| CA | O que | Resultado | Data |
+|---|---|---|---|
+| SPEC-017 CA-13 | Bot criado; uma única mensagem `[SIMULADO]` no celular depois do tempo de lote concluído; token ausente do `docker logs` da `api`; `ALERTS_INCLUDE_SIMULATED` de volta a `false` | pendente | — |
+
+### CA manual da SPEC-038 (respostas de erro do Caddy)
+
+Depois da atualização da §4 ("Atualização") com a SPEC-038 na `main`, na VPS. A `api` fica parada por alguns segundos: a borda guarda as inspeções no outbox e as reenvia depois (R-05). Antes de colar, troque o subdomínio por `<subdominio>` e o UUID por `<uuid>`.
+
+1. Achar o nome do contêiner da API com `docker ps --filter label=com.docker.compose.project=<uuid> --format '{{.Names}}\t{{.Status}}'`, com o `<uuid>` do recurso `partqc-api` (convenções da §4), e parar só ele: `docker stop <contêiner da api>`. Nunca pare o `coolify-proxy` nem os contêineres de outros projetos.
+2. `curl -sI https://<subdominio>/api/v1/health`: status `502`, com `strict-transport-security`, `x-content-type-options`, `referrer-policy` e `content-security-policy`, e **sem** `server:` nem `via:`.
+3. `docker start <contêiner da api>` e, em até 60 s, `curl -s -o /dev/null -w '%{http_code}\n' https://<subdominio>/api/v1/health` responde `200`. Se não voltar, clicar em **Deploy** no `partqc-api`.
+4. Registrar as saídas na tabela abaixo e no dev-report, com o subdomínio trocado por `<subdominio>` e sem o UUID do recurso nem o nome do contêiner (SEC-15-01).
+
+| CA | O que | Resultado | Data |
+|---|---|---|---|
+| SPEC-038 CA-18 | Com a `api` parada, `502` com os 4 headers e sem `server`/`via`; `200` em até 60 s depois do `docker start` | pendente | — |

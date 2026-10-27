@@ -16,6 +16,17 @@ are checked here (a finite number in ``[0, 1]``, SPEC-008 section 4.2, item 6), 
 stops the start with code 2 naming the variable. ``DATASET_DIR`` (SPEC-010) is not created here:
 the collect mode creates it, with mode ``0700``, on the first capture.
 
+SPEC-018: ``HEARTBEAT_INTERVAL_S`` (default 60) is an integer from 10 to 3600, or ``0`` to turn the
+heartbeat off; anything else stops the start with code 2 naming the variable.
+
+SPEC-020: ``EDGE_PUBLISHER`` (``http``, the default, or ``mqtt``; anything else stops the start
+with ``EDGE_PUBLISHER must be http or mqtt``), ``MQTT_HOST`` (only ``127.0.0.1``, ``::1`` or
+``localhost``: the broker runs on this notebook), ``MQTT_PORT`` (1 to 65535),
+``MQTT_RESPONSE_TIMEOUT_S`` (a number from 1 to 60) and ``MQTT_USERNAME``/``MQTT_PASSWORD``
+(required with ``EDGE_PUBLISHER=mqtt``, checked by ``missing_mqtt_credentials``). They are
+validated with or without ``EDGE_PUBLISHER=mqtt``. ``BridgeSettings`` holds the variables of
+``python -m qc_edge.mqtt_bridge``; it creates no directory.
+
 SPEC-025: ``EDGE_HOST`` is an IPv4 literal only (with ``::`` uvicorn listens on IPv6 only, and
 neither the console URL nor the QR code would open), and an ``EDGE_DATA_DIR`` created here gets
 mode ``0700`` (an existing one is left as it is).
@@ -28,7 +39,8 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AfterValidator, Field, SecretStr, ValidationError, field_validator
+from pydantic_core import PydanticCustomError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from qc_contracts import DEVICE_ID_PATTERN
@@ -44,19 +56,46 @@ MIN_SESSION_TOKEN_LENGTH = 32
 # SPEC-009 section 4.2: plain HTTP only towards these hosts (local tests).
 LOCAL_HTTP_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
+# Heartbeat (SPEC-018 section 4.4): seconds between two heartbeats; 0 turns it off.
+DEFAULT_HEARTBEAT_INTERVAL_S = 60
+MIN_HEARTBEAT_INTERVAL_S = 10
+MAX_HEARTBEAT_INTERVAL_S = 3600
+
 # Threshold override (SPEC-008 section 4.2, item 6): a finite number in [0, 1].
 Threshold = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
+
+# MQTT transport (SPEC-020 section 4.5).
+EDGE_PUBLISHERS = ("http", "mqtt")
+DEFAULT_EDGE_PUBLISHER = "http"
+EDGE_PUBLISHER_ERROR = "EDGE_PUBLISHER must be http or mqtt"
+MQTT_LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
+DEFAULT_MQTT_HOST = "127.0.0.1"
+DEFAULT_MQTT_PORT = 1883
+DEFAULT_MQTT_RESPONSE_TIMEOUT_S = 15.0
+
+
+def _check_mqtt_host(value: str) -> str:
+    if value not in MQTT_LOOPBACK_HOSTS:
+        raise ValueError("must be 127.0.0.1, ::1 or localhost (the broker runs on this notebook)")
+    return value
+
+
+MqttHost = Annotated[str, AfterValidator(_check_mqtt_host)]
+Port = Annotated[int, Field(ge=1, le=65535)]
+ResponseTimeout = Annotated[float, Field(ge=1.0, le=60.0, allow_inf_nan=False)]
+
+_SETTINGS_CONFIG = SettingsConfigDict(
+    case_sensitive=True,
+    extra="ignore",
+    env_ignore_empty=True,
+    hide_input_in_errors=True,
+)
 
 
 class EdgeSettings(BaseSettings):
     """``qc-edge`` configuration. Field names are the environment variable names."""
 
-    model_config = SettingsConfigDict(
-        case_sensitive=True,
-        extra="ignore",
-        env_ignore_empty=True,
-        hide_input_in_errors=True,
-    )
+    model_config = _SETTINGS_CONFIG
 
     EDGE_HOST: str = DEFAULT_EDGE_HOST
     EDGE_PORT: Annotated[int, Field(ge=1, le=65535)] = DEFAULT_EDGE_PORT
@@ -80,6 +119,23 @@ class EdgeSettings(BaseSettings):
     TYPE_THRESHOLD: Threshold | None = None
     UNUSABLE_THRESHOLD: Threshold | None = None
     GRADE_REVIEW_THRESHOLD: Threshold | None = None
+    # SPEC-018: heartbeat interval (0 = off).
+    HEARTBEAT_INTERVAL_S: int = DEFAULT_HEARTBEAT_INTERVAL_S
+    # SPEC-020: publisher of the outbox and the local MQTT broker.
+    EDGE_PUBLISHER: str = DEFAULT_EDGE_PUBLISHER
+    MQTT_HOST: MqttHost = DEFAULT_MQTT_HOST
+    MQTT_PORT: Port = DEFAULT_MQTT_PORT
+    MQTT_USERNAME: str | None = None
+    MQTT_PASSWORD: SecretStr | None = None
+    MQTT_RESPONSE_TIMEOUT_S: ResponseTimeout = DEFAULT_MQTT_RESPONSE_TIMEOUT_S
+
+    @field_validator("EDGE_PUBLISHER")
+    @classmethod
+    def _edge_publisher(cls, value: str) -> str:
+        if value not in EDGE_PUBLISHERS:
+            # A custom error keeps the text as it is (no "Value error, " prefix).
+            raise PydanticCustomError("edge_publisher", EDGE_PUBLISHER_ERROR)
+        return value
 
     @field_validator("EDGE_HOST")
     @classmethod
@@ -88,6 +144,16 @@ class EdgeSettings(BaseSettings):
             ipaddress.IPv4Address(value)
         except ValueError:
             raise ValueError("must be an IPv4 address literal (e.g. 0.0.0.0)") from None
+        return value
+
+    @field_validator("HEARTBEAT_INTERVAL_S")
+    @classmethod
+    def _heartbeat_interval(cls, value: int) -> int:
+        if value != 0 and not MIN_HEARTBEAT_INTERVAL_S <= value <= MAX_HEARTBEAT_INTERVAL_S:
+            raise ValueError(
+                f"must be 0 (off) or an integer from {MIN_HEARTBEAT_INTERVAL_S} to "
+                f"{MAX_HEARTBEAT_INTERVAL_S}"
+            )
         return value
 
     @field_validator("CLOUD_API_URL")
@@ -114,6 +180,68 @@ class EdgeSettings(BaseSettings):
         if value.exists() and not value.is_dir():
             raise ValueError("must be a directory")
         return value
+
+
+class BridgeSettings(BaseSettings):
+    """``python -m qc_edge.mqtt_bridge`` configuration (SPEC-020 section 4.4).
+
+    ``DEVICE_API_KEY``, ``CLOUD_API_URL``, ``MQTT_USERNAME`` and ``MQTT_PASSWORD`` are required
+    (``missing_bridge_settings``); the URL follows ``check_cloud_api_url`` (SPEC-009).
+    """
+
+    model_config = _SETTINGS_CONFIG
+
+    DEVICE_ID: Annotated[str, Field(pattern=DEVICE_ID_PATTERN)] = DEFAULT_DEVICE_ID
+    DEVICE_API_KEY: SecretStr | None = None
+    CLOUD_API_URL: str | None = None
+    MQTT_HOST: MqttHost = DEFAULT_MQTT_HOST
+    MQTT_PORT: Port = DEFAULT_MQTT_PORT
+    MQTT_USERNAME: str | None = None
+    MQTT_PASSWORD: SecretStr | None = None
+
+    @field_validator("CLOUD_API_URL")
+    @classmethod
+    def _cloud_api_url(cls, value: str | None) -> str | None:
+        return None if value is None else check_cloud_api_url(value)
+
+
+def missing_mqtt_credentials(settings: EdgeSettings | BridgeSettings) -> list[str]:
+    """Names of ``MQTT_USERNAME`` and ``MQTT_PASSWORD`` that are not set (empty = not set)."""
+    return [
+        name
+        for name, value in (
+            ("MQTT_USERNAME", settings.MQTT_USERNAME),
+            ("MQTT_PASSWORD", settings.MQTT_PASSWORD),
+        )
+        if not value
+    ]
+
+
+def missing_bridge_settings(settings: BridgeSettings) -> list[str]:
+    """Names of the required variables of the bridge that are not set."""
+    missing = [
+        name
+        for name, value in (
+            ("DEVICE_API_KEY", settings.DEVICE_API_KEY),
+            ("CLOUD_API_URL", settings.CLOUD_API_URL),
+        )
+        if not value
+    ]
+    return missing + missing_mqtt_credentials(settings)
+
+
+def config_error_message(exc: ValidationError) -> str:
+    """One ``NAME: reason`` per invalid variable, without the values (R-03).
+
+    A reason that already starts with the variable name (``EDGE_PUBLISHER must be http or
+    mqtt``) is shown as it is.
+    """
+    parts = []
+    for error in exc.errors(include_input=False, include_url=False):
+        name = ".".join(str(part) for part in error.get("loc", ())) or "configuration"
+        message = error.get("msg", "invalid value")
+        parts.append(message if message.startswith(name) else f"{name}: {message}")
+    return "; ".join(parts)
 
 
 def check_cloud_api_url(url: str) -> str:

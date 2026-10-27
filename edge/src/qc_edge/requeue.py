@@ -16,6 +16,11 @@ contract, and the idempotency by ``inspection_id`` keeps the cloud free of dupli
   (SQLite URI with ``mode=rw``/``mode=ro``). An unknown argument, an invalid ``--id`` or an
   invalid ``--outbox-path`` exits with 2; only option names are logged, never a value (R-03).
 * A SQLite failure while reading or updating (for example the busy timeout of 5 s) exits with 1.
+  A file that cannot be opened (permission, I/O) is ``cannot open --outbox-path`` and one that is
+  not an outbox is ``--outbox-path is not an outbox file``, both with 2 (SPEC-038 section 4.2).
+* A ``dead`` row edited by hand or corrupted is skipped in the listing, with a ``WARNING`` that
+  names only its ``rowid`` and column (SPEC-038 section 4.1); an unexpected ``ValueError`` or
+  ``TypeError`` exits with 1 and logs only its class, never its message.
 
 The output never carries the payload (nor ``lot_id``, ``device_id`` or confidences) nor the
 ``DEVICE_API_KEY``, which this command never reads. ``last_error`` is the refusal summary of
@@ -132,8 +137,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     ids: list[UUID] | None = args.ids
     try:
         outbox = SqliteOutbox.open_existing(path, read_only=not args.yes)
-    except (sqlite3.Error, NotAnOutboxError) as exc:
+    # ``OperationalError`` is a subclass of ``DatabaseError``: it comes first (SPEC-038 §4.2).
+    except sqlite3.OperationalError as exc:
+        logger.error("cannot open --outbox-path (%s)", type(exc).__name__)
+        return EXIT_USAGE_ERROR
+    except (NotAnOutboxError, sqlite3.DatabaseError) as exc:
         logger.error("--outbox-path is not an outbox file (%s)", type(exc).__name__)
+        return EXIT_USAGE_ERROR
+    except sqlite3.Error as exc:
+        logger.error("cannot open --outbox-path (%s)", type(exc).__name__)
         return EXIT_USAGE_ERROR
     try:
         if args.yes:
@@ -143,6 +155,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             list_dead(outbox, ids, sys.stdout)
     except sqlite3.Error as exc:
         logger.error("outbox access failed (%s)", type(exc).__name__)
+        return EXIT_FAILURE
+    except (ValueError, TypeError) as exc:
+        # Defence in depth (SPEC-038 section 4.1): the class only, never the message nor a
+        # traceback, which could echo a value of the file.
+        logger.error("outbox has an invalid row (%s)", type(exc).__name__)
         return EXIT_FAILURE
     finally:
         outbox.close()

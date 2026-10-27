@@ -24,15 +24,14 @@ ORIGIN_OPTIONS: tuple[str, ...] = (ORIGIN_REAL, ORIGIN_SIMULATED)
 SOURCE_BY_ORIGIN = {ORIGIN_REAL: Source.LIVE, ORIGIN_SIMULATED: Source.SIMULATED}
 
 ALL = "Todos"
+# The members of the API's ``SpcObjectType`` with their PT-BR labels (SPEC-016 section 4.5).
 TYPE_OPTIONS: tuple[str, ...] = (
     ALL,
-    formatting.object_type_label(ObjectType.SCREW),
-    formatting.object_type_label(ObjectType.NUT),
+    *(formatting.object_type_label(t) for t in filters.SPC_OBJECT_TYPES),
 )
-TYPE_BY_OPTION = {
+TYPE_BY_OPTION: dict[str, ObjectType | None] = {
     ALL: None,
-    formatting.object_type_label(ObjectType.SCREW): ObjectType.SCREW,
-    formatting.object_type_label(ObjectType.NUT): ObjectType.NUT,
+    **{formatting.object_type_label(t): t for t in filters.SPC_OBJECT_TYPES},
 }
 
 # Ranges accepted by the API (SPEC-006, SPEC-026).

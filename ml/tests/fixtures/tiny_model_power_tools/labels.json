@@ -1,0 +1,29 @@
+{
+  "object_types": [
+    "screw",
+    "nut",
+    "other",
+    "pliers",
+    "adjustable_wrench",
+    "allen_key",
+    "flat_screwdriver",
+    "phillips_screwdriver",
+    "angle_grinder",
+    "saw",
+    "drill",
+    "cordless_screwdriver"
+  ],
+  "grades": [
+    "perfect",
+    "good",
+    "fair",
+    "poor",
+    "unusable"
+  ],
+  "ungraded_object_types": [
+    "angle_grinder",
+    "saw",
+    "drill",
+    "cordless_screwdriver"
+  ]
+}

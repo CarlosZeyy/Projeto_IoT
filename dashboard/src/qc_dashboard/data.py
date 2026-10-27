@@ -1,4 +1,4 @@
-"""Cached reads of the API (SPEC-013 section 4.1, SPEC-028 section 4.2): one per endpoint.
+"""Cached reads of the API (SPEC-013 §4.1, SPEC-028 §4.2, SPEC-018 §4.5): one per endpoint.
 
 Pages read API data **only** through these functions, so every read goes through the 30 s
 cache and the dashboard does not repeat the aggregations on every interaction (they compete
@@ -14,6 +14,7 @@ from __future__ import annotations
 import streamlit as st
 
 from qc_contracts import (
+    DeviceStatus,
     HealthResponse,
     MetricsSummary,
     ObjectType,
@@ -62,3 +63,8 @@ def fetch_inspections(filters: Filters, limit: int, offset: int) -> InspectionPa
 @st.cache_data(ttl=CACHE_TTL_SECONDS, max_entries=CACHE_MAX_ENTRIES, show_spinner=False)
 def fetch_lots(filters: Filters) -> LotPage:
     return api.get_client().lots(filters)
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, max_entries=CACHE_MAX_ENTRIES, show_spinner=False)
+def fetch_devices() -> list[DeviceStatus]:
+    return api.get_client().devices()

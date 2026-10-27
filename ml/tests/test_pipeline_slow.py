@@ -45,7 +45,7 @@ TRAINING_KEYS = {
     "model_version", "config", "deviations_from_defaults", "labels", "split_file",
     "split_sha256", "manifest_sha256", "grade_class_weights", "history", "best_epoch",
     "best_val_grade_qwk", "stopped_early", "versions", "device", "git_commit", "started_at",
-    "finished_at", "smoke",
+    "finished_at", "smoke", "ungraded_object_types",
 }  # fmt: skip
 VERSION = "partqc-smoke-v1"
 
