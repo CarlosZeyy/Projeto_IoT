@@ -21,7 +21,7 @@ Nenhum achado bloqueante ou alto. Os cinco achados abaixo são baixos e não ped
 | `PARTQC_MQTT_TESTS=1 uv run pytest -q -m mqtt edge/tests edge/tests/acceptance/test_spec_020.py` | **6 passed** (CA-11, o exploratório de `retain` e os 4 do autor), com o Mosquitto 2.1.2 da imagem oficial `eclipse-mosquitto:2` por wrappers no scratchpad da sessão (`docker run --rm --network host`, `mosquitto_passwd` com `--network none`). Nenhum contêiner ficou para trás |
 | `importlib.metadata` do `paho-mqtt` instalado | `2.1.0`, `License: EPL-2.0 OR BSD-3-Clause`; única dependência declarada é `pysocks` no extra `proxy`, que não é pedido |
 | `git log --format='%h %an <%ae> %(trailers:key=Agent)'` + `git show --stat` por commit | ver a seção R-07 abaixo |
-| Busca de segredos no diff (`postgres://u:p@`, `eyJ`, `password=`, chaves literais) | nada; as senhas dos testes são geradas em tempo de execução (`secrets.token_urlsafe`) ou montadas por concatenação, nunca em URL ou conninfo |
+| Busca de segredos no diff (URL de banco com usuário e senha embutidos, `eyJ`, `password=`, chaves literais) | nada; as senhas dos testes são geradas em tempo de execução (`secrets.token_urlsafe`) ou montadas por concatenação, nunca em URL ou conninfo |
 
 ## Achados
 
