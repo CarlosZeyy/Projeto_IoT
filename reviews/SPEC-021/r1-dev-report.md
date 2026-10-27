@@ -84,7 +84,7 @@ Nenhum.
 
 ### Observação fora do escopo (não é desta SPEC)
 
-`infra/tests/test_deploy_files.py::test_no_secret_material_in_tracked_files` falha já no commit base da branch (`70ee820`): acusa `postgres://u:p@` em `reviews/SPEC-020/r1-review-report.md` (relatório do reviewer da SPEC-020, um exemplo, não um segredo). Não toquei no arquivo (relatório de outro agente).
+`infra/tests/test_deploy_files.py::test_no_secret_material_in_tracked_files` falhava já no commit base da branch (`70ee820`): acusava uma URL de banco de exemplo, com usuário e senha embutidos, em `reviews/SPEC-020/r1-review-report.md` (relatório do reviewer da SPEC-020; um exemplo, não um segredo). Não toquei no arquivo (relatório de outro agente). **Resolvido** pelo merge da SPEC-020 na branch (`de2afcc`); na r2 esta linha foi reescrita sem o literal, que fazia o scanner acusar este relatório (T-01 de `r1-test-report.md`; ver `r2-dev-report.md`).
 
 ### Checagens do autor
 
