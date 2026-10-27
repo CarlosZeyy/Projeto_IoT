@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-009, SPEC-030, SPEC-034 (e SPEC-004). Sem mudança de contrato |
@@ -164,3 +164,4 @@ Contexto comum: `InMemoryBroker`; a API simulada por um `httpx.MockTransport` id
 | 2026-10-24 | SPEC reescrita para a aprovação, com a regra de escopo mantida e sem esperar a resposta do professor (o humano liberou todas as fases). Decisões do architect: opção (a)/C do ADR-009, com o broker só em loopback e sem anônimo; MQTT 5 com pedido e resposta (`ResponseTopic` e `CorrelationData`) e os payloads do contrato, sem schema novo; confirmação de ponta a ponta pela resposta da ponte, nunca pelo PUBACK; ponte sem estado que reusa o `HttpPublisher`; `paho-mqtt` 2.1.0 (licença verificada em 2026-10-24) isolado num módulo; `InMemoryBroker` para os testes e marcador `mqtt` para o broker real; broker fora do notebook só com ADR novo; dependências das SPECs 030 e 034; CAs CA-01 a CA-11 testáveis e CA-12 manual. Perguntas do rascunho: 1 e 3 (professor) ficam como gatilho de ADR; 2 resolvida (`paho-mqtt`); 4 e 5 já resolvidas. A SPEC continua `Draft`. | Decisão do humano de 2026-10-24 (projeto inteiro, todas as fases) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Aprovada pelo humano (`Draft` → `Ready`) com o pacote das Fases 2 e 3 e a ordem proposta; a regra de escopo da Fase 3 continua (só depois do portão da Fase 2, 22/11). | Respostas do humano de 2026-10-24 (PR #45) | Orquestrador, a pedido do humano |
 | 2026-10-24 | Limpeza de consistência pós-aprovação, sem mudança de requisito, CA, valor ou escopo: o aviso do topo passa a registrar a aprovação, mantendo a regra de escopo da Fase 3. | Status `Ready` desde o PR #45; sobrava o aviso da fase de rascunho | Architect, a pedido do orquestrador |
+| 2026-10-26 | Entra em `In Dev` antes do portão da Fase 3 (22/11), por decisão do humano de 2026-10-26 (a Fase 2 tem o código pronto, só faltam merges e CAs manuais); encadeada na SPEC-038 (sobre 017, 018, 016 e 036). O merge desta SPEC só acontece depois dos merges anteriores. A 019 e a 021 continuam esperando. | Resposta do humano de 2026-10-26 | Orquestrador, a pedido do humano |
