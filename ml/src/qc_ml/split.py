@@ -7,12 +7,19 @@ ADR-020 and SPEC-035 section 4.4: every external image (``is_external_item``) go
 every version, outside the strata; ``rows_for`` refuses one in val or test; the fraction of
 external images in train has a ceiling (``max_external_fraction``, 30% by default).
 
+ADR-022 and SPEC-016 section 4.7: a **new object type** (images in the dataset, no line in any
+earlier split version) needs a decision once there is an earlier version: ``--extend-test-types``
+(its non-external items are split 70/15/15, test included, once) or ``--defer-types`` (its images
+stay out of the split). The rows of a type without any line in the split are ignored when the
+split is read (``assign_splits``, ``rows_for``), with a ``deferred type images`` log line.
+
 No torch here (SPEC-011 section 4.5).
 
 CLI::
 
     python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42 \
-        [--external-sources <file>] [--max-external-fraction 0.30]
+        [--external-sources <file>] [--max-external-fraction 0.30] \
+        [--extend-test-types <t1,...>] [--defer-types <t1,...>]
 """
 
 from __future__ import annotations
@@ -22,11 +29,12 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import sys
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -39,15 +47,22 @@ import pandas as pd
 
 from qc_ml.data import (
     ITEM_ID_PATTERN,
+    ITEM_PREFIX_TYPES,
+    KNOWN_OBJECT_TYPES,
+    NO_GRADE,
     SPLIT_NAMES,
     configure_logging,
     dominant_grade,
     is_external_item,
+    item_type_letter,
     load_exclusions,
     load_manifest,
     print_problems,
+    tool_grade_coverage,
 )
 from qc_ml.errors import ManifestError, SplitError, SplitIntegrityError
+
+logger = logging.getLogger(__name__)
 
 SPLIT_COLUMNS: tuple[str, str] = ("image_path", "split")
 SPLIT_FILE_PATTERN = re.compile(r"split_v([1-9][0-9]*)\.csv")
@@ -61,6 +76,13 @@ DEFAULT_RATIOS: tuple[float, float, float] = (0.70, 0.15, 0.15)
 DEFAULT_MAX_EXTERNAL_FRACTION = 0.30  # ADR-020, decision 2
 OUTDATED_MESSAGE = "split outdated: run qc_ml.split"
 MIN_STRATUM_ITEMS = 3
+MIN_EXTENSION_ITEMS = 3  # ADR-022, decision 3: fewer non-external items cannot have a test
+NEW_TYPE_WITHOUT_DECISION = "new object type without decision: "
+TOO_FEW_TO_EXTEND = "too few items to extend the test: "
+TYPE_NOT_NEW = "object type is not new: "
+TYPE_IN_BOTH_LISTS = "object type in both --extend-test-types and --defer-types: "
+UNKNOWN_TYPE = "unknown object type: "
+DEFERRED_LOG = "deferred type images: "
 
 EXIT_OK = 0
 EXIT_ERROR = 2
@@ -74,6 +96,15 @@ class SplitResult:
 
     frame: pd.DataFrame
     warnings: list[dict[str, Any]] = field(default_factory=list)
+
+
+class ExtensionError(SplitError):
+    """Extended types that would have no item in test (SPEC-016 section 4.7); ``lines`` has one
+    ``too few items to extend the test: <type>`` per type, in order."""
+
+    def __init__(self, lines: Sequence[str]) -> None:
+        self.lines = list(lines)
+        super().__init__("\n".join(self.lines))
 
 
 def round_half_up(value: Decimal | float | int) -> int:
@@ -193,6 +224,100 @@ def item_id_resolver(df: pd.DataFrame) -> Callable[[str], str | None]:
     return resolve
 
 
+def line_type_resolver(df: pd.DataFrame) -> Callable[[str], str | None]:
+    """Resolve the ``object_type`` of an image of a split (SPEC-016 section 4.7).
+
+    1. the row of ``df`` with that ``image_path``;
+    2. the ``item_id`` from ``item_id_resolver(df)``, then the type of that item in ``df``, or the
+       single type its letter allows (``S``, ``N``, ``O``; a ``T`` item outside ``df`` cannot be
+       told apart among the tools).
+
+    ``None`` when no source gives a type.
+    """
+    types = {str(p): str(t) for p, t in zip(df["image_path"], df["object_type"], strict=True)}
+    item_types = {str(i): str(t) for i, t in zip(df["item_id"], df["object_type"], strict=True)}
+    resolve_item = item_id_resolver(df)
+
+    def resolve(image_path: str) -> str | None:
+        if image_path in types:
+            return types[image_path]
+        item_id = resolve_item(image_path)
+        if item_id is None:
+            return None
+        if item_id in item_types:
+            return item_types[item_id]
+        allowed = ITEM_PREFIX_TYPES.get(item_type_letter(item_id), frozenset())
+        return next(iter(allowed)) if len(allowed) == 1 else None
+
+    return resolve
+
+
+def split_object_types(splits: Sequence[pd.DataFrame], df: pd.DataFrame) -> set[str]:
+    """Object types with at least one line in any of ``splits`` (``line_type_resolver``)."""
+    resolve = line_type_resolver(df)
+    found: set[str] = set()
+    for frame in splits:
+        for image_path in frame["image_path"]:
+            object_type = resolve(str(image_path))
+            if object_type is not None:
+                found.add(object_type)
+    return found
+
+
+def new_object_types(df: pd.DataFrame, splits: Sequence[pd.DataFrame]) -> list[str]:
+    """Types with images in ``df`` and no line in any of ``splits`` (ADR-022, decision 1).
+
+    In the order of ``KNOWN_OBJECT_TYPES`` (any other type after them, sorted).
+    """
+    seen = split_object_types(splits, df)
+    present = {str(t) for t in df["object_type"]}
+    ordered = [t for t in KNOWN_OBJECT_TYPES if t in present] + sorted(
+        present - set(KNOWN_OBJECT_TYPES)
+    )
+    return [t for t in ordered if t not in seen]
+
+
+def type_decision_problems(
+    df: pd.DataFrame,
+    splits: Sequence[pd.DataFrame],
+    extend_test_types: Sequence[str] = (),
+    defer_types: Sequence[str] = (),
+) -> list[str]:
+    """Problems of ``--extend-test-types`` / ``--defer-types`` (SPEC-016 section 4.7), one per line.
+
+    ``splits`` are every earlier split version (empty for ``split_v1``). Every value must be in
+    ``KNOWN_OBJECT_TYPES`` (also for ``split_v1``). With earlier versions: each new type must be
+    in exactly one of the two lists (``new object type without decision: <type>``); a listed type
+    that is not new is refused (``object type is not new: <type>``); an extended type needs at
+    least 3 non-external items (``too few items to extend the test: <type>``). Without earlier
+    versions the lists are not used. Empty list = no problem.
+    """
+    problems: list[str] = []
+    extend, defer = list(extend_test_types), list(defer_types)
+    for value in dict.fromkeys(extend + defer):
+        if value not in KNOWN_OBJECT_TYPES:
+            problems.append(UNKNOWN_TYPE + value)
+    if problems or not splits:
+        return problems
+    new = new_object_types(df, splits)
+    for object_type in dict.fromkeys(extend + defer):
+        if object_type in extend and object_type in defer:
+            problems.append(TYPE_IN_BOTH_LISTS + object_type)
+        elif object_type not in new:
+            problems.append(TYPE_NOT_NEW + object_type)
+    problems += [NEW_TYPE_WITHOUT_DECISION + t for t in new if t not in extend and t not in defer]
+    for object_type in dict.fromkeys(extend):
+        if object_type in new and object_type not in defer:
+            items = {
+                str(i)
+                for i, t in zip(df["item_id"], df["object_type"], strict=True)
+                if t == object_type and not is_external_item(str(i))
+            }
+            if len(items) < MIN_EXTENSION_ITEMS:
+                problems.append(TOO_FEW_TO_EXTEND + object_type)
+    return problems
+
+
 def item_history(splits: Sequence[pd.DataFrame], df: pd.DataFrame) -> dict[str, str]:
     """``item_id -> split`` over every split version in ``splits`` (SPEC-011 §4.4).
 
@@ -292,6 +417,8 @@ def make_split(
     excluded: frozenset[str] = frozenset(),
     history: Mapping[str, str] | None = None,
     max_external_fraction: float = DEFAULT_MAX_EXTERNAL_FRACTION,
+    extend_test_types: Sequence[str] = (),
+    defer_types: Sequence[str] = (),
 ) -> SplitResult:
     """Split ``df`` (from ``load_manifest``) by item, stratified by (type, dominant grade).
 
@@ -317,6 +444,20 @@ def make_split(
     After the allocation, the fraction of external images among the train images must not be
     above ``max_external_fraction`` (exact comparison with ``Fraction``).
 
+    ADR-022 (SPEC-016 section 4.7), only with ``previous`` (ignored for ``split_v1``): the images
+    of the ``defer_types`` leave ``df`` before anything else; the non-external items of each of
+    the ``extend_test_types`` are split 70/15/15 by the procedure of ``split_v1`` (a fresh
+    ``numpy`` generator from ``seed`` for each type), with ``small_stratum`` warnings carrying
+    ``"scope": "test_extension"``. The strata follow ADR-022, decision 3, with "type with grade"
+    read as a graded type (SPEC-016 section 4.7): ``(type, dominant grade)`` when the tool is
+    graded by ``tool_grade_coverage(df)`` (any type that is not a tool keeps its dominant
+    grade), ``(type, "none")`` (the whole type) when the tool is ungraded. The checks of the two
+    lists over every earlier version are made by ``type_decision_problems`` (the CLI); here an
+    extended type with an item already in ``previous`` or ``history`` is a ``SplitError``, and
+    an extended type that would have no item in test (fewer than 3 non-external items in
+    particular) is an ``ExtensionError`` (one ``too few items to extend the test: <type>`` line
+    per type).
+
     Raises:
         ValueError: ``max_external_fraction`` outside ``(0, 1]``.
         SplitError: invalid ratios, previous split or ``history`` value, ``history`` without
@@ -337,12 +478,35 @@ def make_split(
         raise SplitError(f"history has invalid splits: {', '.join(invalid)}")
     rng = np.random.default_rng(seed)
     resolve = item_id_resolver(df)  # before the excluded rows leave df (source 1)
+    extended: set[str] = set()
+    if previous is not None:
+        listed = set(extend_test_types) | set(defer_types)
+        unknown_types = sorted(listed - set(KNOWN_OBJECT_TYPES))
+        if unknown_types:
+            raise SplitError(f"unknown object types: {', '.join(unknown_types)}")
+        both = sorted(set(extend_test_types) & set(defer_types))
+        if both:
+            raise SplitError(f"object types both extended and deferred: {', '.join(both)}")
+        extended = set(extend_test_types)
+        # SPEC-016 4.7: the criterion of section 4.6 on the df read by the CLI of the split.
+        coverage = tool_grade_coverage(df)
+
+        def extension_strata(object_type: str, stratum: tuple[str, str]) -> tuple[str, str]:
+            if object_type in coverage and not coverage[object_type]["graded"]:
+                return (object_type, NO_GRADE)  # an ungraded tool: the whole type
+            return stratum
+
+        df = df[~df["object_type"].isin(list(defer_types))]
     df = df[~df["image_path"].isin(list(excluded))]
     external = df["item_id"].map(lambda i: is_external_item(str(i))).astype(bool)
     strata = item_strata(df[~external])  # external items stay out of the strata
     images_by_item: dict[str, list[str]] = defaultdict(list)
-    for item_id, image_path in zip(df["item_id"], df["image_path"], strict=True):
+    types_by_item: dict[str, str] = {}
+    for item_id, image_path, object_type in zip(
+        df["item_id"], df["image_path"], df["object_type"], strict=True
+    ):
         images_by_item[item_id].append(image_path)
+        types_by_item[item_id] = str(object_type)
 
     warnings: list[dict[str, Any]] = []
     if previous is None:
@@ -386,6 +550,9 @@ def make_split(
         _check_external_history(previous_splits, history)
         assignment = {}
         new_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+        extension_groups: dict[str, dict[tuple[str, str], list[str]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         for item_id in sorted(images_by_item):
             old = sorted(previous_splits.get(item_id, set()))
             if len(old) > 1:
@@ -399,12 +566,19 @@ def make_split(
                     f"item {item_id} is in {earlier} in the split history but in {old[0]} in "
                     "the previous split"
                 )
+            item_type = types_by_item[item_id]
+            if item_type in extended and (earlier is not None or old):
+                raise SplitError(f"object type is not new: {item_type} (item {item_id})")
             if is_external_item(item_id):
                 assignment[item_id] = "train"  # ADR-020: always train, outside the strata
             elif earlier is not None:
                 assignment[item_id] = earlier
             elif old:
                 assignment[item_id] = old[0]
+            elif item_type in extended:
+                extension_groups[item_type][extension_strata(item_type, strata[item_id])].append(
+                    item_id
+                )
             else:
                 new_groups[strata[item_id]].append(item_id)
         new_assignment, allocation_warnings = _allocate(
@@ -412,6 +586,26 @@ def make_split(
         )
         assignment.update(new_assignment)
         warnings.extend(allocation_warnings)
+        without_test: list[str] = []
+        for object_type in sorted(extended):
+            groups_of_type = extension_groups.get(object_type, {})
+            n_items = sum(len(ids) for ids in groups_of_type.values())
+            if n_items < MIN_EXTENSION_ITEMS:
+                without_test.append(object_type)
+                continue
+            # ADR-022: the procedure of split_v1 (test included), its own generator per type.
+            extension, extension_warnings = _allocate(
+                dict(groups_of_type), np.random.default_rng(seed), r_val, r_test
+            )
+            if "test" not in extension.values():
+                without_test.append(object_type)
+                continue
+            assignment.update(extension)
+            for warning in extension_warnings:
+                warning["scope"] = "test_extension"
+            warnings.extend(extension_warnings)
+        if without_test:
+            raise ExtensionError([TOO_FEW_TO_EXTEND + t for t in without_test])
 
     splits = [assignment[item_id] for item_id in df["item_id"]]
     check_item_integrity(df, splits)
@@ -502,22 +696,55 @@ def load_split(path: Path | str) -> pd.DataFrame:
     return frame
 
 
+def deferred_type_counts(df: pd.DataFrame, split_df: pd.DataFrame) -> dict[str, int]:
+    """``object_type -> n images`` of ``df`` whose type has no line in ``split_df``.
+
+    These are the images of a deferred (or not yet decided) type (SPEC-016 section 4.7, ADR-022):
+    the readers of the split ignore them. In the order of ``KNOWN_OBJECT_TYPES``.
+    """
+    present = split_object_types([split_df], df)
+    counts = Counter(str(t) for t in df["object_type"] if str(t) not in present)
+    order = [t for t in KNOWN_OBJECT_TYPES if t in counts] + sorted(
+        set(counts) - set(KNOWN_OBJECT_TYPES)
+    )
+    return {t: counts[t] for t in order}
+
+
 def assign_splits(df: pd.DataFrame, split_df: pd.DataFrame) -> pd.Series:
     """Split of each row of ``df`` (same index).
+
+    The rows of a type without any line in ``split_df`` (a deferred type, SPEC-016 section 4.7)
+    get ``None`` and are left out of the outdated check; one ``deferred type images: <type>: <n>``
+    warning is logged per type. For the types present in the split the check is unchanged.
 
     Raises:
         SplitError: an image of ``df`` has no split (``split outdated: run qc_ml.split``).
     """
     mapping = dict(zip(split_df["image_path"], split_df["split"], strict=True))
-    missing = [p for p in df["image_path"] if p not in mapping]
+    deferred: dict[str, int] = {}
+    if any(p not in mapping for p in df["image_path"]):  # every image in the split: none deferred
+        deferred = deferred_type_counts(df, split_df)
+    for object_type, n in deferred.items():
+        logger.warning("%s%s: %d", DEFERRED_LOG, object_type, n)
+    in_scope = [str(t) not in deferred for t in df["object_type"]]
+    missing = [
+        p for p, keep in zip(df["image_path"], in_scope, strict=True) if keep and p not in mapping
+    ]
     if missing:
         shown = ", ".join(missing[:5]) + (" ..." if len(missing) > 5 else "")
         raise SplitError(f"{OUTDATED_MESSAGE} ({len(missing)} images without split: {shown})")
-    return pd.Series([mapping[p] for p in df["image_path"]], index=df.index, dtype=object)
+    return pd.Series(
+        [mapping[p] if keep else None for p, keep in zip(df["image_path"], in_scope, strict=True)],
+        index=df.index,
+        dtype=object,
+    )
 
 
 def rows_for(df: pd.DataFrame, split_df: pd.DataFrame, which: SplitName) -> pd.DataFrame:
     """The rows of ``df`` in split ``which``: the only way to get the rows of a split (R-11).
+
+    The rows of a deferred type (no line in ``split_df``, SPEC-016 section 4.7) are never
+    returned (``assign_splits``).
 
     Raises:
         ValueError: ``which`` is not ``train``, ``val`` or ``test``.
@@ -594,11 +821,14 @@ def write_split(
     seed: int,
     ratios: Sequence[float],
     max_external_fraction: float = DEFAULT_MAX_EXTERNAL_FRACTION,
+    test_extended_types: Sequence[str] = (),
+    deferred_types: Sequence[str] = (),
 ) -> Path:
     """Write ``split_v<N>.json``, ``.sha256`` and, last, ``.csv``; return the CSV path.
 
     The JSON has ``max_external_fraction`` (the ceiling used), ``external_fraction_train``
-    (``null`` without train images) and ``counts.n_external_images`` by split (SPEC-035 4.4).
+    (``null`` without train images) and ``counts.n_external_images`` by split (SPEC-035 4.4),
+    and ``test_extended_types`` and ``deferred_types`` (lists, empty when not used; SPEC-016).
     """
     splits_dir.mkdir(parents=True, exist_ok=True)
     csv_name = f"split_v{version}.csv"
@@ -616,6 +846,8 @@ def write_split(
         "external_fraction_train": external_fraction_train(counts),
         "counts": counts,
         "warnings": result.warnings,
+        "test_extended_types": list(test_extended_types),
+        "deferred_types": list(deferred_types),
     }
     meta_bytes = (json.dumps(meta, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     _atomic_write(splits_dir / f"split_v{version}.json", meta_bytes)
@@ -628,6 +860,33 @@ def _same_split(frame: pd.DataFrame, previous: pd.DataFrame) -> bool:
     return sorted(zip(frame["image_path"], frame["split"], strict=True)) == sorted(
         zip(previous["image_path"], previous["split"], strict=True)
     )
+
+
+def recorded_deferred_types(csv_path: Path) -> list[str] | None:
+    """``deferred_types`` of the ``split_v<N>.json`` next to ``csv_path``.
+
+    ``[]`` for a JSON written before SPEC-016 (no key); ``None`` when the JSON is missing,
+    unreadable or the key is not a list of strings.
+    """
+    try:
+        meta = json.loads(csv_path.with_suffix(".json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    value = meta.get("deferred_types", [])
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        return None
+    return value
+
+
+def _type_list(text: str) -> list[str]:
+    """``argparse`` type of ``--extend-test-types``/``--defer-types``: ``t1,t2`` -> a list.
+
+    Blank items are dropped and repetitions kept once; the values are checked by
+    ``type_decision_problems`` (exit 2 for a value outside ``KNOWN_OBJECT_TYPES``).
+    """
+    return list(dict.fromkeys(v.strip() for v in text.split(",") if v.strip()))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -674,6 +933,18 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_EXTERNAL_FRACTION,
         help="ceiling of the fraction of external images in train, in (0, 1] (default 0.30)",
     )
+    parser.add_argument(
+        "--extend-test-types",
+        type=_type_list,
+        default=[],
+        help="new object types whose items get a test set once (ADR-022), comma-separated",
+    )
+    parser.add_argument(
+        "--defer-types",
+        type=_type_list,
+        default=[],
+        help="new object types left out of this split version (ADR-022), comma-separated",
+    )
     return parser
 
 
@@ -684,6 +955,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ``1..M`` without gaps; read all of them with ``load_split``; ``previous`` = version ``M`` and
     ``history = item_history(all versions)``; ``make_split``; write ``split_v{M+1}`` only if it
     changed. Nothing is written on any error.
+
+    SPEC-016 section 4.7 (ADR-022): before ``make_split``, ``type_decision_problems`` over every
+    version; each problem is printed alone on its own stderr line (e.g. ``new object type
+    without decision: pliers``) and the exit is 2. A version whose CSV equals the previous one is
+    still written when its ``deferred_types`` differ from the ones recorded in the previous
+    ``split_v<M>.json`` (the decision itself is part of the split history).
     """
     configure_logging()
     try:
@@ -704,6 +981,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     versions = split_versions(args.splits_dir)
     previous: pd.DataFrame | None = None
     history: dict[str, str] | None = None
+    frames: list[pd.DataFrame] = []
     if versions:
         # 3. Complete history: versions 1..M, no gap, no renumbering.
         missing = sorted(set(range(1, versions[-1] + 1)) - set(versions))
@@ -716,7 +994,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return EXIT_ERROR
         # 4. Every version, hash checked.
-        frames: list[pd.DataFrame] = []
         for version in versions:
             name = f"split_v{version}.csv"
             try:
@@ -732,6 +1009,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"split error: {exc}", file=sys.stderr)
             return EXIT_ERROR
 
+    # SPEC-016 section 4.7: every new type needs a decision (ADR-022).
+    problems = type_decision_problems(df, frames, args.extend_test_types, args.defer_types)
+    if problems:
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        return EXIT_ERROR
+    # Recorded in the order of KNOWN_OBJECT_TYPES (every value is known at this point).
+    extend = [t for t in KNOWN_OBJECT_TYPES if versions and t in args.extend_test_types]
+    defer = [t for t in KNOWN_OBJECT_TYPES if versions and t in args.defer_types]
+    if not versions and (args.extend_test_types or args.defer_types):
+        logger.warning(
+            "--extend-test-types and --defer-types are not used for split_v1: every type "
+            "present is split normally"
+        )
+
     try:
         result = make_split(
             df,
@@ -740,12 +1032,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             excluded=excluded,
             history=history,
             max_external_fraction=args.max_external_fraction,
+            extend_test_types=extend,
+            defer_types=defer,
         )
+    except ExtensionError as exc:
+        for line in exc.lines:  # each alone on its line, like type_decision_problems
+            print(line, file=sys.stderr)
+        return EXIT_ERROR
     except SplitError as exc:
         print(f"split error: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
-    if previous is not None and _same_split(result.frame, previous):
+    if (
+        previous is not None
+        and _same_split(result.frame, previous)
+        and recorded_deferred_types(args.splits_dir / f"split_v{versions[-1]}.csv") == defer
+    ):
         print(f"split unchanged: split_v{versions[-1]}")
         return EXIT_OK
     version = versions[-1] + 1 if versions else 1
@@ -757,6 +1059,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         seed=args.seed,
         ratios=DEFAULT_RATIOS,
         max_external_fraction=args.max_external_fraction,
+        test_extended_types=extend,
+        deferred_types=defer,
     )
     counts = _counts(result.frame, df)
     print(

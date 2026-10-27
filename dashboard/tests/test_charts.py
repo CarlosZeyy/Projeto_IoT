@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from qc_contracts import GRADE_ORDER, TimeseriesPoint
+from qc_contracts import GRADE_ORDER, ObjectType, TimeseriesPoint
 from qc_dashboard import charts
 
 
@@ -35,9 +35,43 @@ def test_by_object_type_is_horizontal() -> None:
     fig = charts.by_object_type({"nut": 4})
     (bar,) = fig.data
     assert bar.orientation == "h"
-    assert list(bar.y) == ["parafuso", "porca", "desconhecido"]
-    assert list(bar.x) == [0, 4, 0]
-    assert list(bar.marker.color) == ["#4C78A8", "#72B7B2", "#9D9D9D"]
+    assert list(bar.y) == [
+        "parafuso",
+        "porca",
+        "alicate",
+        "chave inglesa",
+        "chave Allen",
+        "chave de fenda",
+        "chave Phillips",
+        "desconhecido",
+    ]
+    assert list(bar.x) == [0, 4, 0, 0, 0, 0, 0, 0]
+    assert list(bar.marker.color) == [
+        "#4C78A8",
+        "#72B7B2",
+        "#B279A2",
+        "#9D755D",
+        "#FF9DA6",
+        "#8CD17D",
+        "#2F4B7C",
+        "#9D9D9D",
+    ]
+
+
+def test_object_type_order_and_colors_cover_every_type() -> None:
+    assert set(charts.OBJECT_TYPE_ORDER) == set(ObjectType)
+    assert len(charts.OBJECT_TYPE_ORDER) == len(ObjectType)
+    assert charts.OBJECT_TYPE_ORDER[:2] == (ObjectType.SCREW, ObjectType.NUT)
+    assert charts.OBJECT_TYPE_ORDER[-1] is ObjectType.UNKNOWN
+    assert set(charts.OBJECT_TYPE_COLORS) == set(ObjectType)
+    colors = list(charts.OBJECT_TYPE_COLORS.values())
+    assert len(set(colors)) == len(colors)
+
+
+def test_by_object_type_counts_tools() -> None:
+    (bar,) = charts.by_object_type({"pliers": 3, "phillips_screwdriver": 2, "screw": 1}).data
+    counts = dict(zip(bar.y, bar.x, strict=True))
+    assert counts["alicate"] == 3 and counts["chave Phillips"] == 2 and counts["parafuso"] == 1
 
 
 def _utc(hour: int) -> datetime:

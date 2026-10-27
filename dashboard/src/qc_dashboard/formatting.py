@@ -27,6 +27,7 @@ from qc_contracts import (
 
 LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
 EMPTY = "—"
+UNGRADED = "sem grau"
 YES = "Sim"
 NO = "Não"
 DATETIME_FORMAT = "%d/%m/%Y %H:%M"
@@ -133,6 +134,14 @@ def object_type_label(object_type: ObjectType | str | None) -> str:
     return EMPTY if object_type is None else OBJECT_TYPE_LABELS_PT[ObjectType(object_type)]
 
 
+def inspection_grade_label(item: InspectionRead) -> str:
+    """The ``Grau`` of one inspection: the PT-BR grade; ``sem grau`` for a known type without a
+    grade (a hand tool the model does not grade, SPEC-016 section 4.5); ``—`` for ``unknown``."""
+    if item.grade is None and item.object_type is not ObjectType.UNKNOWN:
+        return UNGRADED
+    return grade_label(item.grade)
+
+
 def source_label(source: Source | str | None) -> str:
     return EMPTY if source is None else SOURCE_LABELS_PT[Source(source)]
 
@@ -145,7 +154,7 @@ def history_rows(items: Iterable[InspectionRead]) -> list[dict[str, str]]:
             "Lote": item.lot_id,
             "Dispositivo": item.device_id,
             "Tipo": object_type_label(item.object_type),
-            "Grau": grade_label(item.grade),
+            "Grau": inspection_grade_label(item),
             "Nota de grau": fmt_decimal(item.grade_score, 2),
             "Conf. tipo": fmt_decimal(item.type_confidence, 3),
             "Conf. grau": fmt_decimal(item.grade_confidence, 3),
@@ -214,7 +223,7 @@ def history_csv(items: Sequence[InspectionRead]) -> bytes:
                 item.lot_id,
                 item.device_id,
                 _csv_text(object_type_label(item.object_type)),
-                _csv_text(grade_label(item.grade)),
+                _csv_text(inspection_grade_label(item)),
                 _csv_number(item.grade_score),
                 _csv_number(item.type_confidence),
                 _csv_number(item.grade_confidence),

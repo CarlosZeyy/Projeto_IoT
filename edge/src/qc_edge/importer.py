@@ -62,7 +62,7 @@ from qc_edge.collect import (
     CAPTURED_AT_FORMAT,
     FILE_TIMESTAMP_FORMAT,
     GRADE_VALUES,
-    ITEM_PREFIX_TYPES,
+    GRADED_DATASET_TYPES,
     LABELERS,
     MANIFEST_COLUMNS,
     MANIFEST_NAME,
@@ -78,6 +78,7 @@ from qc_edge.collect import (
     ManifestUnreadableError,
     append_csv_row,
     has_forbidden_char,
+    item_prefix_matches,
     manifest_file_lock,
     read_csv_rows,
     read_manifest_entries,
@@ -153,9 +154,9 @@ ORIGIN_CONTRIBUTOR = "contributor"
 ORIGIN_EXTERNAL = "external"
 ORIGINS = frozenset({ORIGIN_CONTRIBUTOR, ORIGIN_EXTERNAL})
 # Whole-string patterns, always with ``re.fullmatch`` (SPEC-036 section 4.2).
-CONTRIBUTOR_ITEM_PATTERN = r"[SNO]-[0-9]{3}"
-EXTERNAL_ITEM_PATTERN = r"X[SNO]-[0-9]{4}"
-TOOLS_PREFIXES = ("T-", "XT-")
+# ``T``/``XT``: hand tools (SPEC-016 section 4.4).
+CONTRIBUTOR_ITEM_PATTERN = r"[SNOT]-[0-9]{3}"
+EXTERNAL_ITEM_PATTERN = r"X[SNOT]-[0-9]{4}"
 CONTRIBUTOR_PATTERN = r"c[0-9]{2}"
 SOURCE_ID_PATTERN = r"[a-z0-9][a-z0-9-]{2,39}"
 ANGLE_PATTERN = r"[0-4]"
@@ -163,7 +164,7 @@ SOURCE_REF_MAX_LENGTH = 200
 FILE_MAX_LENGTH = 255
 IMPORT_MAX_BYTES = 40 * 1024 * 1024
 _OBJECT_TYPE_VALUES = frozenset(member.value for member in DatasetObjectType)
-_GRADED_TYPES = frozenset({DatasetObjectType.SCREW.value, DatasetObjectType.NUT.value})
+_GRADED_TYPES = frozenset(member.value for member in GRADED_DATASET_TYPES)
 
 # ------------------------------------------------------------------------------ normalisation
 
@@ -440,8 +441,6 @@ def _item_formats(item_id: str) -> tuple[bool, bool]:
 
 
 def _item_problem(item_id: str, origin: str) -> str | None:
-    if item_id.startswith(TOOLS_PREFIXES):
-        return "tools_not_supported"
     own, external = _item_formats(item_id)
     if origin == ORIGIN_CONTRIBUTOR:
         expected, other = own, external
@@ -461,7 +460,7 @@ def _object_type_problem(object_type: str, item_id: str) -> str | None:
     if not own and not external:
         return None  # the item_id problem is already reported
     letter = item_id[1] if external else item_id[0]
-    if ITEM_PREFIX_TYPES[letter].value != object_type:
+    if not item_prefix_matches(letter, object_type):
         return "item_prefix_mismatch"
     return None
 

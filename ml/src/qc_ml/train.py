@@ -7,6 +7,10 @@ grade QWK. The best checkpoint is the epoch (A or B) with the highest validation
 goes to the lower validation loss and then to the earlier epoch. The test split is never read
 here (R-11): the rows come only from ``split.rows_for(..., "train")`` and ``(..., "val")``.
 
+SPEC-016 section 4.8: the type head has the types of ``derive_model_labels`` (the known types
+with training images); the grade loss ignores ``other`` and the ungraded tools
+(``grade_target``); ``training_config.json`` records ``ungraded_object_types``.
+
 The pure helpers (``TrainConfig``, ``grade_class_weights``, ``EarlyStopper``) work without torch,
 so they can be tested in the CI; everything else needs the ``train`` extra.
 
@@ -35,10 +39,24 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import numpy as np
 
 from qc_ml import split
-from qc_ml.artifacts import TRAINING_CONFIG_FILE, labels_to_dict, write_json
+from qc_ml.artifacts import (
+    TRAINING_CONFIG_FILE,
+    check_labels,
+    head_labels_to_dict,
+    labels_to_dict,
+    write_json,
+)
 from qc_ml.config import TrainConfig, load_config
-from qc_ml.data import DEFAULT_LABELS, GRADES, configure_logging, load_manifest
-from qc_ml.errors import ConfigError, TrainError
+from qc_ml.data import (
+    DEFAULT_LABELS,
+    GRADES,
+    ModelLabels,
+    configure_logging,
+    derive_model_labels,
+    grade_target,
+    load_manifest,
+)
+from qc_ml.errors import ConfigError, ModelArtifactError, TrainError
 from qc_ml.evaluate import quadratic_weighted_kappa
 from qc_ml.steps import EXIT_ERROR, EXIT_OK, report_step_error
 
@@ -206,6 +224,32 @@ def git_commit() -> str | None:
     return commit if result.returncode == 0 and len(commit) == 40 else None
 
 
+def graded_training_counts(train_rows: Any, labels: ModelLabels) -> dict[str, int]:
+    """Number of training images of each grade that enter the grade loss (``grade_target``).
+
+    ``other``, the ungraded tools and the rows without grade are left out (SPEC-016 section 4.8).
+    """
+    counts = dict.fromkeys(GRADES, 0)
+    for object_type, grade in zip(train_rows["object_type"], train_rows["grade"], strict=True):
+        target = grade_target(str(object_type), grade, labels)
+        if target is not None:
+            counts[labels.grades[target]] += 1
+    return counts
+
+
+def model_labels_for(df: Any, train_rows: Any) -> ModelLabels:
+    """``derive_model_labels`` checked like a ``labels.json`` (``TrainError`` if invalid).
+
+    The type head needs ``other`` among the training images (the decision rule maps it to
+    ``unknown``).
+    """
+    labels = derive_model_labels(df, train_rows)
+    try:
+        return check_labels(labels)
+    except ModelArtifactError as exc:
+        raise TrainError(f"the training images do not give valid model labels: {exc}") from exc
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -332,10 +376,11 @@ def _device_name(device: Any) -> str:
 
 @dataclass
 class TrainResult:
-    """The model with the weights of the best epoch (CPU, ``eval()``) and its record."""
+    """The model with the weights of the best epoch (CPU, ``eval()``), its record and labels."""
 
     model: Any  # PartQCNet
     training_config: dict[str, Any] = field(default_factory=dict)
+    labels: ModelLabels = DEFAULT_LABELS
 
 
 @dataclass
@@ -442,9 +487,13 @@ def train(config: TrainConfig, *, resume: bool = False) -> TrainResult:
     val_rows = split.rows_for(df, split_df, "val")
     if train_rows.empty or val_rows.empty:
         raise TrainError("the train and val splits must both have images")
-    labels = DEFAULT_LABELS
-    counts = {grade: int((train_rows["grade"] == grade).sum()) for grade in GRADES}
-    weights = grade_class_weights(counts)
+    labels = model_labels_for(df, train_rows)
+    logger.info(
+        "model types: %s; ungraded: %s",
+        ", ".join(labels.object_types),
+        ", ".join(labels.ungraded_object_types) or "none",
+    )
+    weights = grade_class_weights(graded_training_counts(train_rows, labels))
     if config.grade_head == "corn":
         weights = None  # CORN: no class weights (SPEC-012 §4.2)
 
@@ -536,7 +585,7 @@ def train(config: TrainConfig, *, resume: bool = False) -> TrainResult:
         if is_better(entry, state.best):
             state.best = {k: entry[k] for k in ("epoch", "phase", "val_grade_qwk", "val_loss")}
             _atomic_save(
-                {"model": model.state_dict(), "best": state.best},
+                {"model": model.state_dict(), "best": state.best, "labels": labels_to_dict(labels)},
                 checkpoints_dir / BEST_CHECKPOINT,
             )
         if phase == "B" and state.stopper is not None:
@@ -573,7 +622,8 @@ def train(config: TrainConfig, *, resume: bool = False) -> TrainResult:
         "model_version": config.model_version,
         "config": config.to_dict(),
         "deviations_from_defaults": config.deviations_from_defaults,
-        "labels": labels_to_dict(labels),
+        "labels": head_labels_to_dict(labels),
+        "ungraded_object_types": list(labels.ungraded_object_types),
         "split_file": split_df.attrs.get("split_file"),
         "split_sha256": split_df.attrs.get("split_sha256"),
         "manifest_sha256": df.attrs.get("manifest_sha256"),
@@ -596,7 +646,7 @@ def train(config: TrainConfig, *, resume: bool = False) -> TrainResult:
         record["best_val_grade_qwk"],
         config.model_dir / TRAINING_CONFIG_FILE,
     )
-    return TrainResult(model=model, training_config=record)
+    return TrainResult(model=model, training_config=record, labels=labels)
 
 
 def run(config: TrainConfig, *, resume: bool = False) -> TrainResult:

@@ -6,6 +6,10 @@ as measured: an undefined metric is ``null``, never omitted nor rounded. Small t
 flagged in ``warnings`` and the main grade metrics carry a 95% bootstrap interval that resamples
 physical items (``item_id``).
 
+SPEC-016 section 4.8 (ADR-022): ``type_confusion`` has every type of the model; the ``grade_*``
+metrics stay on ``screw``/``nut``; ``tool_grade_metrics`` has the grade metrics of each graded
+tool of the model; ``warnings`` flags every type of the model with fewer than 2 test items.
+
 No torch, no sklearn here (CA-27): the kappa and the confusion matrices are computed with numpy.
 
 CLI::
@@ -43,8 +47,10 @@ from qc_ml.artifacts import (
 )
 from qc_ml.config import TrainConfig, load_config
 from qc_ml.data import (
+    GRADE_REQUIRED_DATASET_TYPES,
     GRADED_OBJECT_TYPES,
     ORIGINS,
+    TOOL_OBJECT_TYPES,
     ModelLabels,
     configure_logging,
     image_origins,
@@ -90,7 +96,15 @@ METRIC_KEYS: tuple[str, ...] = (
     "unusable_recall_ci95",
     "defective_recall_ci95",
     "n_items_test_by_grade",
+    "tool_grade_metrics",
     "warnings",
+)
+TOOL_GRADE_METRIC_KEYS: tuple[str, ...] = (
+    "grade_qwk",
+    "grade_mae",
+    "grade_off_by_one_accuracy",
+    "n_images_test",
+    "n_items_test",
 )
 LATENCY_KEYS: tuple[str, ...] = (
     "latency_ms_p50",
@@ -104,6 +118,7 @@ UNUSABLE_INDEX = 4
 BOOTSTRAP_RESAMPLES = 1000
 BOOTSTRAP_SEED = 20261012
 MIN_TEST_ITEMS_PER_GRADE = 2
+MIN_TEST_ITEMS_PER_TYPE = 2  # SPEC-016 section 4.8: "few test items for <type>: <n>"
 LATENCY_WARMUP = 10
 LATENCY_RUNS = 100
 NO_DECISION_MESSAGE = "decision.json not found: run qc_ml.thresholds first"
@@ -264,7 +279,7 @@ def split_counts(rows: pd.DataFrame, labels: ModelLabels) -> dict[str, Any]:
     for object_type in labels.object_types:
         part = rows[rows["object_type"] == object_type]
         by_grade: dict[str, Any] = {}
-        if object_type in GRADED_OBJECT_TYPES:
+        if object_type in GRADE_REQUIRED_DATASET_TYPES:
             for grade in labels.grades:
                 cell = part[part["grade"] == grade]
                 by_grade[grade] = {
@@ -340,7 +355,9 @@ def compute_metrics(
     true_type = predictions.true_type_idx
     pred_type = np.argmax(predictions.type_probs, axis=1) if n else np.zeros(0, dtype=np.int64)
     other = labels.object_types.index("other")
-    graded_types = [labels.object_types.index(t) for t in GRADED_OBJECT_TYPES]
+    graded_types = [
+        labels.object_types.index(t) for t in GRADED_OBJECT_TYPES if t in labels.object_types
+    ]
     is_screw_nut = np.isin(true_type, graded_types)
     graded = is_screw_nut & (predictions.true_grade_idx >= 0)
 
@@ -386,11 +403,51 @@ def compute_metrics(
                 f"(< {MIN_TEST_ITEMS_PER_GRADE}): its metrics are very uncertain"
             )
     metrics["n_items_test_by_grade"] = items_by_grade
+    metrics["tool_grade_metrics"] = tool_grade_metrics(
+        predictions, item_ids, labels, thresholds.unusable_threshold
+    )
+    for k, object_type in enumerate(labels.object_types):
+        n_items = len({item for item, t in zip(item_ids, true_type, strict=True) if t == k})
+        if n_items < MIN_TEST_ITEMS_PER_TYPE:
+            warnings.append(f"few test items for {object_type}: {n_items}")
     for name in ("type_accuracy", "unknown_rate_on_other", "false_unknown_rate"):
         if metrics[name] is None:
             warnings.append(f"{name} is undefined on the test split (null)")
     metrics["warnings"] = warnings
     return metrics
+
+
+def tool_grade_metrics(
+    predictions: Predictions,
+    item_ids: Sequence[str],
+    labels: ModelLabels,
+    unusable_threshold: float,
+) -> dict[str, dict[str, Any]]:
+    """Grade metrics of each graded tool of the model on the test split (SPEC-016 section 4.8).
+
+    One entry per tool of ``labels.object_types`` that is not in ``ungraded_object_types``, in
+    the order of the model: ``grade_qwk``, ``grade_mae``, ``grade_off_by_one_accuracy`` (over the
+    test images of the tool with a grade, the grade decided by ``unusable_threshold`` + argmax,
+    independently of the predicted type) and ``n_images_test``/``n_items_test`` of those images.
+    An undefined metric is ``None``. ``{}`` without a graded tool.
+    """
+    result: dict[str, dict[str, Any]] = {}
+    for k, object_type in enumerate(labels.object_types):
+        if object_type not in TOOL_OBJECT_TYPES or object_type in labels.ungraded_object_types:
+            continue
+        mask = (predictions.true_type_idx == k) & (predictions.true_grade_idx >= 0)
+        true = predictions.true_grade_idx[mask]
+        pred = decided_grade_idx(predictions.grade_probs[mask], unusable_threshold)
+        distance = np.abs(true - pred)
+        n = len(true)
+        result[object_type] = {
+            "grade_qwk": quadratic_weighted_kappa(true, pred),
+            "grade_mae": float(distance.mean()) if n else None,
+            "grade_off_by_one_accuracy": _ratio(int((distance <= 1).sum()), n),
+            "n_images_test": n,
+            "n_items_test": len({i for i, keep in zip(item_ids, mask, strict=True) if keep}),
+        }
+    return result
 
 
 def measure_latency(

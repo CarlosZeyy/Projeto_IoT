@@ -222,7 +222,23 @@ def test_spc_type_and_max_points(factory, mock_api) -> None:
     assert last.url.params["max_points"] == "10"
     widget = at.number_input(key="spc_max_points")
     assert (widget.min, widget.max) == (2, 500)
-    assert at.selectbox(key="spc_type").options == ["Todos", "parafuso", "porca"]
+    assert at.selectbox(key="spc_type").options == [
+        "Todos",
+        "parafuso",
+        "porca",
+        "alicate",
+        "chave inglesa",
+        "chave Allen",
+        "chave de fenda",
+        "chave Phillips",
+    ]
+
+
+def test_spc_type_tool_is_sent_to_the_api(factory, mock_api) -> None:
+    at = run(page(factory, "controle_estatistico"))
+    at.selectbox(key="spc_type").set_value("chave Allen").run()
+    assert_clean(at)
+    assert mock_api.to("/metrics/spc")[-1].url.params["object_type"] == "allen_key"
 
 
 def test_spc_simulated_origin(factory, mock_api) -> None:

@@ -40,11 +40,26 @@ GRADE_COLORS: Mapping[Grade, str] = MappingProxyType(
     }
 )
 
-OBJECT_TYPE_ORDER: tuple[ObjectType, ...] = (ObjectType.SCREW, ObjectType.NUT, ObjectType.UNKNOWN)
+# Parafuso and porca, then the hand tools (SPEC-016 section 4.5) and desconhecido last.
+OBJECT_TYPE_ORDER: tuple[ObjectType, ...] = (
+    ObjectType.SCREW,
+    ObjectType.NUT,
+    ObjectType.PLIERS,
+    ObjectType.ADJUSTABLE_WRENCH,
+    ObjectType.ALLEN_KEY,
+    ObjectType.FLAT_SCREWDRIVER,
+    ObjectType.PHILLIPS_SCREWDRIVER,
+    ObjectType.UNKNOWN,
+)
 OBJECT_TYPE_COLORS: Mapping[ObjectType, str] = MappingProxyType(
     {
         ObjectType.SCREW: "#4C78A8",
         ObjectType.NUT: "#72B7B2",
+        ObjectType.PLIERS: "#B279A2",
+        ObjectType.ADJUSTABLE_WRENCH: "#9D755D",
+        ObjectType.ALLEN_KEY: "#FF9DA6",
+        ObjectType.FLAT_SCREWDRIVER: "#8CD17D",
+        ObjectType.PHILLIPS_SCREWDRIVER: "#2F4B7C",
         ObjectType.UNKNOWN: "#9D9D9D",
     }
 )
@@ -142,7 +157,7 @@ def grade_distribution(by_grade: Mapping[Grade | str, int]) -> go.Figure:
 
 
 def by_object_type(by_object_type: Mapping[ObjectType | str, int]) -> go.Figure:
-    """Horizontal bars: parafuso, porca, desconhecido."""
+    """Horizontal bars: parafuso, porca, the 5 hand tools and desconhecido."""
     counts = [int(by_object_type.get(object_type, 0)) for object_type in OBJECT_TYPE_ORDER]
     fig = go.Figure(
         go.Bar(

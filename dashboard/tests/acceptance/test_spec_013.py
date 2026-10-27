@@ -1334,7 +1334,17 @@ def test_extra_badge_legend_also_in_sidebar(fake: FakeApi) -> None:
 def test_extra_spc_controls_never_offer_all_or_unknown(fake: FakeApi) -> None:
     at = run(page(SPC_PAGE))
     assert list(at.radio(key="spc_source").options) == ["Real", "Simulado"]
-    assert list(at.selectbox(key="spc_type").options) == ["Todos", "parafuso", "porca"]
+    # SPEC-016 section 4.5: the filter offers the members of SpcObjectType (still no unknown).
+    assert list(at.selectbox(key="spc_type").options) == [
+        "Todos",
+        "parafuso",
+        "porca",
+        "alicate",
+        "chave inglesa",
+        "chave Allen",
+        "chave de fenda",
+        "chave Phillips",
+    ]
     baseline = at.number_input(key="spc_baseline_lots")
     assert (baseline.value, baseline.proto.min, baseline.proto.max) == (20, 2, 100)
     size = at.number_input(key="spc_min_lot_size")
@@ -1396,7 +1406,17 @@ def test_extra_by_object_type_and_series_charts() -> None:
     fig = charts.by_object_type({"screw": 3, "nut": 1})
     bar = fig.data[0]
     assert bar.orientation == "h"
-    assert set(bar.y) == {"parafuso", "porca", "desconhecido"}
+    # SPEC-016 section 4.5: the bars include the 5 hand tools.
+    assert set(bar.y) == {
+        "parafuso",
+        "porca",
+        "alicate",
+        "chave inglesa",
+        "chave Allen",
+        "chave de fenda",
+        "chave Phillips",
+        "desconhecido",
+    }
     series = [
         TimeseriesPoint(
             bucket_start=datetime(2026, 11, 3, 1, tzinfo=UTC),

@@ -155,3 +155,52 @@ def test_fmt_quantized_modes() -> None:
     assert fm.fmt_quantized(0.93127, 4, ROUND_CEILING) == "0,9313"
     assert fm.fmt_quantized(1234.56789, 2, ROUND_FLOOR) == "1.234,56"
     assert fm.fmt_quantized(None, 4, ROUND_CEILING) == "—"
+
+
+TOOL_LABELS = {
+    "pliers": "alicate",
+    "adjustable_wrench": "chave inglesa",
+    "allen_key": "chave Allen",
+    "flat_screwdriver": "chave de fenda",
+    "phillips_screwdriver": "chave Phillips",
+}
+
+
+@pytest.mark.parametrize(("object_type", "label"), TOOL_LABELS.items())
+def test_object_type_label_of_the_tools(object_type: str, label: str) -> None:
+    assert fm.object_type_label(object_type) == label
+
+
+def test_history_rows_of_tools_with_and_without_grade(factory) -> None:
+    items = [
+        factory.inspection(
+            object_type="pliers", grade=None, grade_score=None, grade_confidence=None
+        ),
+        factory.inspection(
+            object_type="unknown", grade=None, grade_score=None, grade_confidence=None
+        ),
+        factory.inspection(object_type="screw", grade="poor", is_defective=True),
+        factory.inspection(object_type="allen_key", grade="unusable", is_defective=True),
+    ]
+    rows = fm.history_rows(items)
+    assert [row["Tipo"] for row in rows] == ["alicate", "desconhecido", "parafuso", "chave Allen"]
+    assert [row["Grau"] for row in rows] == ["sem grau", "—", "ruim", "inutilizável"]
+    assert rows[0]["Nota de grau"] == "—" and rows[0]["Conf. grau"] == "—"
+    assert rows[0]["Defeituosa"] == "Não"
+
+
+def test_history_csv_writes_sem_grau_for_a_tool(factory) -> None:
+    items = [
+        factory.inspection(
+            object_type="flat_screwdriver", grade=None, grade_score=None, grade_confidence=None
+        ),
+        factory.inspection(
+            object_type="unknown", grade=None, grade_score=None, grade_confidence=None
+        ),
+    ]
+    text = fm.history_csv(items).decode("utf-8-sig")
+    rows = list(csv.DictReader(io.StringIO(text), delimiter=";"))
+    assert [(row["Tipo"], row["Grau"]) for row in rows] == [
+        ("chave de fenda", "sem grau"),
+        ("desconhecido", ""),
+    ]

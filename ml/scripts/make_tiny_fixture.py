@@ -3,6 +3,11 @@
 Run once, with the ``train`` extra (torch, onnx), from the repository root::
 
     uv run --package qc-ml python ml/scripts/make_tiny_fixture.py
+    uv run --package qc-ml python ml/scripts/make_tiny_fixture.py --with-tools
+
+``--with-tools`` (SPEC-016 section 4.10) writes ``ml/tests/fixtures/tiny_model_tools/`` instead:
+the same structure, with a type head of 8 classes (``screw``, ``nut``, ``other`` and the 5 hand
+tools) and ``labels.json`` with ``ungraded_object_types = ["allen_key"]``.
 
 The network is minimal (conv 3->8, global average pooling, two linear heads) and goes through the
 same ``ProbabilityWrapper`` and ``export_onnx`` as the real model, so the CI can test the parity,
@@ -20,11 +25,17 @@ import torch
 from torch import nn
 
 from qc_ml.artifacts import DECISION_FILE
-from qc_ml.data import DEFAULT_LABELS
+from qc_ml.data import DEFAULT_LABELS, KNOWN_OBJECT_TYPES, ModelLabels
 from qc_ml.decision import Thresholds, write_decision
 from qc_ml.export import write_model_dir
 
 DEFAULT_OUT = Path("ml/tests/fixtures/tiny_model")
+TOOLS_OUT = Path("ml/tests/fixtures/tiny_model_tools")
+TOOLS_LABELS = ModelLabels(
+    object_types=KNOWN_OBJECT_TYPES,
+    grades=DEFAULT_LABELS.grades,
+    ungraded_object_types=("allen_key",),
+)
 TINY_DECISION = Thresholds(
     type_threshold=0.70, unusable_threshold=0.50, grade_review_threshold=0.60
 )
@@ -55,15 +66,22 @@ class TinyNet(nn.Module):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--with-tools",
+        action="store_true",
+        help="8 types (the 5 hand tools included) and allen_key ungraded (SPEC-016)",
+    )
     args = parser.parse_args(argv)
+    labels = TOOLS_LABELS if args.with_tools else DEFAULT_LABELS
+    out = args.out or (TOOLS_OUT if args.with_tools else DEFAULT_OUT)
     torch.manual_seed(SEED)
-    model = TinyNet(len(DEFAULT_LABELS.object_types), len(DEFAULT_LABELS.grades)).eval()
-    args.out.mkdir(parents=True, exist_ok=True)
-    digest = write_model_dir(model, args.out)
-    write_decision(args.out / DECISION_FILE, TINY_DECISION)
-    total = sum(p.stat().st_size for p in args.out.iterdir() if p.is_file())
-    print(f"tiny model written to {args.out} (sha256 {digest}, {total} bytes)")
+    model = TinyNet(len(labels.object_types), len(labels.grades)).eval()
+    out.mkdir(parents=True, exist_ok=True)
+    digest = write_model_dir(model, out, labels)
+    write_decision(out / DECISION_FILE, TINY_DECISION)
+    total = sum(p.stat().st_size for p in out.iterdir() if p.is_file())
+    print(f"tiny model written to {out} (sha256 {digest}, {total} bytes)")
     if total >= MAX_TOTAL_BYTES:
         print(f"the fixture must stay below {MAX_TOTAL_BYTES} bytes", file=sys.stderr)
         return 2

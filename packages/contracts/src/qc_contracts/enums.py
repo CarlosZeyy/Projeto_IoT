@@ -4,11 +4,20 @@ from enum import StrEnum
 
 
 class ObjectType(StrEnum):
-    """Type of inspected object. The model class ``other`` always maps to ``UNKNOWN``."""
+    """Type of inspected object. The model class ``other`` always maps to ``UNKNOWN``.
+
+    The hand tools (phase 2, SPEC-016) come after the MVP members. Every member belongs to
+    exactly one of the grade groups below (ADR-021).
+    """
 
     SCREW = "screw"
     NUT = "nut"
     UNKNOWN = "unknown"
+    PLIERS = "pliers"
+    ADJUSTABLE_WRENCH = "adjustable_wrench"
+    ALLEN_KEY = "allen_key"
+    FLAT_SCREWDRIVER = "flat_screwdriver"
+    PHILLIPS_SCREWDRIVER = "phillips_screwdriver"
 
 
 class Grade(StrEnum):
@@ -33,6 +42,23 @@ class CaptureMode(StrEnum):
 
     INSPECT = "inspect"
     COLLECT = "collect"
+
+
+# Grade groups of ADR-021 (contract 0.4.0): disjoint, and together equal to ``set(ObjectType)``.
+# A grade-required type always has a grade; a grade-forbidden type never has one; a
+# grade-optional type may have it or not (the model says which types it grades, in the
+# ``ungraded_object_types`` of its ``labels.json``).
+GRADE_REQUIRED_OBJECT_TYPES: frozenset[ObjectType] = frozenset({ObjectType.SCREW, ObjectType.NUT})
+GRADE_FORBIDDEN_OBJECT_TYPES: frozenset[ObjectType] = frozenset({ObjectType.UNKNOWN})
+GRADE_OPTIONAL_OBJECT_TYPES: frozenset[ObjectType] = frozenset(
+    {
+        ObjectType.PLIERS,
+        ObjectType.ADJUSTABLE_WRENCH,
+        ObjectType.ALLEN_KEY,
+        ObjectType.FLAT_SCREWDRIVER,
+        ObjectType.PHILLIPS_SCREWDRIVER,
+    }
+)
 
 
 GRADE_ORDER: tuple[Grade, ...] = (

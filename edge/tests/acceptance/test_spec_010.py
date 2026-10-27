@@ -80,6 +80,8 @@ HEADER_LINE = ",".join(HEADER) + "\n"
 CA01_INSTANT = datetime(2026, 10, 22, 14, 15, 3, tzinfo=UTC)
 CA01_STAMP = "20261022T141503Z"
 GRADES = ["perfect", "good", "fair", "poor", "unusable"]
+# SPEC-016 section 4.4: the hand tools of the coverage table.
+TOOLS_016 = ["pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver"]
 HEADER_MISMATCH = {"detail": "manifest header mismatch"}
 TYPE_CONFLICT = {"detail": "item_id already registered with another object_type"}
 CAPTURE_EXISTS = {"detail": "capture already exists, try again"}
@@ -722,10 +724,11 @@ def test_ca15_compute_coverage_counts_images_and_items(edge: Edge) -> None:
 
     cells = compute_coverage(edge.manifest)
 
-    assert len(cells) == 11
+    # SPEC-016 section 4.4: the table gains the rows of the 5 hand tools (5 grades each).
+    assert len(cells) == 11 + 25
     by_key = {(c.object_type, c.grade): c for c in cells}
     expected_keys = {(t, g) for t in ("screw", "nut") for g in GRADES} | {("other", None)}
-    assert set(by_key) == expected_keys
+    assert set(by_key) == expected_keys | {(t, g) for t in TOOLS_016 for g in GRADES}
     for key, cell in by_key.items():
         if key == ("screw", "perfect"):
             assert (cell.images, cell.items) == (130, 9)
@@ -735,6 +738,8 @@ def test_ca15_compute_coverage_counts_images_and_items(edge: Edge) -> None:
             assert (cell.images, cell.items) == (10, 10)
         else:
             assert (cell.images, cell.items) == (0, 0), key
+        if key not in expected_keys:
+            continue  # SPEC-016: the targets of the tool cells are not part of this CA
         targets = (150, 30) if key[0] == "other" else (120, 12)
         assert (cell.target_images, cell.target_items) == targets, key
 
@@ -755,7 +760,7 @@ def test_ca15_console_shows_the_coverage_table(edge: Edge) -> None:
 
 def test_ca15_missing_manifest_is_an_empty_table(edge: Edge) -> None:
     cells = compute_coverage(edge.manifest)
-    assert len(cells) == 11
+    assert len(cells) == 11 + 25  # SPEC-016 section 4.4: plus the 5 tools x 5 grades
     assert all((c.images, c.items) == (0, 0) for c in cells)
     page = console_get(edge.app())
     assert page.status_code == 200
@@ -1146,11 +1151,12 @@ def test_extra_compute_coverage_ignores_unknown_cells(edge: Edge) -> None:
         [
             manifest_row("S-001", "screw", "good"),
             manifest_row("S-002", "screw", "bogus"),
-            manifest_row("T-001", "pliers", "good"),
+            # SPEC-016 section 3.1: pliers is a valid cell now; a type still unknown instead.
+            manifest_row("T-001", "hammer", "good"),
         ],
     )
     cells = {(c.object_type, c.grade): c for c in compute_coverage(edge.manifest)}
-    assert len(cells) == 11
+    assert len(cells) == 11 + 25  # SPEC-016 section 4.4: plus the 5 tools x 5 grades
     assert (cells[("screw", "good")].images, cells[("screw", "good")].items) == (1, 1)
 
 

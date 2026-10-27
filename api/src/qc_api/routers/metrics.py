@@ -40,13 +40,23 @@ SPC_DEFAULT_MAX_POINTS = 100
 SPC_MIN_MAX_POINTS = 2
 SPC_MAX_MAX_POINTS = 500
 
-# The object types the SPC accepts: every contract type except ``unknown``, which has no grade
-# and never enters the chart (ADR-013). ``unknown`` is then a 422 like any other invalid value,
-# and the OpenAPI schema lists only the accepted values.
-SpcObjectType = StrEnum(
-    "SpcObjectType",
-    {member.name: member.value for member in ObjectType if member is not ObjectType.UNKNOWN},
-)
+
+class SpcObjectType(StrEnum):
+    """Object types the SPC filter accepts (SPEC-016 section 4.3, ADR-021, decision 3).
+
+    The grade-required types (``screw``, ``nut``) and the grade-optional ones (the hand tools),
+    declared here and not derived from ``ObjectType``: a new contract type only enters the
+    filter by a SPEC. ``unknown`` never has a grade and never enters the chart (ADR-013), so it
+    is a 422 like any other invalid value, and the OpenAPI schema lists only these values.
+    """
+
+    SCREW = "screw"
+    NUT = "nut"
+    PLIERS = "pliers"
+    ADJUSTABLE_WRENCH = "adjustable_wrench"
+    ALLEN_KEY = "allen_key"
+    FLAT_SCREWDRIVER = "flat_screwdriver"
+    PHILLIPS_SCREWDRIVER = "phillips_screwdriver"
 
 
 @router.get("/metrics/summary", response_model=MetricsSummary)
@@ -83,7 +93,7 @@ def metrics_spc(
         int, Query(ge=SPC_MIN_MAX_POINTS, le=SPC_MAX_MAX_POINTS)
     ] = SPC_DEFAULT_MAX_POINTS,
 ) -> SpcResponse:
-    """p chart by lot of one ``source``; ``unknown`` objects never count.
+    """p chart by lot of one ``source``; only inspections with a grade count (ADR-021).
 
     Only the last ``max_points`` valid lots and the last ``MAX_EXCLUDED_LOTS`` excluded lots are
     returned, with the totals before the cut; ``p_bar`` still comes from the first

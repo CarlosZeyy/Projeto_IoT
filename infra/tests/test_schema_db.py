@@ -1,7 +1,8 @@
 """Schema of infra/migrations against the test PostgreSQL. All tests are marked `db`.
 
 001_init.sql: SPEC-003 §4.1. 002_contract_checks.sql (checks that mirror the contract): SPEC-027
-§4.1, at the end of this file.
+§4.1. 003_tool_object_types.sql (hand tools and the grade groups of ADR-021): SPEC-016 §4.2. The
+last two at the end of this file.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import re
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -17,7 +19,14 @@ import pydantic
 import pytest
 from psycopg import errors
 
-from qc_contracts import MODEL_VERSION_PATTERN, Grade, ObjectType, Source, is_defective
+from qc_contracts import (
+    MODEL_VERSION_PATTERN,
+    Grade,
+    InspectionCreate,
+    ObjectType,
+    Source,
+    is_defective,
+)
 
 pytestmark = pytest.mark.db
 
@@ -497,3 +506,142 @@ def test_inspection_id_check_mirrors_pydantic_uuid4(conn: psycopg.Connection) ->
 def test_model_version_check_mirrors_contract(conn: psycopg.Connection, value: str) -> None:
     expected = re.fullmatch(MODEL_VERSION_PATTERN, value) is not None
     assert _inserted(conn, model_version=value) == expected
+
+
+# ---------- 003_tool_object_types (SPEC-016 §4.2) ----------
+
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
+TOOLS_SQL = MIGRATIONS_DIR / "003_tool_object_types.sql"
+
+
+def _contract_accepts(object_type: str, grade: str | None) -> bool:
+    row = _row(object_type=object_type, grade=grade)
+    if grade is None:
+        row |= {"grade_score": None, "grade_confidence": None}
+    payload = {
+        key: (str(value) if isinstance(value, uuid.UUID) else value) for key, value in row.items()
+    }
+    payload["inspected_at"] = datetime.now(UTC).isoformat()
+    try:
+        InspectionCreate.model_validate(payload)
+    except pydantic.ValidationError:
+        return False
+    return True
+
+
+def _database_accepts(conn: psycopg.Connection, object_type: str, grade: str | None) -> bool:
+    overrides: dict[str, Any] = {"object_type": object_type, "grade": grade}
+    if grade is None:
+        overrides |= {"grade_score": None, "grade_confidence": None}
+    return _inserted(conn, **overrides)
+
+
+@pytest.mark.parametrize("object_type", [member.value for member in ObjectType])
+@pytest.mark.parametrize("grade", [None, *(member.value for member in Grade)])
+def test_grade_groups_check_mirrors_the_contract(
+    conn: psycopg.Connection, object_type: str, grade: str | None
+) -> None:
+    assert _database_accepts(conn, object_type, grade) == _contract_accepts(object_type, grade)
+
+
+def test_every_tool_is_accepted_with_and_without_grade(conn: psycopg.Connection) -> None:
+    tools = ("pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver")
+    for tool in tools:
+        assert _database_accepts(conn, tool, None)
+        assert _database_accepts(conn, tool, "poor")
+    assert _count(conn) == 2 * len(tools)
+    rows = conn.execute(
+        "select grade, is_defective from inspections order by grade nulls first"
+    ).fetchall()
+    assert rows == [(None, False)] * len(tools) + [("poor", True)] * len(tools)
+
+
+@pytest.mark.parametrize("object_type", ["hammer", "Pliers", "pliers ", "drill", "other"])
+def test_values_outside_the_contract_are_refused(
+    conn: psycopg.Connection, object_type: str
+) -> None:
+    with pytest.raises(errors.CheckViolation) as info:
+        _insert(conn, object_type=object_type, grade=None, grade_score=None, grade_confidence=None)
+    assert info.value.sqlstate == "23514"
+    assert info.value.diag.constraint_name == "inspections_object_type_check"
+    assert _count(conn) == 0
+
+
+@pytest.mark.parametrize("grade", [None, "fair"])
+def test_value_outside_the_enum_is_refused_only_by_the_enum_check(
+    conn: psycopg.Connection, grade: str | None
+) -> None:
+    overrides: dict[str, Any] = {"object_type": "hammer", "grade": grade}
+    if grade is None:
+        overrides |= {"grade_score": None, "grade_confidence": None}
+    with pytest.raises(errors.CheckViolation) as info:
+        _insert(conn, **overrides)
+    assert info.value.diag.constraint_name == "inspections_object_type_check"
+
+
+SPEC_EXPRESSION = """
+    (object_type in ('screw', 'nut') and grade is not null)
+    or (object_type = 'unknown' and grade is null)
+    or object_type in (
+        'pliers', 'adjustable_wrench', 'allen_key', 'flat_screwdriver', 'phillips_screwdriver'
+    )
+"""
+
+
+def test_grade_check_equals_the_spec_expression_on_the_enum(conn: psycopg.Connection) -> None:
+    """For the 8 x 6 pairs the enum check admits, the stored check is the SPEC-016 expression."""
+    (definition,) = conn.execute(
+        "select pg_get_constraintdef(oid) from pg_constraint "
+        "where conname = 'inspections_grade_null_iff_unknown'"
+    ).fetchone()
+    stored = definition.removeprefix("CHECK ")
+    pairs = [(t.value, g) for t in ObjectType for g in [None, *(m.value for m in Grade)]]
+    rows = conn.execute(
+        f"select object_type, grade, ({stored}) as stored, ({SPEC_EXPRESSION}) as spec "
+        "from (values "
+        + ", ".join("(%s::text, %s::text)" for _ in pairs)
+        + ") as pairs (object_type, grade)",
+        [value for pair in pairs for value in pair],
+    ).fetchall()
+    assert len(rows) == 48
+    for object_type, grade, stored_value, spec_value in rows:
+        assert stored_value is spec_value, (object_type, grade)
+
+
+def test_grade_groups_check_names(conn: psycopg.Connection) -> None:
+    with pytest.raises(errors.CheckViolation) as info:
+        _insert(conn, object_type="nut", grade=None, grade_score=None, grade_confidence=None)
+    assert info.value.diag.constraint_name == "inspections_grade_null_iff_unknown"
+    with pytest.raises(errors.CheckViolation) as info:
+        _insert(conn, object_type="unknown", grade="good")
+    assert info.value.diag.constraint_name == "inspections_grade_null_iff_unknown"
+
+
+def test_tool_migration_runs_again_without_error(conn: psycopg.Connection) -> None:
+    _insert(conn, object_type="pliers", grade=None, grade_score=None, grade_confidence=None)
+    sql_text = TOOLS_SQL.read_text(encoding="utf-8")
+    conn.execute(sql_text)
+    conn.execute(sql_text)
+    assert _constraint_values(conn, "inspections_object_type_check") == {
+        member.value for member in ObjectType
+    }
+    names = [
+        row[0]
+        for row in conn.execute(
+            "select conname from pg_constraint where conrelid = 'inspections'::regclass "
+            "and conname in ('inspections_object_type_check', "
+            "'inspections_grade_null_iff_unknown')"
+        )
+    ]
+    assert sorted(names) == ["inspections_grade_null_iff_unknown", "inspections_object_type_check"]
+    assert _count(conn) == 1
+    assert not _database_accepts(conn, "screw", None)
+
+
+def test_tool_migration_keeps_mvp_rows_valid(conn: psycopg.Connection) -> None:
+    """Rows valid under 001/002 (screw, nut with grade; unknown without) survive a re-run."""
+    _insert(conn)
+    _insert(conn, object_type="nut", grade="unusable")
+    _insert(conn, object_type="unknown", grade=None, grade_score=None, grade_confidence=None)
+    conn.execute(TOOLS_SQL.read_text(encoding="utf-8"))
+    assert _count(conn) == 3

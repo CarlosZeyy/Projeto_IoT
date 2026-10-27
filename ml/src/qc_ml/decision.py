@@ -6,6 +6,10 @@ and the review margin, ``>=`` for ``unusable_threshold``. Only after every compa
 returned numbers clamped to the contract ranges (confidences to ``[0, 1]``, ``grade_score`` to
 ``[0, 4]``). Ties in an argmax go to the smallest index, as in the edge.
 
+SPEC-016 (ADR-021), as on the edge (SPEC-016 section 4.4): a decided type listed in
+``labels.ungraded_object_types`` has no grade, and its ``needs_review`` looks only at the type
+margin.
+
 No torch, no sklearn here (CA-27).
 """
 
@@ -115,9 +119,10 @@ def write_decision(path: Path, thresholds: Thresholds | Mapping[str, Any]) -> No
 class Decisions:
     """Decision for each of the ``N`` images (arrays of length ``N``).
 
-    ``object_types`` holds contract values (``screw``, ``nut``, ``unknown``); ``grades`` the grade
-    or ``None``; ``grade_idx`` is ``-1`` and ``grade_confidence``/``grade_score`` are ``NaN`` when
-    there is no grade. ``unknown`` is the boolean mask of ``object_type == unknown``.
+    ``object_types`` holds contract values (``screw``, ``nut``, a tool or ``unknown``); ``grades``
+    the grade or ``None``; ``grade_idx`` is ``-1`` and ``grade_confidence``/``grade_score`` are
+    ``NaN`` when there is no grade (``unknown`` or an ungraded type). ``unknown`` is the boolean
+    mask of ``object_type == unknown``.
     """
 
     type_idx: np.ndarray
@@ -164,11 +169,12 @@ def apply_decision(
     """Apply the decision rule to ``[N, T]`` and ``[N, 5]`` probabilities (or one ``[T]``/``[5]``).
 
     1. ``type = argmax(type_probs)``; ``unknown`` if it is ``other`` or ``max < type_threshold``;
-       then no grade.
+       then no grade. A type of ``labels.ungraded_object_types`` keeps its type and has no grade
+       either (SPEC-016).
     2. ``grade = unusable`` if ``p_unusable >= unusable_threshold``, else ``argmax(grade_probs)``.
     3. ``grade_confidence = grade_probs[grade]``, ``grade_score = sum(i * p_i)``.
     4. ``needs_review = type_confidence < type_threshold + 0.10 or grade_confidence <
-       grade_review_threshold``.
+       grade_review_threshold`` (the second term only for an image with a grade).
     5. Clamp the confidences to ``[0, 1]`` and ``grade_score`` to ``[0, 4]``.
     """
     labels = as_labels(labels)
@@ -184,20 +190,24 @@ def apply_decision(
     type_idx = np.argmax(types, axis=1) if n else np.zeros(0, dtype=np.int64)
     type_conf = types[np.arange(n), type_idx]
     unknown = (type_idx == other_index) | (type_conf < thresholds.type_threshold)
+    ungraded_index = [
+        k for k, t in enumerate(labels.object_types) if t in labels.ungraded_object_types
+    ]
+    no_grade = unknown | np.isin(type_idx, ungraded_index)
 
     argmax_grade = np.argmax(grades_p, axis=1) if n else np.zeros(0, dtype=np.int64)
     chosen = np.where(
         grades_p[:, unusable_index] >= thresholds.unusable_threshold, unusable_index, argmax_grade
     )
-    grade_idx = np.where(unknown, NO_GRADE_INDEX, chosen).astype(np.int64)
+    grade_idx = np.where(no_grade, NO_GRADE_INDEX, chosen).astype(np.int64)
     raw_grade_conf = grades_p[np.arange(n), chosen]
     weights = np.arange(len(labels.grades), dtype=np.float64)
     raw_score = grades_p @ weights
-    grade_conf = np.where(unknown, np.nan, raw_grade_conf)
-    grade_score = np.where(unknown, np.nan, raw_score)
+    grade_conf = np.where(no_grade, np.nan, raw_grade_conf)
+    grade_score = np.where(no_grade, np.nan, raw_score)
 
     needs_review = (type_conf < thresholds.type_threshold + REVIEW_MARGIN) | (
-        ~unknown & (raw_grade_conf < thresholds.grade_review_threshold)
+        ~no_grade & (raw_grade_conf < thresholds.grade_review_threshold)
     )
     object_types = tuple(
         UNKNOWN if unknown[i] else labels.object_types[int(type_idx[i])] for i in range(n)

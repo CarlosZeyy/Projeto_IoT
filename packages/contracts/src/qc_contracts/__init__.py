@@ -5,7 +5,10 @@ The contract version is ``__version__`` (semver). Changes follow the ``contrato-
 
 from qc_contracts.defects import is_defective
 from qc_contracts.enums import (
+    GRADE_FORBIDDEN_OBJECT_TYPES,
+    GRADE_OPTIONAL_OBJECT_TYPES,
     GRADE_ORDER,
+    GRADE_REQUIRED_OBJECT_TYPES,
     CaptureMode,
     Grade,
     ObjectType,
@@ -42,13 +45,16 @@ from qc_contracts.schemas import (
     TimeseriesPoint,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "CAPTURE_MODE_LABELS_PT",
     "DEVICE_ID_PATTERN",
+    "GRADE_FORBIDDEN_OBJECT_TYPES",
     "GRADE_LABELS_PT",
+    "GRADE_OPTIONAL_OBJECT_TYPES",
     "GRADE_ORDER",
+    "GRADE_REQUIRED_OBJECT_TYPES",
     "LOT_ID_PATTERN",
     "MAX_BATCH_SIZE",
     "MAX_FUTURE_SKEW",
