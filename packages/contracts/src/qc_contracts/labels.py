@@ -25,6 +25,10 @@ OBJECT_TYPE_LABELS_PT: Mapping[ObjectType, str] = MappingProxyType(
         ObjectType.ALLEN_KEY: "chave Allen",
         ObjectType.FLAT_SCREWDRIVER: "chave de fenda",
         ObjectType.PHILLIPS_SCREWDRIVER: "chave Phillips",
+        ObjectType.ANGLE_GRINDER: "esmerilhadeira",
+        ObjectType.SAW: "serra",
+        ObjectType.DRILL: "furadeira",
+        ObjectType.CORDLESS_SCREWDRIVER: "parafusadeira",
     }
 )
 
