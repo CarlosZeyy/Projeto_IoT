@@ -336,6 +336,10 @@ def test_collect_selector_offers_the_tools(settings: EdgeSettings) -> None:
         ("allen_key", "chave Allen"),
         ("flat_screwdriver", "chave de fenda"),
         ("phillips_screwdriver", "chave Phillips"),
+        ("angle_grinder", "esmerilhadeira"),
+        ("saw", "serra"),
+        ("drill", "furadeira"),
+        ("cordless_screwdriver", "parafusadeira"),
         ("other", "outro"),
     ]
     positions = [

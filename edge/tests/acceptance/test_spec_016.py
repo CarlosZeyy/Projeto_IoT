@@ -773,7 +773,7 @@ def test_extra_coverage_has_the_tool_rows(edge: Edge) -> None:
     assert (cells[("pliers", "good")].images, cells[("pliers", "good")].items) == (3, 3)
     assert (cells[("allen_key", "poor")].images, cells[("allen_key", "poor")].items) == (0, 0)
     assert ("other", None) in cells
-    assert len(cells) == 11 + 25
+    assert len(cells) == 11 + 25 + 4  # SPEC-021 section 3.1: plus one row per power tool
 
 
 def test_extra_capture_page_offers_the_tools(edge: Edge) -> None:

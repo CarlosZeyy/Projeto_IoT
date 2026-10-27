@@ -1,6 +1,6 @@
 # qc-ml — dados, split, treino e avaliação
 
-Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste. A SPEC-035 acrescenta a **origem das imagens** (fotos de conhecidos e imagens externas, seção [Origem das imagens](#origem-das-imagens-spec-035)). A SPEC-016 acrescenta as **ferramentas manuais** (seção [Ferramentas (Fase 2)](#ferramentas-fase-2)).
+Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste. A SPEC-035 acrescenta a **origem das imagens** (fotos de conhecidos e imagens externas, seção [Origem das imagens](#origem-das-imagens-spec-035)). A SPEC-016 acrescenta as **ferramentas manuais** (seção [Ferramentas (Fase 2)](#ferramentas-fase-2)) e a SPEC-021, as **ferramentas elétricas**, só identificadas (seção [Ferramentas elétricas (Fase 3)](#ferramentas-elétricas-fase-3)).
 
 Referências: `docs/dataset-protocol.md`, `docs/architecture.md` §7, skill `ml-pipeline`, ADR-004, ADR-005, ADR-014, ADR-020, ADR-021 e ADR-022.
 
@@ -112,6 +112,8 @@ uv run --package qc-ml python ml/scripts/make_tiny_fixture.py
 
 `ml/tests/fixtures/tiny_model_tools/` (SPEC-016) tem a mesma estrutura, com a cabeça de tipo de 8 classes (`screw`, `nut`, `other` e as 5 ferramentas) e `labels.json` com `ungraded_object_types = ["allen_key"]`. Para recriá-la: `uv run --package qc-ml python ml/scripts/make_tiny_fixture.py --with-tools`.
 
+`ml/tests/fixtures/tiny_model_power_tools/` (SPEC-021) tem a cabeça de tipo de 12 classes (as 8 acima e as 4 ferramentas elétricas) e `labels.json` com `ungraded_object_types` igual às 4 elétricas. Para recriá-la: `uv run --package qc-ml python ml/scripts/make_tiny_fixture.py --with-power-tools`.
+
 ## Origem das imagens (SPEC-035)
 
 Desde o ADR-020, o dataset tem três origens. Em todas, o `item_id` e o grau são decididos pela dupla, com a rubrica (`docs/dataset-protocol.md` §10).
@@ -188,9 +190,35 @@ uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir 
 4. Coleta completa: gerar o split com `--extend-test-types` para os tipos com 3 peças ou mais e `--defer-types` para os outros, conferir no `split_v<N>.json` (`counts` e `warnings`) que cada tipo estendido tem peças em `test` e levar o split para a `main` por PR.
 5. Treinar no Colab ([Do Colab ao Release](#do-colab-ao-release-ca-28-tarefa-da-dupla)), conferir o `type_confusion` com todos os tipos do modelo e gerar a entrada do CHANGELOG (com a linha "Tipos do modelo"). Registrar o CA-21 no test-report, com 5 ferramentas fotografadas pela página.
 
+## Ferramentas elétricas (Fase 3)
+
+As 4 ferramentas elétricas do contrato 0.6.0 (`angle_grinder`, `saw`, `drill` e `cordless_screwdriver`, nessa ordem, depois das manuais) são tipos do dataset e, quando há dados, do modelo. Elas são **só identificadas**: nunca têm grau (PRD §4.4; grupo "sem grau" do ADR-021, como o `unknown`).
+
+| Peça | `item_id` | Tipo | Grau |
+|---|---|---|---|
+| própria (modo coleta) | `T-NNN` (a mesma sequência das manuais) | uma das 4 elétricas | **vazio** obrigatório |
+| de conhecido (importação) | `T-501`… | idem | vazio |
+| externa (importação, só treino) | `XT-0001`… | idem | vazio |
+
+- O prefixo `T`/`XT` aceita uma ferramenta manual **ou** elétrica; uma elétrica com `S-`, `N-` ou `O-` dá `item_prefix_mismatch`. Uma elétrica com grau preenchido (no manifest ou numa override) dá `grade_on_other`, o mesmo código de um `other` com grau. As fotos ficam em `raw/<tipo>/_/`.
+- **Critério de grau:** as elétricas não entram no `tool_grade_coverage` (que continua com as 5 manuais).
+- **Modelo:** `derive_model_labels` põe as elétricas com imagens no treino depois das manuais e as lista **sempre** em `ungraded_object_types`, sem passar pelo critério. A loss de grau as ignora (`grade_target`) e, na borda, saem sem grau (`verdict = "sem grau"`).
+- **Split:** as elétricas usam a mesma extensão e o mesmo adiamento das manuais ([Extensão e adiamento do teste](#extensão-e-adiamento-do-teste-adr-022)), com o **tipo inteiro** como estrato (com 6 peças, 4 vão para o treino, 1 para a validação e 1 para o teste). Um tipo abaixo de 3 peças não externas fica em `--defer-types` (com `--extend-test-types`, a CLI sai com 2 e `too few items to extend the test: <tipo>`).
+- **Limiares e avaliação:** como nas manuais. As elétricas contam na taxa de falso desconhecido do `type_threshold` e ficam fora dos outros dois limiares; a `type_confusion` traz todos os tipos do modelo, com a confusão entre furadeira e parafusadeira (esperada, não escondida, R-11); `tool_grade_metrics` nunca traz uma elétrica; `warnings` acusa `few test items for <tipo>: <n>`. Os rótulos PT-BR das matrizes em PNG vêm do contrato (`esmerilhadeira`, `serra`, `furadeira`, `parafusadeira`).
+- **CHANGELOG:** com ferramentas manuais **ou** elétricas no modelo, a entrada ganha a linha `- Tipos do modelo: …; sem grau: ….` e a observação sobre a `type_accuracy`. Pela decisão do humano de 2026-10-24 (SPEC-021 §9), o modelo com as elétricas só substitui o modelo congelado da demo se as métricas de parafuso e porca não piorarem nas mesmas peças de teste.
+
+### Passo a passo da dupla (SPEC-021 §3.3 e CA-14)
+
+1. Por tipo, pelo menos 3 unidades físicas diferentes (meta: 6) e cerca de 90 imagens (por exemplo, 6 unidades × 5 ângulos × 3 situações), sem contar as externas. Fotos de conhecidos (`T-501`…) contam.
+2. Captura: ferramenta desligada e fora da tomada (ou sem bateria), fundo liso maior que a ferramenta (lençol ou parede clara), de 50 a 80 cm, ferramenta ocupando 40–70% da foto, de 3 a 5 ângulos, sem mãos nem pessoas no quadro (R-14). Grau sempre vazio.
+3. Imagens públicas só no treino (`XT-`), depois de conferir a licença e o conteúdo na página oficial e registrar a fonte em `ml/external_sources.csv`.
+4. `python -m qc_ml.data report` e, depois, o split com `--extend-test-types` só para os tipos com 3 unidades ou mais e `--defer-types` para os outros, levado para a `main` por PR.
+5. Treino no Colab, `metrics.json` com a `type_confusion` completa (sem omitir tipo) e a entrada do CHANGELOG com a comparação de parafuso e porca.
+6. Modelo na borda e 4 ferramentas elétricas fotografadas pela página, com o resultado registrado no test-report (CA-14).
+
 ## Dataset sintético (testes)
 
-`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0, tool_items_per_stratum=0, external_tool_items_per_type=0)` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. Com `contributor_items_per_stratum` e `external_items_per_stratum`, acrescenta peças de conhecido (`S-501`…) e imagens externas (`XS-0001`…, 1 imagem cada) por estrato, com `sources.csv` e o registro `root/external_sources.csv` (fonte `synthetic`, `CC0-1.0`). Com peças de conhecido, `items_per_stratum` tem de manter as peças próprias abaixo de `S-501`/`N-501`/`O-501` (até 100), senão levanta `ValueError`. Com `tool_items_per_stratum = t` (SPEC-016), acrescenta `t` peças `T-NNN` por ferramenta × grau, numeradas a partir de `T-001` numa sequência única; com `external_tool_items_per_type = e`, `e` imagens externas `XT-NNNN` por ferramenta (1 imagem cada, graus em rodízio dentro de cada ferramenta). As ferramentas vêm depois de todas as outras peças, então as imagens sem ferramentas não mudam; com os dois em 0 (padrão), os arquivos são os mesmos, byte a byte. `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente (ferramentas inclusive). Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
+`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0, tool_items_per_stratum=0, external_tool_items_per_type=0, power_tool_items_per_type=0, external_power_tool_items_per_type=0)` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. Com `contributor_items_per_stratum` e `external_items_per_stratum`, acrescenta peças de conhecido (`S-501`…) e imagens externas (`XS-0001`…, 1 imagem cada) por estrato, com `sources.csv` e o registro `root/external_sources.csv` (fonte `synthetic`, `CC0-1.0`). Com peças de conhecido, `items_per_stratum` tem de manter as peças próprias abaixo de `S-501`/`N-501`/`O-501` (até 100), senão levanta `ValueError`. Com `tool_items_per_stratum = t` (SPEC-016), acrescenta `t` peças `T-NNN` por ferramenta × grau, numeradas a partir de `T-001` numa sequência única; com `external_tool_items_per_type = e`, `e` imagens externas `XT-NNNN` por ferramenta (1 imagem cada, graus em rodízio dentro de cada ferramenta). Com `power_tool_items_per_type = p` (SPEC-021), acrescenta `p` peças `T-NNN` sem grau por ferramenta elétrica, continuando a sequência `T-` depois das manuais; com `external_power_tool_items_per_type = q`, `q` imagens externas `XT-NNNN` sem grau por elétrica, continuando a sequência `XT-`. As ferramentas vêm depois de todas as outras peças (as elétricas depois das manuais), então as imagens anteriores não mudam; com todos em 0 (padrão), os arquivos são os mesmos, byte a byte. `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente (ferramentas inclusive). Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
 
 ## Testes
 

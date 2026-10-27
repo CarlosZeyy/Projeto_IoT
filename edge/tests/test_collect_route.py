@@ -338,7 +338,7 @@ def _coverage_table(page: str) -> str:
 def test_console_coverage_without_manifest(edge: Edge, lan: None) -> None:
     page = TestClient(edge.app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
     table = _coverage_table(page)
-    assert table.count("<tr><td>") == 36
+    assert table.count("<tr><td>") == 40
     assert table.count("0/120") == 10 and table.count("0/12<") == 10
     assert table.count("0/60<") == 25 and table.count("0/5<") == 25
     for label in ("alicate", "chave inglesa", "chave Allen", "chave de fenda", "chave Phillips"):

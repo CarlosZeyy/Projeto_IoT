@@ -68,7 +68,8 @@ TYPE_BY_OPTION: dict[str, ObjectType | None] = {
 # Types of the SPC filter (``Controle estatístico``): the members of the API's ``SpcObjectType``
 # (SPEC-016 section 4.3), in its order. The dashboard does not import ``qc_api``; these are the
 # grade-required and grade-optional types of the contract (ADR-021, decision 3), declared here,
-# and a test pins them to the contract groups.
+# and a test pins them to the contract groups. The power tools (SPEC-021) are grade-forbidden:
+# never in the SPC, so never here.
 SPC_OBJECT_TYPES: tuple[ObjectType, ...] = (
     ObjectType.SCREW,
     ObjectType.NUT,

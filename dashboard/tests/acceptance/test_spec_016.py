@@ -225,7 +225,11 @@ def test_extra_history_csv_of_an_ungraded_tool() -> None:
 
 def test_extra_object_type_order_and_colors() -> None:
     order = [ObjectType(t).value for t in charts.OBJECT_TYPE_ORDER]
-    assert order == ["screw", "nut", *TOOLS, "unknown"]
+    # SPEC-021 section 3.1: the 4 power tools also have a place in the order (between the
+    # hand tools and unknown); the relative order of these 8 types is unchanged.
+    power = {"angle_grinder", "saw", "drill", "cordless_screwdriver"}
+    assert set(order) == {m.value for m in ObjectType}
+    assert [t for t in order if t not in power] == ["screw", "nut", *TOOLS, "unknown"]
     colors = charts.OBJECT_TYPE_COLORS
     keys = {ObjectType(k).value if not isinstance(k, str) else k for k in colors}
     labels = {OBJECT_TYPE_LABELS_PT[ObjectType(t)] for t in order}

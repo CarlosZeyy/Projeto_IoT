@@ -76,7 +76,8 @@ def test_tool_types_are_the_grade_optional_types_of_the_contract() -> None:
     assert set(TOOL_OBJECT_TYPES) == {m.value for m in GRADE_OPTIONAL_OBJECT_TYPES}
     order = [m.value for m in ObjectType]
     assert list(TOOL_OBJECT_TYPES) == sorted(TOOL_OBJECT_TYPES, key=order.index)
-    assert tuple(KNOWN_OBJECT_TYPES) == ("screw", "nut", "other", *TOOLS)
+    # SPEC-021: the 4 power tools come after the hand tools (test_power_tools.py)
+    assert tuple(KNOWN_OBJECT_TYPES[:8]) == ("screw", "nut", "other", *TOOLS)
     assert (TOOL_GRADE_MIN_IMAGES, TOOL_GRADE_MIN_ITEMS) == (60, 5)
     assert data.DEFAULT_LABELS.object_types == ("screw", "nut", "other")
     assert data.DEFAULT_LABELS.ungraded_object_types == ()

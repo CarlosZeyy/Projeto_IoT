@@ -1415,6 +1415,11 @@ def test_extra_by_object_type_and_series_charts() -> None:
         "chave Allen",
         "chave de fenda",
         "chave Phillips",
+        # SPEC-021 section 3.1: and the 4 power tools.
+        "esmerilhadeira",
+        "serra",
+        "furadeira",
+        "parafusadeira",
         "desconhecido",
     }
     series = [

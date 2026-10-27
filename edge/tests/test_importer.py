@@ -522,6 +522,80 @@ def test_xt_with_screw_is_refused_and_nothing_is_written(
     _expect_plan_problem(seeded, capsys, 4, "item_prefix_mismatch", "object_type")
 
 
+POWER_TOOLS = ("angle_grinder", "saw", "drill", "cordless_screwdriver")
+
+
+def test_power_tools_are_imported_without_grade(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SPEC-021: ``T-`` (contributor) and ``XT-`` (external), always with an empty grade, in the
+    no-grade directory ``_`` of ``other``."""
+    env.add_file("furadeira.jpg", plain_jpeg(color=(70, 20, 30)))
+    env.add_file("ext/esmerilhadeira.png", encode(Image.new("RGB", (900, 700), (5, 60, 9)), "PNG"))
+    env.write_plan(
+        [
+            contributor_row("furadeira.jpg", item_id="T-510", object_type="drill", grade=""),
+            external_row(
+                "ext/esmerilhadeira.png", item_id="XT-0010", object_type="angle_grinder", grade=""
+            ),
+        ]
+    )
+    assert env.run() == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "imported 2, skipped 0, failed 0"
+    assert [(r["item_id"], r["object_type"], r["grade"]) for r in env.manifest()] == [
+        ("T-510", "drill", ""),
+        ("XT-0010", "angle_grinder", ""),
+    ]
+    assert [r["image_path"] for r in env.manifest()] == [
+        "raw/drill/_/T-510__2__20261022T141503Z.jpg",
+        "raw/angle_grinder/_/XT-0010__0__20261022T141503Z.jpg",
+    ]
+    assert [(r["origin"], r["source_id"]) for r in env.sources()] == [
+        ("contributor", ""),
+        ("external", "fonte-teste"),
+    ]
+    for row in env.manifest():
+        assert (env.dataset / row["image_path"]).is_file()
+
+
+@pytest.mark.parametrize("tool", POWER_TOOLS)
+def test_every_power_tool_is_accepted_with_t_and_no_grade(env: Env, tool: str) -> None:
+    env.add_file("t.jpg", plain_jpeg())
+    env.write_plan([contributor_row("t.jpg", item_id="T-512", object_type=tool, grade="")])
+    assert env.run() == 0
+    assert (env.manifest()[0]["object_type"], env.manifest()[0]["grade"]) == (tool, "")
+
+
+def test_graded_power_tool_refuses_the_whole_plan(
+    seeded: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CA-07 of SPEC-021: ``XT-0011`` ``saw`` with a grade is refused, nothing is written (the
+    whole-plan rule of SPEC-036 section 4.2)."""
+    seeded.add_file("a.jpg", plain_jpeg(color=(1, 2, 3)))
+    seeded.add_file("b.jpg", plain_jpeg(color=(4, 5, 6)))
+    seeded.write_plan(
+        [
+            external_row("a.jpg", item_id="XT-0010", object_type="angle_grinder", grade=""),
+            external_row("b.jpg", item_id="XT-0011", object_type="saw", grade="good"),
+        ]
+    )
+    _expect_plan_problem(seeded, capsys, 3, "grade_on_other", "grade")
+
+
+def test_power_tools_count_in_their_coverage_row(env: Env) -> None:
+    env.add_file("a.jpg", plain_jpeg())
+    env.add_file("b.jpg", plain_jpeg(color=(9, 9, 9)))
+    env.write_plan(
+        [
+            contributor_row("a.jpg", item_id="T-520", object_type="saw", grade=""),
+            external_row("b.jpg", item_id="XT-0020", object_type="saw", grade=""),
+        ]
+    )
+    assert env.run() == 0
+    (cell,) = [c for c in compute_coverage(env.dataset / "manifest.csv") if c.object_type == "saw"]
+    assert (cell.grade, cell.images, cell.items) == (None, 1, 1)  # the external one never counts
+
+
 def test_rerun_skips_and_excluded_image_is_imported_again(
     env: Env, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -905,6 +979,24 @@ ROW_CASES: list[tuple[str, dict[str, str], str, str]] = [
         "grade",
     ),
     ("ext-tools", {"item_id": "XT-0001"}, "origin_item_mismatch", "item_id"),
+    (
+        "power-tool-grade",
+        {"item_id": "T-503", "object_type": "drill", "grade": "good"},
+        "grade_on_other",
+        "grade",
+    ),
+    (
+        "screw-prefix-power-tool",
+        {"object_type": "saw", "grade": ""},
+        "item_prefix_mismatch",
+        "object_type",
+    ),
+    (
+        "other-prefix-power-tool",
+        {"item_id": "O-501", "object_type": "angle_grinder", "grade": ""},
+        "item_prefix_mismatch",
+        "object_type",
+    ),
     ("prefix", {"item_id": "N-501"}, "item_prefix_mismatch", "object_type"),
     ("conflict-manifest", {"item_id": "S-500"}, "item_type_conflict", "item_id"),
     ("contrib-ext-id", {"item_id": "XS-0001"}, "origin_item_mismatch", "item_id"),
@@ -967,6 +1059,18 @@ EXTERNAL_CASES: list[tuple[str, dict[str, str], str, str]] = [
         {"item_id": "XT-001", "object_type": "pliers"},
         "invalid_item_id",
         "item_id",
+    ),
+    (
+        "ext-power-tool-grade",
+        {"item_id": "XT-0011", "object_type": "saw", "grade": "good"},
+        "grade_on_other",
+        "grade",
+    ),
+    (
+        "ext-power-tool-xs",
+        {"item_id": "XS-0012", "object_type": "drill", "grade": ""},
+        "item_prefix_mismatch",
+        "object_type",
     ),
 ]
 

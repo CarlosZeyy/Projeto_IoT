@@ -94,8 +94,8 @@ class _InspectionBase(BaseModel):
 
     @model_validator(mode="after")
     def _check_grade_invariants(self) -> Self:
-        # Grade groups of ADR-021: required (screw, nut), forbidden (unknown) or optional (the
-        # hand tools). The messages name the rule, never the values.
+        # Grade groups of ADR-021: required (screw, nut), forbidden (unknown and the power
+        # tools) or optional (the hand tools). The messages name the rule, never the values.
         if self.grade is None and self.object_type in GRADE_REQUIRED_OBJECT_TYPES:
             raise ValueError("grade must not be null for a grade-required object_type")
         if self.grade is not None and self.object_type in GRADE_FORBIDDEN_OBJECT_TYPES:

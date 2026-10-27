@@ -545,7 +545,8 @@ def test_extra_criterion_constants() -> None:
     assert TOOL_GRADE_MIN_IMAGES == 60
     assert TOOL_GRADE_MIN_ITEMS == 5
     assert TOOL_OBJECT_TYPES == TOOLS
-    assert ("screw", "nut", "other", *TOOLS) == KNOWN_OBJECT_TYPES
+    # SPEC-021 section 3.1 (part B): the 4 power tools follow these 8 types.
+    assert ("screw", "nut", "other", *TOOLS) == KNOWN_OBJECT_TYPES[: 3 + len(TOOLS)]
 
 
 def test_extra_criterion_needs_5_items_and_ignores_excluded(

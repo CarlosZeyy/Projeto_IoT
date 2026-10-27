@@ -74,6 +74,7 @@ from qc_edge.collect import (
     MANIFEST_NAME,
     NO_GRADE_DIR,
     RAW_SUBDIR,
+    UNGRADED_DATASET_TYPES,
     CsvHeaderMismatchError,
     CsvUnreadableError,
     DatasetObjectType,
@@ -160,7 +161,7 @@ ORIGIN_CONTRIBUTOR = "contributor"
 ORIGIN_EXTERNAL = "external"
 ORIGINS = frozenset({ORIGIN_CONTRIBUTOR, ORIGIN_EXTERNAL})
 # Whole-string patterns, always with ``re.fullmatch`` (SPEC-036 section 4.2).
-# ``T``/``XT``: hand tools (SPEC-016 section 4.4).
+# ``T``/``XT``: hand tools (SPEC-016 section 4.4) and power tools (SPEC-021).
 CONTRIBUTOR_ITEM_PATTERN = r"[SNOT]-[0-9]{3}"
 EXTERNAL_ITEM_PATTERN = r"X[SNOT]-[0-9]{4}"
 CONTRIBUTOR_PATTERN = r"c[0-9]{2}"
@@ -171,6 +172,7 @@ FILE_MAX_LENGTH = 255
 IMPORT_MAX_BYTES = 40 * 1024 * 1024
 _OBJECT_TYPE_VALUES = frozenset(member.value for member in DatasetObjectType)
 _GRADED_TYPES = frozenset(member.value for member in GRADED_DATASET_TYPES)
+_UNGRADED_TYPES = frozenset(member.value for member in UNGRADED_DATASET_TYPES)
 
 # ------------------------------------------------------------------------------ normalisation
 
@@ -482,7 +484,9 @@ def _object_type_problem(object_type: str, item_id: str) -> str | None:
 
 
 def _grade_problem(grade: str, object_type: str) -> str | None:
-    if object_type == DatasetObjectType.OTHER.value:
+    # ``other`` and the power tools (SPEC-021) never have a grade; a filled grade is the same
+    # problem for both (``grade_on_other``, the code of SPEC-036 section 4.2).
+    if object_type in _UNGRADED_TYPES:
         return "grade_on_other" if grade else None
     if object_type in _GRADED_TYPES:
         if not grade:

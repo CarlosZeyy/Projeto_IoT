@@ -420,7 +420,8 @@ def test_ca08_summary_without_rows(d_env: DEnv) -> None:
     assert body["by_grade"] == {g.value: 0 for g in Grade}
     assert len(body["by_grade"]) == 5
     assert body["by_object_type"] == {o.value: 0 for o in ObjectType}
-    assert len(body["by_object_type"]) == 3 + 5  # SPEC-016 section 4.1: plus the 5 hand tools
+    # SPEC-016 section 4.1: plus the 5 hand tools; SPEC-021 section 3.1: plus the 4 power tools.
+    assert len(body["by_object_type"]) == 3 + 5 + 4
 
 
 # --------------------------------------------------------------------------- CA-09

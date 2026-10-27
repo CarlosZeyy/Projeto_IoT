@@ -488,10 +488,15 @@ def test_extra_tool_migration_keeps_mvp_rows_and_runs_again(
         old_dir = tmp_path / "old"
         old_dir.mkdir()
         new_files = sorted(MIGRATIONS.glob("*.sql"))
-        tool_files = [p for p in new_files if "tool_object_types" in p.name]
+        # SPEC-021 section 3.1: NNN_power_tool_object_types.sql also matches the old glob and
+        # widens the same checks; it stays out of the "old" set and is pending with this one.
+        power_files = [p for p in new_files if "power_tool_object_types" in p.name]
+        tool_files = [
+            p for p in new_files if "tool_object_types" in p.name and p not in power_files
+        ]
         assert len(tool_files) == 1, new_files
         for path in new_files:
-            if path != tool_files[0]:
+            if path != tool_files[0] and path not in power_files:
                 shutil.copy(path, old_dir / path.name)
         apply_migrations(target, old_dir)
         with connect(target) as conn:
@@ -506,7 +511,8 @@ def test_extra_tool_migration_keeps_mvp_rows_and_runs_again(
             with pytest.raises(psycopg.errors.CheckViolation):
                 insert(conn, lot_id="L-MVP", at=T0, object_type="pliers", grade=None)
         applied = apply_migrations(target, MIGRATIONS)
-        assert len(applied) == 1, applied  # only the tool migration was pending
+        # only the tool migration (and the SPEC-021 power tool one) was pending
+        assert len(applied) == 1 + len(power_files), applied
         sql = tool_files[0].read_text(encoding="utf-8")
         with connect(target) as conn:
             conn.execute(sql)  # second run of the same file: no error

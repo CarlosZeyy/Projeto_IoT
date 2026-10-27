@@ -39,8 +39,9 @@ from qc_ml.train import graded_training_counts, model_labels_for
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 TINY_TOOLS = FIXTURES / "tiny_model_tools"
-TOOLS_LABELS = ModelLabels(KNOWN_OBJECT_TYPES, GRADES, ("allen_key",))
-EIGHT = list(KNOWN_OBJECT_TYPES)
+# The 8 types of SPEC-016 (KNOWN_OBJECT_TYPES gained the 4 power tools in SPEC-021).
+EIGHT = list(KNOWN_OBJECT_TYPES[:8])
+TOOLS_LABELS = ModelLabels(tuple(EIGHT), GRADES, ("allen_key",))
 
 
 def _predictions(type_probs, grade_probs, true_type, true_grade, split="val") -> Predictions:
