@@ -137,7 +137,8 @@ def object_type_label(object_type: ObjectType | str | None) -> str:
 
 def inspection_grade_label(item: InspectionRead) -> str:
     """The ``Grau`` of one inspection: the PT-BR grade; ``sem grau`` for a known type without a
-    grade (a hand tool the model does not grade, SPEC-016 section 4.5); ``—`` for ``unknown``."""
+    grade (a hand tool the model does not grade, SPEC-016 section 4.5, or a power tool, never
+    graded, SPEC-021); ``—`` for ``unknown``."""
     if item.grade is None and item.object_type is not ObjectType.UNKNOWN:
         return UNGRADED
     return grade_label(item.grade)

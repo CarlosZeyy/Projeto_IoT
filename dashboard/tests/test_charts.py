@@ -43,9 +43,13 @@ def test_by_object_type_is_horizontal() -> None:
         "chave Allen",
         "chave de fenda",
         "chave Phillips",
+        "esmerilhadeira",
+        "serra",
+        "furadeira",
+        "parafusadeira",
         "desconhecido",
     ]
-    assert list(bar.x) == [0, 4, 0, 0, 0, 0, 0, 0]
+    assert list(bar.x) == [0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     assert list(bar.marker.color) == [
         "#4C78A8",
         "#72B7B2",
@@ -54,6 +58,10 @@ def test_by_object_type_is_horizontal() -> None:
         "#FF9DA6",
         "#8CD17D",
         "#2F4B7C",
+        "#F58518",
+        "#54A24B",
+        "#EECA3B",
+        "#17BECF",
         "#9D9D9D",
     ]
 
