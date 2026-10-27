@@ -93,3 +93,90 @@ Nenhum.
 - [x] `.env.example` atualizado (se houver variável nova): nenhuma variável nova
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] Nada em `ml/` alterado (Parte B do ml-engineer)
+
+## Parte B (ml-engineer)
+
+| Campo | Valor |
+|---|---|
+| Autor | ml-engineer |
+| Commits | `ed54ac2` (dados, rótulos do modelo, gerador, PNG e CHANGELOG), `011a49e` (split), `02c4104` (fixture `tiny_model_power_tools` e `make_tiny_fixture.py`), `b6cf891` (testes do autor), `0963435` (README), `bf7e2a4` (testes do autor da SPEC-016 com os 8 tipos fixos) e o commit desta seção |
+
+### Resumo
+
+- **Dados:** `POWER_TOOL_OBJECT_TYPES` (novo, em `qc_ml.data`) vem do contrato: os membros de `GRADE_FORBIDDEN_OBJECT_TYPES` menos `unknown`, na ordem do `ObjectType` (`angle_grinder`, `saw`, `drill`, `cordless_screwdriver`). `KNOWN_OBJECT_TYPES` passa a ter 12 tipos (as elétricas depois das manuais). O prefixo `T`/`XT` aceita uma ferramenta manual ou elétrica. O grau da elétrica é vazio obrigatório: `GRADE_FORBIDDEN_DATASET_TYPES` (`other` e as elétricas) dá `grade_on_other`, o mesmo código do `other` com grau (também por override). `TOOL_OBJECT_TYPES` e `tool_grade_coverage` continuam só com as 5 manuais.
+- **Rótulos do modelo:** `derive_model_labels` põe as elétricas com imagens no treino depois das manuais e as lista **sempre** em `ungraded_object_types`, sem passar pelo critério; `grade_target` devolve `None` para elas.
+- **Split:** a extensão (`--extend-test-types`) e o adiamento (`--defer-types`) da SPEC-016 §4.7 valem para as elétricas, com o estrato só por tipo (`extension_strata` devolve `(tipo, "none")` para uma elétrica). Uma elétrica com menos de 3 peças não externas dá saída 2 com `too few items to extend the test: <tipo>` (regra já existente).
+- **Gerador:** `make_synthetic_dataset(…, power_tool_items_per_type=0, external_power_tool_items_per_type=0)`, com silhuetas sintéticas das 4 elétricas, sem grau, em `raw/<tipo>/_/`, depois de todas as outras peças; com os dois em 0, os arquivos são os mesmos, byte a byte.
+- **Fixture:** `ml/tests/fixtures/tiny_model_power_tools/` (12 tipos, `ungraded_object_types` = as 4 elétricas, 853.462 bytes), gerada por `ml/scripts/make_tiny_fixture.py --with-power-tools`.
+- **Avaliação, limiares e export:** sem código novo. Os mecanismos da SPEC-016 já tratam um tipo de `ungraded_object_types`: as elétricas entram no `FU(t)` do `type_threshold`, ficam fora dos outros dois limiares e de `tool_grade_metrics`, e a `type_confusion` tem todos os tipos do modelo. Ajustes de apresentação: rótulos PT-BR das elétricas nas matrizes em PNG (`plots.TYPE_LABELS_PT`) e a linha "Tipos do modelo" do CHANGELOG também para um modelo com elétricas (decisão 6).
+- **README:** seção "Ferramentas elétricas (Fase 3)" no `ml/README.md`, com o passo a passo da dupla (§3.3 e CA-14), e as novas opções do gerador e da fixture.
+
+### Rastreabilidade (critério de aceite → implementação)
+
+| Critério | Arquivo(s) | Teste unitário do autor |
+|---|---|---|
+| CA-09 | `ml/src/qc_ml/data.py` (`POWER_TOOL_OBJECT_TYPES`, `KNOWN_OBJECT_TYPES`, `GRADE_FORBIDDEN_DATASET_TYPES`, `ITEM_PREFIX_TYPES`, `_row_problems`), `ml/src/qc_ml/synthetic.py` | `ml/tests/test_power_tools.py::test_ca09_power_tools_load_without_error`, `::test_ca09_power_tool_with_grade_has_the_code_of_other` (4 elétricas, comparado com o `other` com grau), `::test_override_with_a_grade_on_a_power_tool_is_refused`, `::test_power_tool_with_s_prefix_is_a_prefix_mismatch`, `::test_item_prefix_matches_power_tools`, `::test_power_tools_are_the_grade_forbidden_types_of_the_contract_but_unknown`, `::test_power_tools_stay_out_of_the_grade_criterion`; `ml/tests/test_tools_data.py::test_tool_types_are_the_grade_optional_types_of_the_contract` |
+| CA-10 | `ml/src/qc_ml/data.py` (`derive_model_labels`, `grade_target`) | `ml/tests/test_power_tools.py::test_ca10_power_tools_are_always_ungraded`, `::test_power_tools_are_ungraded_next_to_a_graded_hand_tool`, `::test_power_tool_without_train_images_is_not_a_model_type`, `::test_ungraded_power_tools_pass_the_labels_checks` |
+| CA-11 | `ml/src/qc_ml/split.py` (`make_split`, `extension_strata`) | `ml/tests/test_power_tools.py::test_ca11_power_tools_need_a_decision`, `::test_ca11_extension_of_the_power_tools` (`split_v1` sem ferramentas, 6 peças por elétrica: 4/1/1 em cada uma, externas no treino, `split_v1` mantido), `::test_ca11_power_tool_with_two_items_is_refused`, `::test_power_tools_can_be_deferred`, `::test_power_tool_extension_stratum_is_the_whole_type` |
+| CA-12 | `ml/tests/fixtures/tiny_model_power_tools/`, `ml/scripts/make_tiny_fixture.py` (`--with-power-tools`); `ml/src/qc_ml/evaluate.py` e `thresholds.py` sem mudança | `ml/tests/test_power_tools.py::test_ca12_evaluate_with_power_tools` (`type_confusion` 12×12, as 4 em `labels.ungraded_object_types`, nenhuma em `tool_grade_metrics`, `list(metrics) == METRIC_KEYS`), `::test_fixture_labels_have_the_12_types_and_the_4_power_tools_ungraded`, `::test_fixture_parity_with_onnxruntime`; com torch: `::test_make_tiny_fixture_with_power_tools` |
+| CA-13 | `ml/src/qc_ml/synthetic.py` (`make_synthetic_dataset`, `TOOL_POLYGONS`, `POWER_TOOL_COLOR`) | `ml/tests/test_power_tools.py::test_ca13_defaults_are_byte_for_byte_the_same`, `::test_power_tools_come_after_every_other_item`, `::test_external_power_tools_alone_write_the_registry`, `::test_generator_checks_the_power_tool_counts`, `::test_add_synthetic_item_draws_a_power_tool` |
+| Apresentação (PNG e CHANGELOG) | `ml/src/qc_ml/plots.py`, `ml/src/qc_ml/report.py` (`model_types_lines`) | `ml/tests/test_power_tools.py::test_confusion_labels_of_the_power_tools`, `::test_changelog_lists_a_model_with_power_tools_only` |
+| CA-14 (manual) | `ml/README.md` (seção "Ferramentas elétricas (Fase 3)", passo a passo) | — (trabalho da dupla) |
+
+### Como rodar e verificar
+
+```bash
+uv sync --all-packages --locked
+uv run ruff check . && uv run ruff format --check .
+uv run --package qc-ml pytest ml/tests -q                         # ambiente do CI, sem torch
+# com torch, num ambiente separado (não mexe no .venv do CI):
+UV_PROJECT_ENVIRONMENT=$HOME/.cache/partqc-venv-train uv sync --all-packages --extra train --frozen
+$HOME/.cache/partqc-venv-train/bin/python -m pytest ml/tests -q
+```
+
+Resultados (2026-10-27):
+
+- `uv run ruff check .` e `uv run ruff format --check .`: limpos.
+- `ml/tests`, ambiente do CI (sem torch): **1 failed, 969 passed, 28 skipped** (16 min). A falha é o aceite antigo da tabela abaixo.
+- `ml/tests` com o extra `train` (inclui os testes *slow* e os aceites com torch): **1 failed, 1017 passed, 2 skipped** (20 min); a mesma falha.
+- `make_tiny_fixture.py --with-tools` regenerado num diretório temporário reproduz a `tiny_model_tools` byte a byte (os 6 arquivos).
+- Testes de `edge/` que importam `qc_ml.data` (`test_formats_equal_to_qc_ml`, CA-15 da SPEC-036): passam.
+- Não rodei a suíte inteira com banco: a Parte B só muda `ml/`, e nenhum teste fora de `ml/` depende do que mudou, salvo os dois de `edge/` acima.
+- Testes novos do autor: 45 em `ml/tests/test_power_tools.py` (1 com `pytest.importorskip("torch")`). Ajustados: `ml/tests/test_tools_data.py`, `test_tools_model.py` e `test_tools_torch.py` passam a montar os 8 tipos da SPEC-016 explicitamente (os 8 primeiros de `KNOWN_OBJECT_TYPES`).
+
+### Testes de aceite antigos de `ml/` que passam a falhar por causa da Parte B (quem ajusta é o tester)
+
+| Arquivo | Teste | O que falha | Requisito da SPEC-021 | Na §3.1? |
+|---|---|---|---|---|
+| `ml/tests/acceptance/test_spec_016.py` | `test_extra_criterion_constants` | `("screw", "nut", "other", *TOOLS) == KNOWN_OBJECT_TYPES`: `KNOWN_OBJECT_TYPES` tem 12 tipos (os 8 primeiros continuam na ordem da SPEC-016; `TOOL_OBJECT_TYPES` continua igual a `TOOLS`) | §3.1, Parte B ("os 4 tipos em `KNOWN_OBJECT_TYPES`"), CA-10 | não |
+
+Nenhum outro aceite de `ml/` falha. Em particular, `test_spec_016.py` que regenera a fixture com `--with-tools` e confere 8 tipos continua passando (decisão 5), e as chaves de topo do `metrics.json` não mudam (CA-12).
+
+### Decisões tomadas dentro do escopo da SPEC
+
+1. **Grupos de tipos no `qc_ml`.** `POWER_TOOL_OBJECT_TYPES` é derivado do contrato (grau proibido, menos `unknown`), como `TOOL_OBJECT_TYPES` já era (grau opcional). `TOOL_OBJECT_TYPES` continua com as 5 manuais, porque é o grupo que pode ter grau: `tool_grade_coverage`, `tool_grade_metrics`, `GRADE_REQUIRED_DATASET_TYPES` e o `by_grade` das contagens dependem dele, e a SPEC manda o `tool_grade_coverage` continuar só com as manuais.
+2. **Código do problema de grau.** Uma elétrica com grau dá `grade_on_other` (CA-09: "o mesmo código de problema que um `other` com grau"); a mensagem cita o tipo (`grade must be empty for drill, got 'good'`). Vale também para uma override que põe grau numa elétrica. É o mesmo código que a borda usa na importação (decisão 3 da Parte A).
+3. **Estrato da extensão.** Sem grau, o `dominant_grade` de uma peça elétrica já é `"none"`, então o estrato só por tipo já saía sozinho. Deixei explícito em `extension_strata` (uma elétrica → `(tipo, "none")`) para não depender disso. No `split_v1` (sem versão anterior) as listas não são usadas, como na SPEC-016, e uma elétrica cai no estrato `(tipo, "none")` pelo mesmo motivo.
+4. **Gerador.** As peças `T-` elétricas continuam a sequência `T-` depois das manuais (`T-026`… com `tool_items_per_stratum=1`), e as `XT-` elétricas continuam a sequência `XT-` depois das manuais externas. O teto de 999 peças `T-` (e 9.999 `XT-`) vale para manuais e elétricas juntas. As elétricas são desenhadas com cor de plástico (`POWER_TOOL_COLOR`, verde-azulado) e silhuetas próprias (disco e empunhadura lateral da esmerilhadeira, base e proteção da serra circular, corpo em pistola com bateria da furadeira e da parafusadeira), sem ferrugem. As origens seguem as das manuais: `capture` sem linha no `sources.csv`; `external` com a fonte `synthetic`.
+5. **`make_tiny_fixture.py --with-tools`.** Antes, a opção usava `KNOWN_OBJECT_TYPES`, que agora tem 12 tipos; passei a montar os 8 tipos da SPEC-016 explicitamente (`MVP_OBJECT_TYPES` + `TOOL_OBJECT_TYPES`). Conferido: regenerada num diretório temporário, a `tiny_model_tools` sai igual byte a byte. `--with-tools` e `--with-power-tools` são mutuamente exclusivas (saída 2).
+6. **CHANGELOG.** A SPEC-016 §4.8 pede a linha "Tipos do modelo" e a observação sobre a `type_accuracy` "quando o modelo tem ferramentas"; o código só olhava as manuais. Passei a considerar também as elétricas, porque um modelo com elétricas e sem manuais (manuais adiadas, por exemplo) tem a mesma não comparabilidade da `type_accuracy` (ADR-022), e o CA-14 pede a entrada do CHANGELOG. Conferir se o reviewer concorda com essa leitura.
+7. **`ungraded_object_types` da fixture.** Li "(12 tipos; `ungraded_object_types` com as 4 elétricas)" como exatamente as 4 elétricas, sem o `allen_key` da `tiny_model_tools`.
+8. **O que não mudou:** `false_unknown_rate` do `metrics.json` continua em `screw`/`nut`; `counts.<split>.by_class` das elétricas tem `by_grade = {}` (como o `other`); o relatório de dados ganha as 4 chaves em `counts` e `items_per_grade` (com zeros nos dados do MVP), como as manuais na SPEC-016. `agreement.py` não muda (só pareia `screw`/`nut`).
+9. **Ambiente com torch.** Para gerar a fixture e rodar os testes com torch, usei um ambiente separado (`$HOME/.cache/partqc-venv-train`, `UV_PROJECT_ENVIRONMENT`), sem tocar no `.venv` do worktree, que continua no estado do CI (sem torch). Pode ser apagado depois. Nenhuma dependência nova; `uv.lock` sem mudança.
+
+### SPEC_ISSUE
+
+Nenhum.
+
+### Observações para o architect (fora do escopo da Parte B, não bloqueiam os CAs)
+
+- Pela Definição de pronto da SPEC, `docs/architecture.md` §3.1 e `docs/dataset-protocol.md` (captura das elétricas, §3.3 da SPEC) ficam com o architect. O `ml/README.md` já traz o passo a passo.
+
+### Checagens do autor
+
+- [x] `uv run ruff check .` e `uv run ruff format --check .` limpos
+- [x] Testes do autor passando (sem torch e com torch); a única falha em `ml/tests` é o aceite antigo listado acima
+- [x] Seeds fixas: gerador (`seed`), split (`seed` da CLI; extensão com `default_rng(seed)` por tipo), fixture (`SEED = 0`)
+- [x] Nenhuma métrica reportada: não houve treino real (CA-14 é manual)
+- [x] Nenhuma imagem real, nenhum `.onnx` de modelo real; a fixture usa só entradas sintéticas e o `model.onnx` dela não é ignorado pelo `.gitignore` (conferido com `git check-ignore`), como o das outras fixtures
+- [x] Nenhum arquivo fora de `ml/` alterado (salvo esta seção do relatório) e nenhum em `tests/acceptance/`
