@@ -15,10 +15,10 @@ are ever generated.
 Both commands fail (exit 2, nothing written) when a count they show is not a non-negative
 integer (SPEC-037 section 4.1): a value with a line break would otherwise forge a source line.
 
-SPEC-016 section 4.8 (ADR-022): when the model has hand tools, the entry has a line
-``- Tipos do modelo: <types>; sem grau: <types or nenhum>.`` before the table and the note that
-``type_accuracy`` is not comparable with a model without those types. The types come from
-``labels`` of ``metrics.json`` and must be known types (``changelog`` exits 2 otherwise).
+SPEC-016 section 4.8 (ADR-022): when the model has hand or power tools (SPEC-021), the entry
+has a line ``- Tipos do modelo: <types>; sem grau: <types or nenhum>.`` before the table and the
+note that ``type_accuracy`` is not comparable with a model without those types. The types come
+from ``labels`` of ``metrics.json`` and must be known types (``changelog`` exits 2 otherwise).
 
 No torch, no sklearn here (CA-27).
 
@@ -51,6 +51,7 @@ from qc_ml.artifacts import METRICS_FILE, read_model_sha256
 from qc_ml.data import (
     DEFAULT_EXTERNAL_SOURCES,
     KNOWN_OBJECT_TYPES,
+    POWER_TOOL_OBJECT_TYPES,
     SOURCE_ID_PATTERN,
     TOOL_OBJECT_TYPES,
     ExternalSource,
@@ -256,7 +257,8 @@ def _type_list(labels: Mapping[str, Any], key: str) -> list[str]:
 def model_types_lines(metrics: Mapping[str, Any]) -> list[str]:
     """``- Tipos do modelo: ...`` and the ``type_accuracy`` note, only for a model with tools.
 
-    ``[]`` for a model without hand tools, or a ``metrics.json`` without ``labels``.
+    ``[]`` for a model without hand or power tools (SPEC-021), or a ``metrics.json`` without
+    ``labels``.
 
     Raises:
         ValueError: ``labels.object_types`` or ``labels.ungraded_object_types`` is not a list of
@@ -268,7 +270,7 @@ def model_types_lines(metrics: Mapping[str, Any]) -> list[str]:
     if not isinstance(labels, Mapping):
         raise ValueError("invalid labels in metrics.json: labels")
     object_types = _type_list(labels, "object_types")
-    if not any(t in TOOL_OBJECT_TYPES for t in object_types):
+    if not any(t in TOOL_OBJECT_TYPES or t in POWER_TOOL_OBJECT_TYPES for t in object_types):
         return []
     ungraded = _type_list(labels, "ungraded_object_types")
     shown = ", ".join(ungraded) if ungraded else NO_UNGRADED
