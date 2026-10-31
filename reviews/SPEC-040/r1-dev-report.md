@@ -146,3 +146,90 @@ Nenhum.
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] `packages/contracts` sem mudança (só o import de `Grade`)
 - [x] Nenhuma imagem nem `.onnx` versionado; os testes usam dados sintéticos em `tmp_path`
+
+## Parte C (security-devops)
+
+Commits: `f8d313c`, `7af5eb6`, `c2a4753`.
+
+Só documentação, comentários e testes do autor. Nenhuma instrução de Dockerfile, chave de TOML, compose, segredo ou serviço mudou. O portão de segurança desta parte é do reviewer (§6).
+
+### Resumo
+
+- **Comentários (§4.9):** o topo de `infra/docker/api.Dockerfile`, `infra/docker/dashboard.Dockerfile` e `.streamlit/config.toml` passa a citar o `environment` do compose e as Environment Variables do Coolify. O `git diff` só tem linhas de comentário nesses três arquivos.
+- **Atualização (§4.10):** o bloco `**Quando o merge traz migração nova ou contrato novo**` traz a ordem em 6 itens, o efeito da janela e a regra das migrações aditivas. A frase sobre atualizar o Coolify agora manda repetir o CA-18 da SPEC-040 (passos 1 a 3).
+- **Riscos (§7):** item 12 (respostas comprimidas, com as duas fontes e a data) e item 13 (proxy de CDN). O passo 3 da §4 ganhou o item 4, que manda anotar o proxy de CDN fora do repositório.
+- **Alertas (§8, item 5):** quando dar **Restart** só do `partqc-api`, com o `abandoned_for_s`.
+- **CA manual (§9):** subseção "CA manual da SPEC-040", com os passos do CA-18, a regra de colagem e a linha de registro.
+
+### Rastreabilidade (critério de aceite → implementação)
+
+| Critério | Arquivo(s) | Teste unitário do autor (`infra/tests/test_maintenance_040.py`) |
+|---|---|---|
+| CA-16 | `infra/docker/api.Dockerfile`, `infra/docker/dashboard.Dockerfile`, `.streamlit/config.toml` | `test_top_comments_follow_adr_023`, `test_dockerfile_comments_keep_the_rule_and_the_new_path`, `test_streamlit_comment_names_only_the_web_resource`, `test_streamlit_settings_do_not_change` |
+| CA-17 | `docs/deployment-plan.md` | `test_block_has_the_order_of_the_spec`, `test_block_explains_the_window_and_the_additive_rule`, `test_block_commands_never_take_a_secret_in_argv`, `test_block_steps_do_not_collide_with_the_update_steps`, `test_block_has_no_other_title_inside`, `test_update_repeats_the_manual_ca_after_a_coolify_update`, `test_risk_12_has_the_sources_the_date_and_both_refusals`, `test_risk_13_describes_the_cdn`, `test_dns_step_points_to_the_cdn_note_outside_the_repository`, `test_alerts_item_tells_when_to_restart`, `test_manual_ca_keeps_the_key_out_of_argv_and_history`, `test_manual_ca_has_the_steps_the_stop_rule_and_the_row`, `test_manual_ca_commands_use_only_placeholders` |
+| CA-18 | `docs/deployment-plan.md` §9 | manual, depois do deploy; **não executado** (exige a VPS e a borda de produção) |
+
+### Como rodar e verificar
+
+```bash
+uv sync --all-packages
+uv run ruff check . && uv run ruff format --check .
+CI=true TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q infra/tests
+CI=true TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q tests/test_guard_paths.py tests/acceptance/test_spec_001.py api/tests/acceptance/test_spec_017.py dashboard/tests/acceptance/test_spec_013.py dashboard/tests/acceptance/test_spec_028.py dashboard/tests/acceptance/test_spec_029.py
+```
+
+Resultados, com banco:
+
+- `infra/tests`: **1001 passed, 108 skipped**, em 47 s;
+- os outros testes que leem o plano, os Dockerfiles ou o `.streamlit/`: **535 passed**;
+- `ruff check` e `ruff format --check` limpos no repositório inteiro.
+
+Os 108 pulados exigem `PARTQC_DOCKER_TESTS=1`, então não construí as imagens: os Dockerfiles só mudaram em comentários. A suíte inteira não foi rodada nesta parte.
+
+### Testes de aceite de SPECs anteriores (ajuste do tester)
+
+Nenhum: todos os aceites que leem esses arquivos passam sem mudança.
+
+### Conferência das fontes
+
+| Fonte | O que confirma | Data |
+|---|---|---|
+| <https://coolify.io/docs/knowledge-base/proxy/traefik/custom-middlewares> | `traefik.http.routers.https-0-<resource-id>.middlewares=gzip` no roteador da aplicação | 2026-10-31 |
+| <https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/compress/> | condições da compressão, padrão de 1024 bytes e `defaultEncoding` | 2026-10-31 |
+
+A referência do Traefik **não cita o valor `identity`**. Por isso, testei localmente o `traefik:v3` (`v3.7.17`, com `compress` e uma origem falsa em `127.0.0.1`, corpo de 5 KB e chave fictícia), usando o formato de `curl` do CA-18:
+
+| `Accept-Encoding` | Resposta |
+|---|---|
+| `gzip` | `Content-Encoding: gzip` |
+| `identity` | sem `Content-Encoding` |
+| ausente | sem `Content-Encoding` |
+
+O teste também mostrou que o `-K <(printf ...)` entrega o header à origem. Ele não prova o comportamento da versão instalada na VPS, que continua com o CA-18.
+
+### Decisões tomadas dentro do escopo da SPEC
+
+- **Itens do bloco com `1)` em vez de `1.`:** continuam sendo lista numerada no Markdown. `infra/tests/test_deploy_maintenance.py::test_plan_update_step_3_points_to_the_hardening_diagnosis` exige uma única linha `3. ` na seção "Atualização", então `1.` quebraria esse teste.
+- **Sem linha inteira em negrito dentro do bloco:** assim, o "próximo título" do CA-17 não corta o bloco antes da hora. O bloco termina antes de `Depois de **atualizar o Coolify**`.
+- **`requeue` com `uv run --package qc-edge`:** é a forma do `edge/README.md`. O texto da §4.10 (`python -m qc_edge.requeue --outbox-path <arquivo>`) continua dentro do comando.
+- **Linha do CA-18 na tabela da própria subseção:** segue o padrão das SPECs 017, 032 e 038. A §4.10 diz "a tabela de CAs manuais", e li como essa tabela da subseção. Se o reviewer preferir a tabela geral do topo da §9, basta mover a linha.
+- **Nota sobre a `002` na regra aditiva:** a §4.10 pede "`check` que só aceitam mais", mas os `check` da `002` são restrições novas. Acrescentei que eles só espelham o que o contrato já recusava, para o texto continuar correto.
+- **Além da §4.10, no mesmo arquivo:** o aviso de que o CA-18 pode não mostrar `gzip` com corpo abaixo de 1 KB, uma linha no histórico do arquivo e a SPEC-040 no título e na introdução da §9.
+- **§7, item 5, sem mudança:** ele também diz o que repetir depois de atualizar o Coolify, sem citar o CA-18. A §4.10 só pede a mudança na "Atualização", e o item 12 cobre o assunto.
+
+### Observação (fora do escopo, sem ação)
+
+A imagem `traefik:v3` baixada no teste local ficou no Docker da máquina. O contêiner foi removido, e os arquivos do teste estão no scratchpad da sessão. Para apagar a imagem: `docker image rm traefik:v3`.
+
+### SPEC_ISSUE
+
+Nenhum.
+
+### Checagens do autor
+
+- [x] `uv run ruff check .` e `uv run ruff format --check .` limpos
+- [x] Testes unitários do autor passando
+- [x] `.env.example` sem mudança (nenhuma variável nova)
+- [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
+- [x] Nenhum subdomínio, IP, UUID ou valor de segredo nos arquivos versionados (só marcadores)
+- [ ] CA-18 (manual): pendente do humano, depois do deploy
