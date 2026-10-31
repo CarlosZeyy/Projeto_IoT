@@ -12,7 +12,8 @@ Histórico do arquivo:
 - 2026-10-25: correção do SEC-39-01 pelo architect (emenda 1 do ADR-023): o Coolify entrega o `.env` do recurso a todos os serviços dele, então a API passa a ser um recurso separado (`partqc-api`, `infra/compose.api.yaml`), ligado ao `partqc-web` pela rede `partqc-api-link`; passos 4 a 7A, §3, §6, §7, §8 e §9 ajustados, com o SEC-39-03 (passo 5) e o SEC-39-04 (passo 7A). O autor da SPEC-039 confere os comandos contra os arquivos da correção;
 - 2026-10-25: comandos conferidos pelo autor (security-devops) contra o `infra/compose.api.yaml` e o `infra/compose.yaml` da correção do SEC-39-01, inclusive com os dois projetos de pé localmente (a rede `partqc-api-link` criada pelo primeiro e usada pelo segundo); nome do botão do 2FA conferido na página oficial;
 - 2026-10-26: junção da SPEC-017 (alertas no Telegram) com o layout do Coolify pelo autor (security-devops): §3, passo 1 (item 4), passo 5, §6, §7 (item 11), §8 (item 5) e o CA manual da SPEC-017 refeitos para as variáveis só no recurso `partqc-api`, com o token colado só no painel e lido do ambiente do contêiner nas conferências, e a conferência de RLS e grants da `alerts_sent` (SEC-17-01);
-- 2026-10-26: SPEC-038, Parte B, pelo autor (security-devops): `handle_errors` no Caddy (§2, linha "Caddy: respostas de erro", e §7, item 9), `0` ou `-1` no `pids_limit` (§2), o diagnóstico no passo 3 da "Atualização" (§4) e o CA manual da SPEC-038 (§9).
+- 2026-10-26: SPEC-038, Parte B, pelo autor (security-devops): `handle_errors` no Caddy (§2, linha "Caddy: respostas de erro", e §7, item 9), `0` ou `-1` no `pids_limit` (§2), o diagnóstico no passo 3 da "Atualização" (§4) e o CA manual da SPEC-038 (§9);
+- 2026-10-31: SPEC-040, Parte C, pelo autor (security-devops): nota de CDN no passo 3 da §4 e no item 13 da §7 (SEC-39-05), ordem de migração, API e borda na "Atualização" (SEC-16-01, SEC-04 da SPEC-018), respostas comprimidas no item 12 da §7 (fontes conferidas de novo), envio abandonado na §8, item 5 (SEC-17-03), e o CA manual da SPEC-040 (§9).
 
 > **Estado em 2026-10-25:** o ADR-023 está `Aceito`, e a SPEC-039, em desenvolvimento. Os passos da §4 descrevem o deploy pelo Coolify e **só podem ser executados depois do merge da SPEC-039**. Até lá, o `infra/compose.yaml` da `main` publica as portas 80 e 443, que o proxy do Coolify já ocupa, e o deploy falharia.
 
@@ -197,6 +198,7 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
 1. No provedor de DNS do humano, criar um registro `A` de `<subdominio>` para o IPv4 da VPS (o mesmo IP que já atende o portfólio).
 2. Criar `AAAA` **só** se o humano confirmar que o proxy do Coolify atende em IPv6.
 3. Esperar `dig +short <subdominio> A` devolver o IP antes do passo 7, porque o Traefik só obtém o certificado com o DNS apontando para a VPS.
+4. Anotar, **fora do repositório**, se o registro de `<subdominio>` passa por proxy de CDN (SEC-39-05). Recomendado: sem proxy (só DNS). O que muda se passar está na §7, item 13.
 
 ### Passo 4. Recursos no Coolify (dois)
 
@@ -346,7 +348,22 @@ Cada merge na `main` dispara o deploy dos dois recursos pelo webhook (passo 7A),
 4. smoke test (passo 11, item 2)
 5. na VPS, `docker image prune -f --filter label=partqc.component` (remove só as imagens órfãs do PartQC)
 
-Depois de **atualizar o Coolify**, repetir o smoke (passo 11), o CA-16 e o CA-20 da SPEC-039: o isolamento dos segredos depende do comportamento do Coolify conferido no código (ADR-023, emenda 1).
+**Quando o merge traz migração nova ou contrato novo**
+
+O webhook publica no merge, então a API nova sobe antes da migração. A ordem é esta (SEC-16-01, SEC-04 da SPEC-018):
+
+1) merge (o webhook publica a API e o dashboard);
+2) logo depois (pode ser durante o build do deploy), na máquina do humano, num checkout atualizado da `main` e com o `.env.migrate`: `uv run --env-file .env.migrate --package qc-api python infra/migrate.py --status` (a migração nova aparece pendente), depois `uv run --env-file .env.migrate --package qc-api python infra/migrate.py` e de novo o `--status` (`0 pending`);
+3) se a migração cria tabela, a conferência de RLS e grants do passo 1, item 4, com a tabela nova;
+4) `curl -fsS https://<subdominio>/api/v1/health`: o `contract_version` é o da SPEC;
+5) só então atualizar a borda (e carregar um modelo com tipos novos);
+6) se alguma inspeção virou `dead` no caminho, `uv run --package qc-edge python -m qc_edge.requeue --outbox-path <arquivo>` (lista; `<arquivo>` é o `OUTBOX_PATH` da borda) e depois o mesmo comando com `--yes` (SPEC-034).
+
+Na janela entre o merge e a migração, as rotas que usam o que a migração cria respondem 500 ou 422. Por isso a borda é atualizada por último: a versão antiga dela não usa o que ainda falta. O que receber 500 fica `pending` no outbox e é reenviado com backoff, e o que receber 422 vira `dead` e volta pelo `requeue`.
+
+As migrações do projeto só acrescentam: colunas anuláveis, `check` que só aceitam mais (os da `002` só espelham o que o contrato já recusava) e tabelas novas. Uma migração que não seja só aditiva exige decisão na SPEC dela.
+
+Depois de **atualizar o Coolify**, repetir o smoke (passo 11), o CA-16 e o CA-20 da SPEC-039 e o CA-18 da SPEC-040 (passos 1 a 3): o isolamento dos segredos depende do comportamento do Coolify conferido no código (ADR-023, emenda 1), e o envio da borda depende de o proxy respeitar o `identity` (§7, item 12).
 
 A imagem do dashboard leva o `metrics.json` e os PNGs de `ml/reports/` **do commit publicado**: depois do merge do primeiro `metrics.json` (SPEC-012), basta esta atualização, e "Sobre o modelo" passa a mostrar a tabela de métricas.
 
@@ -430,6 +447,12 @@ Cada linha tem a fonte e a data da verificação. Os riscos são do MVP (projeto
     - o isolamento depende de um comportamento do Coolify que a documentação não descreve, conferido no código-fonte (`v4.x` e `v4.5.0`, 2026-10-25). Se o CA-20 falhar, vale o "Quando revisitar" do ADR-023.
 
 11. **Alertas no Telegram na reserva (SPEC-017 §7).** O laço de alertas roda dentro do processo da API. O serviço `free` do Render dorme depois de 15 min sem tráfego (linha do Render na §2), e, enquanto dorme, nenhum lote é verificado. Com a reserva ativa, um alerta só sai quando a API está acordada (o keep-alive e o uso do painel a acordam) e o lote ainda está na janela de `ALERTS_LOOKBACK_HOURS`. Na VPS, a API fica sempre ligada. **Decisão:** risco aceito; a reserva é só para incidentes.
+12. **Respostas comprimidas (SPEC-040 §4.1 e §4.5; SEC-30-01, SEC-17-02).** O proxy do Coolify aplica o middleware `gzip` no roteador HTTPS gerado para a aplicação (<https://coolify.io/docs/knowledge-base/proxy/traefik/custom-middlewares>, conferido em 2026-10-31) e comprime quando o `Accept-Encoding` do cliente contém `gzip`, `*`, `br` ou `zstd`, a resposta ainda não tem `Content-Encoding` e o corpo passa de `minResponseBodyBytes` (padrão 1024; <https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/compress/>, conferido em 2026-10-31).
+    - **Borda:** pede `Accept-Encoding: identity` e recusa outra codificação antes de ler o corpo, com `unsupported response encoding`. Os itens ficam `pending` e são reenviados com backoff (R-05).
+    - **Laço de alertas:** faz o mesmo na resposta do Telegram, com `telegram send failed: unsupported content encoding (status=<n>)`. O alerta fica não entregue (`delivered = false`), sem nova tentativa.
+    - **Limite do que foi conferido:** a referência do Traefik não cita o valor `identity`. No Traefik `v3.7.17` local, com `compress` e corpo de 5 KB, `gzip` voltou comprimido e `identity` voltou sem `Content-Encoding` (2026-10-31), mas a versão da VPS só é conferida no CA-18 da SPEC-040 (§9).
+    - **Decisão:** risco aceito. Se o proxy comprimir mesmo com `identity`, o envio falha de forma transitória e aparece no log, e nada se perde. Por isso, o CA-18 é repetido depois de cada atualização do Coolify (§4, "Atualização"). O caminho dashboard → API continua pedindo `gzip` (SPEC-040 §3.2).
+13. **Proxy de CDN no DNS (SEC-39-05).** Recomendado: registro de `<subdominio>` sem proxy (só DNS). Se passar por proxy de CDN, a chave de leitura (dashboard → API pelo `https://<subdominio>`) e a chave de dispositivo (borda → API) atravessam a CDN, que termina o TLS. **Decisão:** nesse caso, risco aceito só com a anotação do passo 3, item 4, da §4, feita fora do repositório.
 
 ## 8. Operação do banco e das chaves (SPEC-015 §4.9)
 
@@ -560,10 +583,11 @@ Desligados por padrão (`ALERTS_ENABLED=false`). O comportamento e as regras das
 - **Ligar:** nas Environment Variables do `partqc-api`, `TELEGRAM_CHAT_ID=<id>` e `ALERTS_ENABLED=true` (e, se quiser, os outros `ALERTS_*`, com as faixas do `.env.example`); depois, **Redeploy** (ou **Restart**) só do `partqc-api`. Na aba de logs da `api` no painel, ou com `docker logs --tail 200 <contêiner da api> 2>&1 | grep -E 'alerts (enabled|disabled)'`, deve aparecer `alerts enabled: ...` e nenhum `alerts disabled: invalid configuration (...)`, que cita só o nome da variável inválida.
 - **Token vazado ou revogado:** `/revoke` no `@BotFather`, colar o novo token no campo `TELEGRAM_BOT_TOKEN` do `partqc-api` (um valor Locked se edita na visão Normal das Environment Variables) e fazer **Redeploy** (ou **Restart**) só desse recurso; se a reserva no Render estiver ativa, trocar também no painel dele na mesma sessão. O token nunca aparece no log da API (nem nos registros do `httpx`), então colar o log do alerta não o expõe; o resto da regra de colagem da §9 continua valendo.
 - **Desligar:** `ALERTS_ENABLED=false` no `partqc-api` e **Redeploy** (ou **Restart**) só desse recurso.
+- **Envio preso (SEC-17-03):** se `alerts check stopped: a previous send is still running` aparecer por muitos minutos seguidos (o campo `abandoned_for_s` mostra há quantos segundos), **Restart** só do `partqc-api`.
 
-## 9. Registro dos CAs manuais (SPECs 015, 017, 032, 038 e 039)
+## 9. Registro dos CAs manuais (SPECs 015, 017, 032, 038, 039 e 040)
 
-Preenchido pelo humano (e copiado no dev-report), sem o subdomínio real, o IP nem os UUIDs dos recursos. Os comandos estão na SPEC-015 §5, na SPEC-032 §5 (com a equivalência da SPEC-039 §4.7), na SPEC-038 §5 (CA-18, com a nota do topo) e na SPEC-039 §5.
+Preenchido pelo humano (e copiado no dev-report), sem o subdomínio real, o IP nem os UUIDs dos recursos. Os comandos estão na SPEC-015 §5, na SPEC-032 §5 (com a equivalência da SPEC-039 §4.7), na SPEC-038 §5 (CA-18, com a nota do topo), na SPEC-039 §5 e na SPEC-040 §5 (CA-18).
 
 **Antes de colar qualquer saída** aqui, no dev-report ou no PR (todos públicos), troque o subdomínio real por `<subdominio>`, o IP por `<IP>` e o UUID de cada recurso por `<uuid>` (R-13). Estas saídas os trazem:
 
@@ -666,3 +690,28 @@ Depois da atualização da §4 ("Atualização") com a SPEC-038 na `main`, na VP
 | CA | O que | Resultado | Data |
 |---|---|---|---|
 | SPEC-038 CA-18 | Com a `api` parada, `502` com os 4 headers e sem `server`/`via`; `200` em até 60 s depois do `docker start` | pendente | — |
+
+### CA manual da SPEC-040 (respostas comprimidas)
+
+Depois da atualização da §4 ("Atualização") com a SPEC-040 na `main`, com a borda de produção atualizada. Antes de colar, troque o subdomínio por `<subdominio>`; a chave nunca é colada, e o nome do contêiner também não (§9, regra de colagem). A chave de leitura sai do ambiente do contêiner do dashboard (o `docker exec` recebe só o nome da variável) e chega ao `curl` por um descritor, nunca pelo `argv` nem pelo histórico do shell.
+
+1. Na VPS, com `gzip` (o status tem de ser `200`). Registrar se aparece `content-encoding: gzip`, o esperado com o middleware do Coolify e corpo acima de 1 KB. Com menos dados no banco, o corpo pode ficar abaixo disso e a resposta sai sem compressão, o que não é falha:
+
+   ```bash
+   k=$(docker exec <contêiner do dashboard> printenv READ_API_KEY)
+   curl -s -o /dev/null -D - -K <(printf 'header = "X-API-Key: %s"\n' "$k") -H 'Accept-Encoding: gzip' 'https://<subdominio>/api/v1/inspections?limit=100'
+   ```
+
+2. O mesmo com `identity`: nenhuma linha `content-encoding` (ou só `identity`). No fim, apagar a chave do shell:
+
+   ```bash
+   curl -s -o /dev/null -D - -K <(printf 'header = "X-API-Key: %s"\n' "$k") -H 'Accept-Encoding: identity' 'https://<subdominio>/api/v1/inspections?limit=100'
+   unset k
+   ```
+
+3. No notebook da borda, fazer 3 inspeções com a nuvem no ar: em até 2 min as 3 aparecem no Histórico do painel, o log do `qc-edge` não tem `unsupported response encoding`, e a página "Dispositivos" mostra o gateway `online`.
+4. Registrar as saídas na tabela abaixo e no dev-report, com o subdomínio trocado por `<subdominio>` e sem a chave. Se o passo 2 mostrar `content-encoding: gzip`, parar, voltar a borda à versão anterior e registrar `SPEC_ISSUE` (o proxy ignora `identity`).
+
+| CA | O que | Resultado | Data |
+|---|---|---|---|
+| SPEC-040 CA-18 | Com `gzip`, registrar se há `content-encoding: gzip`; com `identity`, nenhum `content-encoding` (ou só `identity`); 3 inspeções da borda no Histórico em até 2 min, sem `unsupported response encoding` no log e com o gateway `online` em "Dispositivos" | pendente | — |
