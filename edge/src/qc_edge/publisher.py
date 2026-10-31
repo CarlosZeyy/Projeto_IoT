@@ -8,8 +8,8 @@ know the ``Publisher`` protocol.
 
 Errors map to three exceptions:
 
-* ``PublishTransientError``: network, timeout, 5xx, 429, any other unexpected status, or a
-  malformed response; the loop retries later.
+* ``PublishTransientError``: network, timeout, 5xx, 429, any other unexpected status, a compressed
+  or malformed response; the loop retries later.
 * ``PublishAuthError``: 401 or 403; the loop pauses until ``qc-edge`` restarts.
 * ``PublishRejectedError``: 413 or 422; ``.detail`` is a summary of the refusal (status plus the
   ``detail`` text or the number of validation errors), never the body. FastAPI's default 422
@@ -32,6 +32,13 @@ constructor), with the same timeout, deadline and byte cap. 204 is a success; 40
 ``PublishAuthError``; anything else raises ``PublishTransientError`` with the summary above
 (``HTTP <status>``, the refusal summary of a 413/422, or the redacted ``httpx`` error), never the
 body. The heartbeat carries no image and no personal data (R-02).
+
+SPEC-040 section 4.1 (SEC-30-01): the byte cap counts bytes already decompressed, so a compressed
+response could cost far more memory than the cap suggests. Every request sends
+``Accept-Encoding: identity``, and before a body is read its ``Content-Encoding`` must be empty or
+``identity``. Otherwise the response is closed unread and ``PublishTransientError`` is raised with
+the fixed message ``unsupported response encoding``, even for a 413/422 (the summary would need
+the body): the items stay pending and nothing is lost (R-05).
 """
 
 from __future__ import annotations
@@ -70,6 +77,8 @@ REQUEST_DEADLINE_S = 15.0
 MAX_RESPONSE_BYTES = 512 * 1024  # above the 256 KB of input that the API echoes in a 422
 DEADLINE_EXCEEDED = "request deadline exceeded"
 RESPONSE_TOO_LARGE = "response too large"
+UNSUPPORTED_ENCODING = "unsupported response encoding"
+IDENTITY_ENCODING = "identity"
 MAX_DETAIL_CHARS = 200
 REDACTED = "***"
 
@@ -84,7 +93,7 @@ class PublishResult:
 
 
 class PublishTransientError(Exception):
-    """Network, timeout, 5xx, 429, other unexpected 4xx or a malformed response."""
+    """Network, timeout, 5xx, 429, other unexpected 4xx, a compressed or malformed response."""
 
 
 class PublishAuthError(Exception):
@@ -136,6 +145,14 @@ def refusal_summary(status_code: int, body: bytes) -> str:
     return prefix
 
 
+def _is_plain_encoding(response: httpx.Response) -> bool:
+    """``True`` when every ``Content-Encoding`` value of ``response`` is empty or ``identity``."""
+    return all(
+        value.strip().lower() in ("", IDENTITY_ENCODING)
+        for value in response.headers.get_list("content-encoding", split_commas=True)
+    )
+
+
 def check_api_key(api_key: str) -> None:
     """Raises ``ValueError`` (without the value) unless the key is non-empty visible ASCII."""
     # A header value outside visible ASCII can never authenticate, and the error httpx would
@@ -151,7 +168,7 @@ class HttpPublisher:
     and ``max_response_bytes`` (cap of the body read) come from SPEC-030 section 4.1;
     ``monotonic`` is injectable for the tests. ``device_id`` (``DEVICE_ID_PATTERN``) is the
     device of the heartbeat path (SPEC-018); without it, ``send_heartbeat`` raises
-    ``ValueError``.
+    ``ValueError``. Every request asks for ``Accept-Encoding: identity`` (SPEC-040 section 4.1).
 
     Raises:
         ValueError: ``base_url`` is not accepted by ``check_cloud_api_url``, the key is empty or
@@ -187,7 +204,12 @@ class HttpPublisher:
         self._max_response_bytes = max_response_bytes
         self._monotonic = monotonic
         self._device_id = device_id
-        self._client = httpx.Client(timeout=timeout_s, transport=transport, follow_redirects=False)
+        self._client = httpx.Client(
+            timeout=timeout_s,
+            transport=transport,
+            follow_redirects=False,
+            headers={"Accept-Encoding": IDENTITY_ENCODING},
+        )
 
     def _redact(self, text: str) -> str:
         return text.replace(self._api_key, REDACTED)
@@ -229,11 +251,18 @@ class HttpPublisher:
     def _read_body(self, response: httpx.Response, start: float) -> bytes:
         """The body of ``response``, chunk by chunk, within the deadline and the byte cap.
 
+        ``Content-Encoding`` is checked first: ``httpx`` decodes inside ``iter_bytes``, so a check
+        after the first chunk would already be too late.
+
         Raises:
-            PublishTransientError: ``request deadline exceeded`` or ``response too large``
-                (fixed messages, without URL, key or body); the response is closed first.
+            PublishTransientError: ``unsupported response encoding``, ``request deadline
+                exceeded`` or ``response too large`` (fixed messages, without URL, key or body);
+                the response is closed first.
             httpx.HTTPError: a network error while reading.
         """
+        if not _is_plain_encoding(response):
+            response.close()
+            raise PublishTransientError(UNSUPPORTED_ENCODING)
         chunks: list[bytes] = []
         total = 0
         for chunk in response.iter_bytes():
@@ -250,12 +279,14 @@ class HttpPublisher:
     def send_heartbeat(self, heartbeat: HeartbeatCreate) -> None:
         """Post ``heartbeat`` for the ``device_id`` of this publisher (SPEC-018 section 4.4).
 
-        The body is read only for 204 and 413/422, within the deadline and the byte cap.
+        The body is read only for 204 and 413/422, within the deadline and the byte cap, and only
+        without a ``Content-Encoding`` other than ``identity`` (SPEC-040 section 4.1).
 
         Raises:
             ValueError: the publisher was built without ``device_id``.
             PublishAuthError: 401 or 403.
-            PublishTransientError: network, timeout, deadline, byte cap or any other status.
+            PublishTransientError: network, timeout, deadline, byte cap, compressed response or
+                any other status.
         """
         if self._device_id is None:
             raise ValueError("device_id is required to send a heartbeat")
