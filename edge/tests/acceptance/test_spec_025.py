@@ -2682,7 +2682,7 @@ def test_extra_privacy_paths_with_control_characters_keep_code_and_summary(
     code, out, _ = run_privacy(["--dataset-dir", str(ds.root)], capsys)
     assert code == 1
     assert out.splitlines()[-1] == "checked 4 images, 3 with private data"
-    # the name itself is printed raw (observation O-01 of the r1 test report); not asserted here
+    # the name itself is printed escaped since SPEC-030 (section 4.5 there); not asserted here
 
 
 def test_extra_privacy_module_runs_with_python_m(tmp_path: Path) -> None:
