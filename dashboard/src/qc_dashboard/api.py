@@ -8,6 +8,10 @@ models. Errors are mapped to three exceptions:
 * HTTP 401/403 -> ``ApiAuthError``;
 * any other status >= 400, or a body that is not the expected model -> ``ApiError(status)``.
 
+``httpx.InvalidURL`` or ``ValueError`` while building the client or a request (before anything is
+sent) becomes ``config.InsecureApiUrlError`` (SPEC-040 section 4.4): ``config.is_secure_api_url``
+already refuses such a URL, so this is only a defense in depth, without the URL nor the key.
+
 The key is never logged nor included in an exception message (R-03). ``get_client()`` is the
 only place that builds the client; callers use it as ``api.get_client()`` (module attribute) so
 tests can replace it with a client on ``httpx.MockTransport``.
@@ -163,7 +167,11 @@ class ApiClient:
     def _get(self, path: str, params: dict[str, str] | None = None) -> tuple[int, Any]:
         """``(status, decoded JSON)`` of ``GET /api/v1<path>``; raises the mapped errors."""
         try:
-            response = self._http.get(API_PREFIX + path, params=params)
+            request = self._http.build_request("GET", API_PREFIX + path, params=params)
+        except (httpx.InvalidURL, ValueError):
+            raise config.InsecureApiUrlError(config.INVALID_API_URL_ERROR) from None
+        try:
+            response = self._http.send(request)
         except httpx.TimeoutException:
             logger.warning("API timeout: GET %s", path)
             raise ApiUnavailable("API timeout") from None
@@ -246,8 +254,12 @@ _DEVICES = TypeAdapter(list[DeviceStatus])
 def get_client() -> ApiClient:
     """The single ``ApiClient`` of the process, built from ``config.get_settings()``.
 
-    Raises ``config.ConfigError`` when ``API_BASE_URL`` or ``READ_API_KEY`` is missing (the
+    Raises ``config.ConfigError`` when ``API_BASE_URL`` or ``READ_API_KEY`` is missing, and
+    ``config.InsecureApiUrlError`` when ``httpx`` cannot build the client from the URL (the
     exception is not cached, so the next call reads the settings again).
     """
     settings = config.get_settings()
-    return ApiClient(settings.api_base_url, settings.read_api_key)
+    try:
+        return ApiClient(settings.api_base_url, settings.read_api_key)
+    except (httpx.InvalidURL, ValueError):
+        raise config.InsecureApiUrlError(config.INVALID_API_URL_ERROR) from None

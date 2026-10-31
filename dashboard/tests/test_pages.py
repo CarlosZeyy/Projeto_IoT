@@ -12,7 +12,7 @@ import httpx
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from qc_dashboard import filters
+from qc_dashboard import config, filters
 
 TIMEOUT = 30
 BADGE = "Contém dados simulados"
@@ -837,3 +837,41 @@ def test_malformed_url_stops_the_overview(
     assert texts(at.error) == [INSECURE]
     assert recorded_sends == []
     assert charts(at) == []
+
+
+# ---------- SPEC-040 §4.4: a URL that httpx cannot build (SEC-29-01) ----------
+
+URLS_HTTPX_CANNOT_BUILD = [
+    "https://api.exa​mple.org",
+    "https://api.exa­mple.org",
+    "https://api.example.org x",
+    "https://api.exa mple.org",
+    "https://xn--zz.com",
+]
+
+
+@pytest.mark.parametrize("url", URLS_HTTPX_CANNOT_BUILD, ids=ascii)
+def test_url_httpx_cannot_build_stops_the_overview(
+    factory, no_config_env, monkeypatch, recorded_sends, url: str
+) -> None:
+    monkeypatch.setenv("API_BASE_URL", url)
+    monkeypatch.setenv("READ_API_KEY", factory.new_key())
+    at = run(page(factory, "visao_geral"))
+    assert_clean(at)
+    assert texts(at.error) == [INSECURE]
+    assert recorded_sends == []
+    assert charts(at) == []
+
+
+@pytest.mark.parametrize("url", URLS_HTTPX_CANNOT_BUILD, ids=ascii)
+def test_defense_in_depth_shows_the_same_message_on_the_page(
+    factory, no_config_env, monkeypatch, recorded_sends, url: str
+) -> None:
+    """Past ``is_secure_api_url``, the client or the read still ends in the same message."""
+    monkeypatch.setattr(config, "is_secure_api_url", lambda value: True)
+    monkeypatch.setenv("API_BASE_URL", url)
+    monkeypatch.setenv("READ_API_KEY", factory.new_key())
+    at = run(page(factory, "visao_geral"))
+    assert_clean(at)
+    assert texts(at.error) == [INSECURE]
+    assert recorded_sends == []

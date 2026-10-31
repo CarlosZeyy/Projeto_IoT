@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
+import httpx
 import pytest
 
 from qc_dashboard import config
@@ -216,7 +218,6 @@ def test_invalid_port_or_control_character_is_refused(url: str) -> None:
         "http://127.0.0.1",
         "https://api.example.org:0",
         "https://api.example.org:65535",
-        "https://api.exa mple.org".replace(" ", ""),  # NBSP is Zs, not Cc
     ],
 )
 def test_valid_port_is_still_accepted(url: str) -> None:
@@ -273,3 +274,67 @@ def test_trailing_del_is_not_trimmed(monkeypatch, secrets, factory) -> None:
     monkeypatch.setenv("READ_API_KEY", factory.new_key())
     with pytest.raises(config.InsecureApiUrlError):
         config.get_settings()
+
+
+# ---------- SPEC-040 §4.4: a URL that httpx cannot build (SEC-29-01, RV-01 of SPEC-029) ----------
+
+
+def test_nbsp_in_the_host_is_refused() -> None:
+    """The NBSP is ``Zs``, not ``Cc``: ``httpx.URL`` is what refuses it."""
+    assert config.is_secure_api_url("https://api.exa\u00a0mple.org") is False
+
+
+URLS_HTTPX_CANNOT_BUILD = [
+    "https://api.exa\u200bmple.org",  # Cf: zero width space
+    "https://api.exa\u00admple.org",  # Cf: soft hyphen
+    "https://api.example.org\u2028x",  # Zl: line separator
+    "https://api.exa\u00a0mple.org",  # Zs: no-break space
+    "https://xn--zz.com",  # invalid punycode: only the IDNA encoding of the request fails
+]
+
+
+@pytest.mark.parametrize("url", URLS_HTTPX_CANNOT_BUILD, ids=ascii)
+def test_url_httpx_cannot_build_is_refused(
+    monkeypatch, secrets, factory, url: str, spy_network
+) -> None:
+    assert config.is_secure_api_url(url) is False
+    secrets(FakeSecrets(API_BASE_URL=url, READ_API_KEY=factory.new_key()))
+    with pytest.raises(config.InsecureApiUrlError) as info:
+        config.get_settings()
+    assert str(info.value) == (
+        "API_BASE_URL must use https:// (http:// only for localhost or 127.0.0.1)"
+    )
+    assert spy_network == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.org",
+        "https://api.example.org:8443/base",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+        "https://bücher.example.org",
+    ],
+)
+def test_urls_httpx_can_build_are_still_accepted(url: str, spy_network) -> None:
+    assert config.is_secure_api_url(url) is True
+    assert spy_network == []
+
+
+@pytest.fixture
+def spy_network(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Any name resolution or real request made during the test."""
+    calls: list[object] = []
+
+    def resolve(*args: object, **kwargs: object) -> list[object]:
+        calls.append(args)
+        raise AssertionError("name resolution")
+
+    def request(self: object, request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise AssertionError("real network used")
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", request)
+    return calls
