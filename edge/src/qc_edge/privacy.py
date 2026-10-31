@@ -21,13 +21,17 @@ Since SPEC-030 (sections 4.4 and 4.5):
 
 * every regular file of ``raw/`` whose name ends with ``.jpg`` or ``.jpeg`` in any case is
   checked (and fixed, keeping its name); any other regular file (``.png``, ``.heic``, no
-  extension...) gets the finding ``invalid`` without being read. The temporary files of the edge
-  itself (name starting with ``.`` and ending with ``.tmp``) are ignored;
+  extension...) gets the finding ``invalid`` without being read. Only the temporary files of the
+  edge itself are ignored (exact format since SPEC-040, ``is_edge_temporary``);
 * every path written to stdout or to the log goes through ``printable_path``, which escapes the
   control, format, surrogate and line/paragraph separator characters, so a file name cannot
   forge an output line or drive the terminal;
 * a file that cannot be read is listed as ``<path>: unreadable`` (besides the error log); it is
-  not counted and makes the exit code 1.
+  not counted and makes the exit code 1. Since SPEC-040 (section 4.2), the same goes for a
+  directory of ``raw/`` that cannot be listed (``raw/`` itself included, when it exists) and for a
+  listed name without ``lstat`` (a directory with ``r`` and no ``x``), which used to be skipped in
+  silence. These lines come in path order with the others, and nothing unreadable is ever
+  rewritten.
 
 The output (stdout) shows paths relative to ``<D>`` and the fixed finding names, never the
 content of a segment (GPS, device, date) nor an absolute path. Errors go to ``logging``, with the
@@ -39,10 +43,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import stat
 import sys
 import unicodedata
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -67,8 +72,9 @@ UNREADABLE = "unreadable"
 # Findings that ``--fix`` never rewrites: the file stays and the exit code is 1.
 UNFIXABLE_FINDINGS = frozenset({FINDING_INVALID, FINDING_ORIENTATION})
 JPEG_SUFFIXES = (".jpg", ".jpeg")  # compared with the lowercase name
-TEMPORARY_PREFIX = "."
-TEMPORARY_SUFFIX = ".tmp"  # ``write_private_file_atomically`` (``mkstemp``) of ``qc_edge.collect``
+# ``tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp")`` in
+# ``qc_edge.collect.write_private_file_atomically``: 8 characters of ``_RandomNameSequence``.
+_TEMPORARY_NAME = re.compile(r"\.(?P<target>.+)\.[a-z0-9_]{8}\.tmp")
 _ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
@@ -117,30 +123,54 @@ def is_jpeg_name(name: str) -> bool:
 
 
 def is_edge_temporary(name: str) -> bool:
-    """``True`` for a temporary file of the edge (``.<name>.<random>.tmp``)."""
-    return name.startswith(TEMPORARY_PREFIX) and name.endswith(TEMPORARY_SUFFIX)
+    """``True`` only for the exact name of a temporary file of the edge (SPEC-040 section 4.2).
+
+    ``.<JPEG name>.<8 characters of [a-z0-9_]>.tmp``. The target may end with ``.JPG`` or
+    ``.jpeg``, because ``--fix`` keeps the original name. Any other ``.tmp`` is a regular finding.
+    """
+    match = _TEMPORARY_NAME.fullmatch(name)
+    return match is not None and is_jpeg_name(match["target"])
 
 
-def _files(dataset_dir: Path) -> Iterator[tuple[Path, str]]:
-    """Regular files under ``raw/``, in path order, except the edge temporaries.
+@dataclass(frozen=True)
+class _Entry:
+    """A regular file of ``raw/``, or what could not be inspected there (``error`` is set)."""
 
-    Symlinks, directories and special files are never followed nor returned.
+    relative: str
+    path: Path
+    error: OSError | None = None
+
+
+def _entries(dataset_dir: Path) -> list[_Entry]:
+    """What ``raw/`` holds, in path order, except the edge temporaries.
+
+    Symlinks, directories and special files are never followed nor returned. A directory that
+    cannot be listed and a listed name without ``lstat`` are returned with their ``error``;
+    ``raw/`` that does not exist is simply an empty dataset.
     """
     raw = dataset_dir / RAW_SUBDIR
-    found: list[tuple[str, Path]] = []
-    for directory, _, files in os.walk(raw, followlinks=False):
+    found: list[_Entry] = []
+
+    def listing_failed(exc: OSError) -> None:
+        path = Path(exc.filename)
+        if path == raw and isinstance(exc, FileNotFoundError):
+            return
+        found.append(_Entry(path.relative_to(dataset_dir).as_posix(), path, exc))
+
+    for directory, _, files in os.walk(raw, onerror=listing_failed, followlinks=False):
         for name in files:
             if is_edge_temporary(name):
                 continue
             path = Path(directory) / name
+            relative = path.relative_to(dataset_dir).as_posix()
             try:
                 mode = os.lstat(path).st_mode
-            except OSError:
+            except OSError as exc:
+                found.append(_Entry(relative, path, exc))
                 continue
             if stat.S_ISREG(mode):  # symlinks and special files are ignored
-                found.append((path.relative_to(dataset_dir).as_posix(), path))
-    for relative, path in sorted(found):
-        yield path, relative
+                found.append(_Entry(relative, path))
+    return sorted(found, key=lambda entry: entry.relative)
 
 
 def _read(path: Path) -> bytes:
@@ -174,19 +204,28 @@ def _fix(item: ImageFinding, data: bytes, dataset_dir: Path) -> bool:
     return True
 
 
+def _report_unreadable(shown: str, exc: OSError, out: TextIO) -> None:
+    logger.error("cannot read %s: %s", shown, exc.strerror or type(exc).__name__)
+    out.write(f"{shown}: {UNREADABLE}\n")
+
+
 def scan(dataset_dir: Path, *, fix: bool, out: TextIO) -> int:
     """Check (and, with ``fix``, rewrite) the images of ``dataset_dir``; returns the exit code."""
     checked = 0
     with_findings = 0
     remaining = False
-    for path, relative in _files(dataset_dir):
+    for entry in _entries(dataset_dir):
+        path, relative = entry.path, entry.relative
         shown = printable_path(relative)
+        if entry.error is not None:
+            _report_unreadable(shown, entry.error, out)
+            remaining = True
+            continue
         if is_jpeg_name(path.name):
             try:
                 data = _read(path)
             except OSError as exc:
-                logger.error("cannot read %s: %s", shown, exc.strerror or type(exc).__name__)
-                out.write(f"{shown}: {UNREADABLE}\n")
+                _report_unreadable(shown, exc, out)
                 remaining = True
                 continue
             findings = _findings(data)
