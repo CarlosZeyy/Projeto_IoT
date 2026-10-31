@@ -1,6 +1,7 @@
 # Imagem da qc-api para a VPS (SPEC-015 §4.10, ADR-018). Contexto de build: a raiz do repositório,
 # filtrada por infra/docker/api.Dockerfile.dockerignore (§4.11). Nenhum segredo entra na imagem:
-# DATABASE_URL e a chave de leitura chegam em tempo de execução pelo env_file do compose (R-03).
+# DATABASE_URL e a chave de leitura chegam em tempo de execução pelo environment do compose, com
+# os valores das Environment Variables do recurso no Coolify, ADR-023 (R-03).
 # Só o pacote qc-api e as dependências dele são instalados: nada de ML (R-12).
 
 FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
