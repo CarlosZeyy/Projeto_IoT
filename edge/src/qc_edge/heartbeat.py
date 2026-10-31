@@ -48,7 +48,7 @@ AUTH_ERROR_MESSAGE = (
 )
 
 
-def _cap(value: int) -> int:
+def _cap(value: float) -> int:
     return min(max(int(value), 0), MAX_HEARTBEAT_COUNT)
 
 
@@ -127,8 +127,9 @@ class HeartbeatLoop:
         except ValidationError as exc:
             logger.warning("heartbeat skipped: %d validation errors", exc.error_count())
             return
-        except Exception:
-            logger.exception("heartbeat could not be built")
+        except Exception as exc:
+            # Only the class name: neither the message nor the traceback reach the log (R-03).
+            logger.error("heartbeat could not be built: %s", type(exc).__name__)
             return
         try:
             self._publisher.send_heartbeat(heartbeat)
