@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: `edge/`, `api/`, `dashboard/`), depois ml-engineer (Parte B: `ml/`), depois security-devops (Parte C: comentários de `infra/docker/*.Dockerfile`, `.streamlit/config.toml` e `docs/deployment-plan.md`), na mesma rodada (§6) |
 | Tags | security, deploy, infra |
 | Depende de | SPECs 016, 017, 018, 036 e 038 **mergeadas antes de esta entrar em `In Dev`** (a Parte A muda o `publisher.py` e o `heartbeat.py` da 018, o `alerts.py` e o `api/README.md` da 017 e o `privacy.py` que a 038 também muda; a Parte B muda o `split.py` e o `report.py` da 016; a Parte C muda o `docs/deployment-plan.md` que a 017 e a 038 também mudam); SPEC-039 (mergeada); SPECs 029, 030, 031 e 037 (`Done`) |
