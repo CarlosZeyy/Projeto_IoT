@@ -10,6 +10,7 @@ nothing here reaches the network nor the real Telegram. The bot token is random 
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import socket
 import threading
@@ -231,7 +232,7 @@ def test_send_with_slow_name_resolution_ends_at_the_deadline(
         # The worker is still in the resolver: abandoned, a daemon, and it blocks new sends.
         with alerts._abandoned_lock:
             stuck = list(alerts._abandoned_sends)
-        assert stuck and all(thread.daemon for thread in stuck)
+        assert stuck and all(send.thread.daemon for send in stuck)
         assert alerts.previous_send_running(grace_s=0.0)
     finally:
         release.set()
@@ -306,7 +307,14 @@ def test_check_stops_while_an_abandoned_send_is_alive(
         assert len(requests) == 1
         messages = [record.getMessage() for record in caplog.records]
         assert "telegram send failed: deadline exceeded" in messages
-        assert "alerts check stopped: a previous send is still running" in messages
+        assert any(
+            re.fullmatch(
+                r"alerts check stopped: a previous send is still running "
+                r"\(abandoned_for_s=[0-3], lot_id=L-002, source=live\)",
+                message,
+            )
+            for message in messages
+        ), messages
         # The deadline, then the grace for the stuck send, and nothing more.
         assert elapsed < alerts.SEND_TIMEOUT_S + alerts.ABANDONED_SEND_GRACE_S + SLACK_S, elapsed
     finally:

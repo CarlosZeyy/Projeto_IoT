@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import gzip
 import json
 import logging
 import secrets
+import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -705,3 +707,109 @@ def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
     yield
+
+
+# --------------------------------------------------------------------------- SPEC-040 section 4.5
+
+
+def _raw_stream(content: bytes) -> tuple[httpx.SyncByteStream, list[bytes]]:
+    delivered: list[bytes] = []
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self) -> Iterator[bytes]:
+            delivered.append(content)
+            yield content
+
+    return Stream(), delivered
+
+
+def test_send_asks_for_identity(token: str) -> None:
+    recorder = Recorder(ok)
+    assert send_message(config(token), "texto", transport=recorder.transport()) is True
+    assert recorder.requests[0].headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ([("Content-Encoding", "gzip")], 200),
+        ([("Content-Encoding", "gzip, gzip")], 200),
+        ([("Content-Encoding", "deflate")], 200),
+        ([("Content-Encoding", "br")], 200),
+        ([("Content-Encoding", "GZIP")], 200),
+        ([("Content-Encoding", "identity, gzip")], 200),
+        ([("Content-Encoding", "identity"), ("Content-Encoding", "gzip")], 200),
+        ([("Content-Encoding", "gzip")], 500),
+    ],
+    ids=str,
+)
+def test_send_refuses_an_encoding_without_reading(
+    token: str,
+    caplog: pytest.LogCaptureFixture,
+    headers: list[tuple[str, str]],
+    status: int,
+) -> None:
+    stream, delivered = _raw_stream(gzip.compress(b'{"ok": true}'))
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, headers=headers, stream=stream)
+
+    caplog.set_level(logging.DEBUG, logger="qc_api.alerts")
+    assert _send(token, handler) is False
+    assert f"telegram send failed: unsupported content encoding (status={status})" in caplog.text
+    assert delivered == []
+    assert token not in caplog.text
+    assert token.partition(":")[2] not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [],
+        [("Content-Encoding", "")],
+        [("Content-Encoding", "identity")],
+        [("Content-Encoding", "Identity")],
+    ],
+    ids=str,
+)
+def test_send_accepts_empty_or_identity(token: str, headers: list[tuple[str, str]]) -> None:
+    stream, _ = _raw_stream(b'{"ok": true}')
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers=headers, stream=stream)
+
+    assert _send(token, handler) is True
+
+
+def test_abandoned_for_s_is_the_truncated_age_of_the_oldest_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    alive = threading.Thread(target=release.wait, daemon=True)
+    alive.start()
+    younger = threading.Thread(target=release.wait, daemon=True)
+    younger.start()
+    finished = threading.Thread(target=lambda: None)
+    finished.start()
+    finished.join()
+    monkeypatch.setattr(
+        alerts,
+        "_abandoned_sends",
+        [
+            alerts._AbandonedSend(finished, 0.0),  # the oldest, but no longer running
+            alerts._AbandonedSend(alive, 100.0),
+            alerts._AbandonedSend(younger, 110.0),
+        ],
+    )
+    monkeypatch.setattr(alerts.time, "monotonic", lambda: 142.9)
+    try:
+        assert alerts._abandoned_for_s() == 42
+    finally:
+        release.set()
+    alive.join()
+    younger.join()
+
+
+def test_abandoned_for_s_without_a_send_is_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(alerts, "_abandoned_sends", [])
+    assert alerts._abandoned_for_s() == 0
