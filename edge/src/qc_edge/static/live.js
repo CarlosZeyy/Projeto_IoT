@@ -32,7 +32,7 @@
 
   function el(id) { return document.getElementById(id); }
   var main = el("live"), video = el("video"), overlay = el("overlay"), lotField = el("lot_id");
-  var statusLine = el("status");
+  var statusLine = el("status"), lotInUse = el("lot-in-use");
   var FPS = Number(main.dataset.fps) || 2, LABELS = JSON.parse(main.dataset.labels);
   var token = new URLSearchParams(window.location.search).get("t") || "";
   var frameCanvas = document.createElement("canvas");
@@ -59,9 +59,18 @@
   // pause with the part on the table would record the inspection in an incomplete lot, and the lot
   // is the subgroup of the p chart (ADR-013).
   var lot = "";
+  // The confirmed lot, and a warning while the field differs from it: without this, a lot typed and
+  // not confirmed looks applied, and the inspection enters the wrong subgroup. It never confirms.
+  function showLot() {
+    var inUse = "Lote em uso: " + (LOT_RE.test(lot) ? lot : "nenhum");
+    var differs = lotField.value.trim() !== lot;
+    lotInUse.textContent = differs ? inUse + " · pressione Enter para aplicar o lote digitado" : inUse;
+    lotInUse.className = differs ? "status error" : "status";
+  }
   function confirmLot() {
     lot = lotField.value.trim();
     try { window.localStorage.setItem(LOT_STORE_KEY, lot); } catch (e) { /* ignore */ }
+    showLot();
   }
   function loadLot() {
     try {
@@ -69,6 +78,7 @@
       if (stored !== null) lotField.value = stored;
     } catch (e) { /* ignore */ }
     lot = lotField.value.trim();
+    showLot();
   }
 
   // Largest font, up to `size`, that keeps the whole line within `maxWidth`.
@@ -98,7 +108,8 @@
   function emittedLines(inspection) {
     var grade = inspection.grade === null ? "" : LABELS.grades[inspection.grade];
     return ["Registrada: " + LABELS.object_types[inspection.object_type] + " " + grade,
-      LABELS.verdicts[inspection.grade === null ? "" : inspection.grade]];
+      LABELS.verdicts[inspection.grade === null ? "" : inspection.grade],
+      "Lote: " + inspection.lot_id];
   }
 
   function resultLines(step) {
@@ -193,6 +204,8 @@
 
   loadLot();
   lotField.addEventListener("change", confirmLot);
+  // Closing the Android keyboard with the back gesture may fire neither "blur" nor "change".
+  lotField.addEventListener("input", showLot);
   // Enter also confirms on the phones whose keyboard only fires "change" when leaving the field.
   lotField.addEventListener("keydown", function (event) {
     if (event.key === "Enter") lotField.blur();

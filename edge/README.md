@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-019, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038, SPEC-040, SPEC-041)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-019, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038, SPEC-040, SPEC-041, SPEC-042)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -414,11 +414,27 @@ Copie para o celular só o `rootCA.pem`, da pasta mostrada por `mkcert -CAROOT`.
 
 **Teste depois do merge (SPEC-019 §3.3):** nos dois celulares, abra o QR do `/live` e confira se a câmera abre. Registre o navegador, a versão e o resultado. Se nenhum aceitar o certificado, o vídeo não funciona, e a apresentação usa só a foto por disparo, que não depende de nada disso (risco aceito pelo humano em 2026-11-01).
 
+### Depois da apresentação
+
+1. **Por quê:** enquanto a CA estiver instalada, o celular confia em qualquer certificado emitido com o `rootCA-key.pem` do notebook, inclusive de sites públicos.
+2. **iOS:** em Ajustes > Geral > Gerenciamento de Dispositivos (o nome do menu varia com a versão), abra o perfil com `mkcert` no nome e remova-o.
+3. **Android:** em Configurações > Segurança e privacidade > Mais configurações de segurança > Criptografia e credenciais > Credenciais do usuário (o caminho varia com o aparelho e a versão), remova só o certificado com `mkcert` no nome. **Não use "Limpar credenciais"**, que apaga todos os certificados instalados pelo usuário.
+4. **Notebook,** na raiz do repositório e nesta ordem:
+
+   ```bash
+   mkcert -uninstall            # tira a CA dos repositórios de confiança, mas não apaga os arquivos
+   rm -rf "$(mkcert -CAROOT)"   # apaga o rootCA-key.pem
+   rm -rf edge/data/tls
+   ```
+
+5. Tire `EDGE_TLS_CERT` e `EDGE_TLS_KEY` do `.env`: com os arquivos apagados, a borda não sobe (código 2).
+6. Apague as fotos, conforme o `docs/dataset-protocol.md` §9.
+
 ### Usar
 
-1. Abra o QR do `/live` no celular, conceda a câmera e informe o lote (o mesmo campo da `/capture`). O lote vale depois de confirmado, com Enter ou saindo do campo: enquanto você digita, os quadros seguem com o lote anterior, e, no primeiro uso, nenhum quadro é enviado. Assim, uma pausa no meio da digitação não grava a inspeção num lote incompleto.
+1. Abra o QR do `/live` no celular, conceda a câmera e informe o lote (o mesmo campo da `/capture`). O lote vale depois de confirmado, com Enter ou saindo do campo: enquanto você digita, os quadros seguem com o lote anterior, e, no primeiro uso, nenhum quadro é enviado. Assim, uma pausa no meio da digitação não grava a inspeção num lote incompleto. A linha `Lote em uso`, logo abaixo do campo, mostra o lote que os quadros levam, ou `nenhum`. Se o campo tiver outro texto, ela fica vermelha e acrescenta `pressione Enter para aplicar o lote digitado`, inclusive depois de fechar o teclado sem confirmar.
 2. Ponha a peça na mesa. A faixa mostra o tipo e o grau, o veredito (com o aviso, se o modelo for provisório), a confiança e o estado, sempre inteiros na largura do vídeo, e a barra de baixo é a estabilidade. **Sem pessoas no quadro** (R-14).
-3. Quando a classificação estabiliza, a inspeção é registrada, e a faixa fica verde por 2 s.
+3. Quando a classificação estabiliza, a inspeção é registrada, e a faixa fica verde por 2 s, com o lote registrado na última linha (`Lote: L-001`).
 4. Tire a peça da mesa antes da próxima. Enquanto ela continuar ali, nada mais é registrado. Com `LIVE_EMPTY_FRAMES` resultados `desconhecido` seguidos (padrão 3), a mesa conta como vazia.
 
 Regra de registro: com a janela cheia (`LIVE_WINDOW` quadros), o par tipo e grau mais frequente precisa ser o único mais frequente, não ser a mesa vazia, ter pelo menos `LIVE_MIN_AGREE` quadros e ter média de confiança de tipo de pelo menos `LIVE_MIN_CONFIDENCE`. A inspeção usa o quadro mais recente desse par, com o `source` de sempre: `live` ou, com um modelo provisório, `simulated`, com o aviso no veredito (SPEC-041). Trocar o lote recomeça a janela. Se a gravação falhar, a peça não fica sem registro: a próxima janela estável tenta de novo.

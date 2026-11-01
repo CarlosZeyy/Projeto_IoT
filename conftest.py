@@ -21,6 +21,9 @@ from collections.abc import Iterator
 
 import pytest
 
+# SEC-19-01: some tests import onnxruntime directly, and CI=true does not exist locally (SPEC-042).
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+
 DB_URL_ENV = "TEST_DATABASE_URL"
 SKIP_REASON = "TEST_DATABASE_URL not set"
 CI_ERROR = "TEST_DATABASE_URL is required when CI=true"
