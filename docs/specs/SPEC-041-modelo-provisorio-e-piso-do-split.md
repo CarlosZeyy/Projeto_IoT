@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | ml-engineer (Parte A: `ml/`), depois developer (Parte B: `edge/`), na mesma rodada |
 | Tags | security |
 | Depende de | ADR-024 `Aceito`; SPECs 008, 011, 012, 035, 036 e 040 mergeadas |
