@@ -195,4 +195,9 @@ Os testes do `edge/tests/test_live_route.py` e do `test_spec_019.py` que leem o 
 - [ ] CI verde; `ruff` limpo
 - [ ] `edge/README.md` e `.env.example` atualizados; `docs/architecture.md` §9 (linha da telemetria e a regra de rodar o CA-01 ao subir o `onnxruntime`) e §10 (`PARTQC_TELEMETRY_TESTS`) pelo architect
 - [ ] PR aberto com os relatórios; merge conforme R-09. O CA-11 manual e o §3.3 ficam pendentes no merge, marcados no quadro, e são registrados depois dele
+
+## Histórico
+
+| Data | Mudança | Motivo | Quem pediu |
+|---|---|---|---|
 | 2026-11-01 | Aprovada pelo humano (`Draft` → `Ready`). | Resposta do humano de 2026-11-01, nesta sessão | Orquestrador, a pedido do humano |
