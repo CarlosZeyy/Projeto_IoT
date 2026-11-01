@@ -1680,9 +1680,10 @@ def test_extra_token_and_image_do_not_reach_the_logs(
     send_frames(client, edge.token, 20)
     post_frame(client, edge.token, encoded("PNG"))
     post_frame(client, None)
-    # ``httpx`` is the logger of the test client (the URL of the page), not of the edge.
-    records = [record for record in caplog.records if record.name != "httpx"]
-    assert records
+    # The logger of the test client (the URL of the page) is not of the edge. Its name depends on
+    # the environment: ``httpx`` as in the CI, and ``httpx2`` with the ``train`` extra.
+    records = [record for record in caplog.records if record.name not in {"httpx", "httpx2"}]
+    assert any(record.name.startswith("qc_edge") for record in records)
     for record in records:
         assert edge.token not in record.getMessage()
         assert SESSION_A not in record.getMessage()
