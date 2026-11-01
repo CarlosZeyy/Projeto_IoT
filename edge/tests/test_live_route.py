@@ -804,6 +804,17 @@ def test_lot_of_the_frames_is_the_confirmed_one() -> None:
     assert 'event.key === "Enter"' in script
 
 
+def test_page_restored_from_the_back_forward_cache_reloads() -> None:
+    """RV-04 of SPEC-019: ``pagehide`` stops the camera, and nothing else restarts it."""
+    script = (STATIC_DIR / "live.js").read_text(encoding="utf-8")
+    assert 'window.addEventListener("pagehide", stop)' in script
+    assert 'window.addEventListener("pageshow"' in script
+    assert "event.persisted" in script
+    assert "window.location.reload()" in script
+    # Registered before the early returns, so it holds whatever state the page was left in.
+    assert script.index('addEventListener("pageshow"') < script.index("if (!token)")
+
+
 def test_log_of_the_page_and_the_route_never_has_the_token(
     make_rig: Callable[..., _Rig], caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -198,6 +198,11 @@
     if (event.key === "Enter") lotField.blur();
   });
   window.addEventListener("pagehide", stop);
+  // "pagehide" stopped the camera, and a page restored from the back/forward cache runs nothing
+  // again: without the reload, the screen would stay frozen, with no message.
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted) window.location.reload();
+  });
   window.addEventListener("resize", draw);
   if (!token) { showStatus(MESSAGES[401], true); return; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
