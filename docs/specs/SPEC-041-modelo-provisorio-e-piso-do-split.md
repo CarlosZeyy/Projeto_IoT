@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Test |
+| Status | In Review |
 | Rodada atual | r1 |
 | Autor da implementação | ml-engineer (Parte A: `ml/`), depois developer (Parte B: `edge/`), na mesma rodada |
 | Tags | security |
