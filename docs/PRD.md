@@ -59,7 +59,7 @@ O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autoriza�
 - Ferramentas manuais (alicate, chave inglesa, chave Allen, chave de fenda, chave Phillips): **identificação** obrigatória; grau de estado só se houver dados suficientes (critério na SPEC-016).
 - Opcionais: alerta no Telegram quando o lote sai de controle (SPEC-017) e heartbeat com página de dispositivos (SPEC-018).
 
-### 4.3 Fase 3 (só se a Fase 2 fechar no prazo)
+### 4.3 Fase 3 (sem esperar o prazo da Fase 2; ADR-024, decisão 5)
 
 - Ferramentas elétricas (esmerilhadeira, serra, furadeira, parafusadeira): **só identificação** (SPEC-021).
 - Modo vídeo ao vivo com HTTPS (SPEC-019).
@@ -113,7 +113,7 @@ O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autoriza�
 
 ## 7. Métricas de sucesso
 
-As metas são **iniciais** e serão revisadas depois do primeiro treino (S3). Não são garantias.
+As metas são **iniciais** e serão revisadas depois do primeiro treino (S3). Não são garantias. Só o modelo oficial preenche esta tabela (ADR-024).
 
 | Métrica | Meta MVP | Onde medir |
 |---|---|---|
@@ -136,7 +136,7 @@ As metas são **iniciais** e serão revisadas depois do primeiro treino (S3). N�
 | Pouco dado nos extremos (`perfect`, `unusable`) | Recall ruim | Meta por grau; peças novas para `perfect`; dano mecânico controlado para `unusable` |
 | Mudança de domínio (luz, fundo, celular) | Erro na demo | Dataset capturado com os mesmos celulares e o mesmo fundo; ensaio no local da apresentação |
 | Banco free tier pausa; VPS cai ou fica sem manutenção | Banco pausado ou nuvem fora do ar | Outbox; healthcheck da API e ping por GitHub Actions (mantêm o Supabase ativo); reserva fria no Render; checklist pré-demo (ADR-018) |
-| Escopo de ferramentas cresce demais | Atraso | Camadas; Fase 3 só se a Fase 2 fechar |
+| Escopo de ferramentas cresce demais | Atraso | Camadas, cada uma por SPEC aprovada; a Fase 3 deixou de esperar o prazo da Fase 2 (ADR-024, decisão 5) |
 | Professor não aceitar HTTP no lugar de MQTT ou o uso de agentes de IA | Retrabalho | `docs/professor-questions.md` respondido até a S2 |
 
 ## 9. Marcos

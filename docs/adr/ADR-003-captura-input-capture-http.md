@@ -50,3 +50,5 @@ No MVP, a captura usa `<input type="file" accept="image/*" capture="environment"
 - Se, no teste da S1, algum dos dois celulares não conseguir abrir a câmera traseira pelo `<input capture>`, nem mesmo pelo seletor.
 - Se o professor exigir vídeo ao vivo ou recusar o HTML/JS (pergunta 2).
 - Se a Fase 3 for liberada (Fase 2 fechada até 22/11): a SPEC-019 implementa a opção B sem remover a A.
+
+> **Nota de 2026-11-01:** a condição "Fase 2 fechada até 22/11" foi substituída pelo ADR-024, decisão 5: a Fase 3 deixa de esperar o prazo da Fase 2. O restante deste ADR não muda.
