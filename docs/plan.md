@@ -13,7 +13,7 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 | S5 | 09–15/nov | Melhorias do modelo (ablação CORN, `unusable_threshold`, classe `other`); relatório de métricas; endurecimento (RNF-04, cobertura) | |
 | S6 | 16–22/nov | SPEC-016 (ferramentas manuais: identificação); SPEC-017/018 se der tempo. **Congelamento do modelo** | **M3** |
 | S7 | 23–29/nov | Testes finais, documentação final, vídeo de backup da demo, ensaio completo em casa com a topologia da apresentação (hotspot do celular) | **M4** |
-| S8 | 30/nov–04/dez | Folga, relatório e slides, apresentação. Fase 3 só se a S6 fechou no prazo | **M5** |
+| S8 | 30/nov–04/dez | Folga, relatório e slides, apresentação. O portão da Fase 3 deixou de bloquear em 2026-11-01 (§4) | **M5** |
 
 ### Tarefas humanas (fora do loop de agentes)
 
@@ -29,6 +29,10 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 | S2–S3 | Backup do dataset: só em mídia local até o merge da SPEC-025; a partir dele, no Drive, sempre depois do checklist do `docs/dataset-protocol.md` §8 | Dupla |
 | Já | Registrar os CAs manuais pendentes: CA-17 da SPEC-010 e CA-26 da SPEC-013 (antes do merge das SPECs 025 e 028) e CA-20/21 da SPEC-007 | Dupla |
 | S3 | Rotulagem dupla (20%) | Dupla |
+| Já (ADR-024) | Fotografar as próprias peças até o piso (33 peças, 99 fotos; alvo prático de 40 peças, 120 fotos), sem esperar os colegas, e fazer a corrosão de `good`/`fair` se faltarem peças | Dupla |
+| Até a data de corte (15/11) | Gerar o `split_v1` e levá-lo à `main` por PR; depois, o treino real (CA-28 da SPEC-012) | Dupla |
+| Depois do merge da SPEC-019 | Teste do certificado do `mkcert` nos dois celulares e CA-12 (SPEC-019 §3.3) | Dupla |
+| Por último | Deploy na VPS e os CAs manuais que dependem dele | Humano (Carlos) |
 | Contínuo | Aprovar SPECs (`Draft` → `Ready`) e ADRs (`Proposto` → `Aceito`); vetar um merge quando quiser (o merge dos PRs é feito pelo orquestrador sob delegação, ADR-016); reaprovar as correções de SPEC, exceto as correções pequenas de `SPEC_ISSUE`, que o orquestrador reaprova nos limites do ADR-019, com veto do humano | Dupla |
 
 ## 2. Quadro de SPECs
@@ -55,7 +59,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais (contrato 0.4.0, tipos sem grau e teste estendido; ADR-021/022 `Aceito`) | developer + ml-engineer | contrato, security | 034, 035, 036, 037, 026, 028 (e 008, 010, 011, 012, 013) | S5–S6 | Done (CA-21 manual pendente até o treino real) |
 | [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006, 015, 016, 026 (e 003, 004, 014) | S6 | Done (CA-13 manual pendente) |
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos (contrato 0.5.0) | developer | contrato, security | 034, 016, 030 (e 004, 009, 013, 028) | S6 | Done (CA-13 manual pendente) |
-| [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030 (e 007, 009, 024) | S8 | Ready |
+| [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030, 041 (e 007, 009, 024) | depois da 041 | Ready |
 | [020](specs/SPEC-020-mqtt.md) | Fase 3: transporte MQTT (Mosquitto local e ponte) | developer | security | 009, 030, 034 (e 004) | S8 | Done (CA-11 e CA-12 manuais pendentes) |
 | [021](specs/SPEC-021-ferramentas-eletricas.md) | Fase 3: ferramentas elétricas (só identificação, contrato 0.6.0) | developer + ml-engineer | contrato, security | 016, 018, 034 | S8 | Done (CA-14 manual pendente) |
 | [022](specs/SPEC-022-manutencao-setup.md) | Manutenção do setup (hook, CI sem senha, commits do architect) | developer | infra | 001 | S1 | Done |
@@ -77,6 +81,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [038](specs/SPEC-038-manutencao-borda-deploy.md) | Manutenção da borda e do deploy (linhas inválidas do outbox, importação de fotos e respostas de erro do Caddy) | developer + security-devops | security, deploy, infra | 036, 032 mergeadas (e 034, 009, 015, 025, 030), 039 | S6–S7 | Done (CA-18 manual na VPS pendente) |
 | [039](specs/SPEC-039-manutencao-deploy-coolify.md) | Manutenção do deploy para o Coolify (compose sem portas publicadas, Caddy como roteador interno e segredos no painel; ADR-023 `Aceito`) | security-devops | deploy, security, infra | ADR-023 `Aceito`; 015 e 032 (código mergeado) | agora (direto na `main`, decisão do humano de 2026-10-25) | Done (CA-14 a CA-18 e CA-20 manuais na VPS pendentes) |
 | [040](specs/SPEC-040-manutencao-consolidada.md) | Manutenção consolidada antes da apresentação (respostas comprimidas no publisher e nos alertas, varredura de privacidade, URL do painel, CHANGELOG e split do ML, documentação de deploy) | developer + ml-engineer + security-devops | security, deploy, infra | 016, 017, 018, 036 e 038 mergeadas (e 029, 030, 031, 037, 039) | S7 (merge antes do ensaio do M4, 29/11) | Done (CA-18 manual pendente até o deploy) |
+| [041](specs/SPEC-041-modelo-provisorio-e-piso-do-split.md) | Modelo provisório para o ensaio, separado do oficial, e piso do `split_v1` (ADR-024) | ml-engineer + developer | security | ADR-024 `Aceito`; 008, 011, 012, 035, 036 e 040 mergeadas | S4 | Ready |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
 
@@ -120,8 +125,8 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 - **016 primeiro** (Fase 2, caminho crítico): destrava a coleta humana das fotos de ferramentas, que só pode começar depois do merge dela, e o modelo com ferramentas tem de estar treinado até o M3. É também a primeira mudança de contrato com a borda em operação, por isso a **034 `Done` antes** (prazo da 034). Exige os ADRs 021 e 022 `Aceito`.
 - **018 em seguida:** a segunda mudança de contrato (0.5.0), logo depois da primeira, para concentrar os deploys "API primeiro" antes do congelamento; independe de dados.
 - **017 por último na Fase 2:** só API, sem contrato, risco baixo; usa o SPC por `grade is not null` da 016 e precisa da API publicada (015) para o CA manual.
-- **Portão da Fase 3:** a regra de escopo continua (PRD §4.3): o loop só executa 019, 020 e 021 se a Fase 2 fechar até 22/11. Se o professor exigir MQTT (pergunta 1), a 020 sobe para logo depois da 017, mesmo sem o portão.
-- **020 antes da 019:** é toda testável no CI (broker em memória) e não depende do navegador dos celulares; a 019 depende do teste humano da CA do `mkcert` nos dois celulares (SPEC-019 §3.3), que pode ser feito antes, em paralelo.
+- **Portão da Fase 3** (deixou de bloquear em 2026-11-01; ADR-024, decisão 5; ver "Modelo a tempo" e §4)**:** a regra de escopo era (PRD §4.3): o loop só executa 019, 020 e 021 se a Fase 2 fechar até 22/11. Se o professor exigir MQTT (pergunta 1), a 020 sobe para logo depois da 017, mesmo sem o portão.
+- **020 antes da 019:** é toda testável no CI (broker em memória) e não depende do navegador dos celulares. O teste humano da CA do `mkcert` nos dois celulares (SPEC-019 §3.3) passou a ser feito depois do merge da 019 (2026-11-01).
 - **021 por último:** depende das fotos das ferramentas elétricas e gera um modelo depois do congelamento (M3); a troca do modelo da demo é decisão humana (SPEC-021 §9).
 - Paralelismo (worktrees, SPEC-033): 019 e 020 tocam módulos diferentes da borda e podem correr juntas; 016, 017 e 018 tocam a API e as migrações e ficam em sequência.
 
@@ -148,6 +153,24 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 - Fica fora (SPEC-040 §3.2): SEC-30-03 (prazo total na fase dos headers: mexe no caminho crítico do envio logo antes da apresentação), RV-01, RV-02 = SEC-02 e SEC-01 da 018, RV-02/RV-03 e SEC-29-02 da 029, RV-02/RV-04 da 016, SEC-16-02 (skill `contrato-api`, fora do loop) e as observações dos portões da 017. Já resolvidos: RV-01 da 031 (pela 037 §4.6) e SEC-17-01 (no plano de deploy da branch da 017). O SEC-39-06 está na 038.
 - Três partes na mesma rodada: developer (Parte A: `edge/`, `api/`, `dashboard/`), ml-engineer (Parte B: `ml/`) e security-devops (Parte C: comentários de `infra/docker/`, `.streamlit/config.toml` e `docs/deployment-plan.md`). Portão de segurança das Partes A e B pelo security-devops e da Parte C pelo reviewer (SPEC-040 §6).
 - Feito pelo architect junto com a SPEC: `docs/dataset-protocol.md` §8, passo 1 (RV-04 da 030). Depois do CA-15 manual da 039, o architect alinha só o texto do CA-15 dela (RV-03 da 039).
+
+**Modelo a tempo (ADR-024 e SPEC-041, respostas do humano de 2026-11-01).** Em 2026-10-31, o dataset próprio tem zero fotos, e não há `model.onnx`, Release nem `split_v1`. Duas trilhas, com R-11, ADR-014, ADR-020 e as metas do PRD §7 sem mudança.
+
+**Ordem do loop a partir de 2026-11-01: `041 → 019`.** O deploy na VPS fica por último.
+
+```text
+041 ─► 019
+ ├──► sugestão de graus e privacidade (agente) ─► modelo provisório ─► ensaio do fluxo (CA-22 da 041)
+ └──► fotos próprias até o piso ─► split_v1 na data de corte (15/11) ─► treino real ─► M3 (22/11) ─► M4 (29/11)
+```
+
+- **Trilha 1, modelo provisório:** só imagens externas, fora de `ml/data/` e do repositório, sem split, sem métrica e sem Release, com as inspeções em `source=simulated`. Só ensaia o fluxo.
+- **Trilha 2, modelo oficial:** único com `metrics.json`. O `split_v1` exige o piso de 33 peças (3 por tipo × grau e 3 `other`) e 99 fotos, e sai na data de corte, porque peça que chega depois não entra no teste. Sem o piso na data, não há modelo oficial, e a apresentação declara isso.
+- **Grau e privacidade das externas:** no conjunto provisório, o grau é sugestão de agente (`labeler=agent-suggestion`), um agente confere a privacidade nas folhas de contato, e esses recortes não entram em `ml/data/`. O dataset oficial continua com o grau e a conferência humana da dupla.
+- **Posição:** a 041 entra primeiro e a 019 depois, não em paralelo, porque as duas mudam `edge/src/qc_edge/app.py`. O conjunto provisório precisa de recortes de porca e dos graus intermediários: hoje, a única fonte de `nut` são os recortes da SDNET, já gerados fora do repositório (`~/partqc-entrada/candidatos/sdnet-2025-bolts/recortes/`), e a conferência da SPEC-041 §4.8 também vale para eles.
+- **019:** o portão da Fase 3 deixa de bloquear (ADR-024, decisão 5), e o teste do certificado passa para depois do merge.
+- **SPECs afetadas:** 012 (CA-28) e 008 (CA-16) continuam pendentes até o modelo oficial, sem mudança; a 019 herda a regra do `source` em `POST /api/live/frame` (§4.4, CA-13); 011, 035 e 036 ganham, respectivamente, a recusa do piso na CLI do split, a recusa de `agent-suggestion` no `load_manifest` e o `--provisional-set` na importação, sem mudar o que já fazem no caminho oficial.
+- **N-07 e N-11 em `docs/rules.md`:** a aplicar pelo orquestrador, com o texto do ADR-024. A nota no PRD §7, o PRD §4.3 e §8 e a nota no ADR-003 já foram aplicados.
 
 - A **SPEC-023** (pacotes 0.2.0, pendências do review da SPEC-002) entra **antes** da 004 e da 007 e pode correr em paralelo com a 003 (`002 → 023 → 004/007`).
 - A **SPEC-024** (`qc-preprocess` 0.3.0, SEC-01 do security-report da SPEC-023) entra **antes** da 007 (`023 → 024 → 007`). A 004 depende dela só pela migração das expectativas de versão (abaixo), e a 024 já está mergeada (PR #9).
@@ -249,3 +272,6 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | 2026-10-26 | SPEC-040 aprovada pelo humano (`Draft` → `Ready`, PR #57), com as recomendações do architect. Ordem: `016 → 018 → 017 → 038 → 040 → portão da Fase 3`; a 040 entra quando as anteriores estiverem mergeadas (dependem do CA-17 da 036) |
 | 2026-10-26 | Decisão do humano: a SPEC-020 (MQTT) é adiantada antes do portão da Fase 3, encadeada na 038, porque a Fase 2 está com o código pronto; a 019 (teste humano do certificado) e a 021 (fotos de ferramentas elétricas) seguem esperando |
 | 2026-10-26 | Decisão do humano: a SPEC-021 (ferramentas elétricas) é adiantada antes do portão da Fase 3, só código e testes sintéticos, encadeada na 020; a 019 espera o teste humano do certificado nos celulares (roteiro em `notas-locais/`) |
+| 2026-10-31 | ADR-024 (`Proposto`) e SPEC-041 (`Draft`, ml-engineer + developer, tag `security`): modelo provisório só com imagens externas para ensaiar o fluxo, isolado do oficial (`-provisional-` no nome, `source=simulated`, sem split, sem métrica, sem Release), e piso do `split_v1` (33 peças, 99 fotos) com data de corte proposta em 15/11. R-11, ADR-014, ADR-020, metas de volume e metas do PRD §7 sem mudança; o grau das externas continua sendo da dupla. Pergunta 10 ao professor. **Aguarda aprovação humana** (7 perguntas no ADR-024 e 3 na SPEC-041). Nenhuma outra SPEC muda de status |
+| 2026-11-01 | Respostas do humano, relatadas pelo orquestrador: ADR-024 e SPEC-041, "Aprovar tudo", com todas as recomendações (corte em 15/11, piso de 33 peças e 99 fotos, provisório como `simulated`, `--allow-below-floor`, treino só no notebook, CA-22 pendente no merge); grau das imagens públicas só no provisório, "Sugestão do agente" (`labeler=agent-suggestion`, recortes proibidos em `ml/data/`, dataset oficial com grau da dupla; ADR-024, decisão 4, e SPEC-041 §4.9 e CAs 23 a 30); SPEC-019, "Sim, codar agora", com o teste do certificado depois do merge e o portão da Fase 3 sem bloquear, porque o humano pediu para terminar o projeto. Deploy na VPS por último. Ordem: `041 → 019` |
+| 2026-11-01 | Respostas do humano, relatadas pelo orquestrador: o §4.9 e os CAs 23 a 30 da SPEC-041 e os CAs 13 e 14 da SPEC-019, apresentados por resumo, foram aprovados; a Fase 3 deixa de esperar o prazo da Fase 2 (ADR-024, decisão 5; PRD §4.3 e §8; nota no ADR-003); no conjunto provisório, um agente confere a privacidade nas folhas de contato, e o humano assume essa conferência ao aprovar (decisão 4); a R-02 protege as fotos capturadas no projeto e as de conhecidos, imagens de datasets públicos podem ser vistas por um agente, e fotos próprias e de conhecidos, nunca (decisão 6). Nenhum status muda |

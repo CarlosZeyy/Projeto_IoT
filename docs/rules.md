@@ -36,11 +36,11 @@ Este documento vale para humanos e agentes. Em caso de conflito com qualquer out
 | N-04 | Limiares de decisão na borda | Vêm do `decision.json` do modelo, com override por variável de ambiente | SPEC-008 |
 | N-05 | Hospedagem | API e dashboard na VPS pessoal do humano, publicados pelo Coolify já instalado nela (dois recursos Docker Compose a partir do repositório público, a API separada do dashboard e do Caddy; domínio e TLS no proxy do Coolify; Caddy só como roteador interno), num subdomínio pessoal; banco no Supabase Free; Render como reserva fria da API | ADR-023 (substitui em parte o ADR-018; banco: ADR-008) |
 | N-06 | Subgrupo do SPC | Lote informado pelo operador; `min_lot_size` = 5 | ADR-013 |
-| N-07 | Conteúdo das Fases 2 e 3 | Ver `docs/PRD.md`, seção de escopo | ADR-001 |
+| N-07 | Conteúdo das Fases 2 e 3 | Ver `docs/PRD.md`, seção de escopo | ADR-001; ADR-024 (Fase 3 sem esperar o prazo da Fase 2) |
 | N-08 | Transporte borda → nuvem | HTTP; MQTT opcional na Fase 3 | ADR-009 |
 | N-09 | Modo de captura | Foto por disparo; vídeo ao vivo na Fase 3 | ADR-003 |
 | N-10 | Visual do dashboard | Streamlit + Plotly; layout livre dentro da SPEC-013 | ADR-007 |
-| N-11 | Protocolo de captura | 3 a 5 ângulos por peça por estágio, fundo liso | `docs/dataset-protocol.md`; ADR-020 (fotos de conhecidos e imagens externas) |
+| N-11 | Protocolo de captura | 3 a 5 ângulos por peça por estágio, fundo liso; piso do `split_v1` e conjunto provisório no ADR-024 | `docs/dataset-protocol.md`; ADR-020; ADR-024 |
 
 ## Convenções (obrigatórias, mas de baixo impacto)
 
