@@ -65,3 +65,10 @@ Nenhum CA implementado nesta passagem.
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] Nenhuma imagem, `.onnx` ou operação sobre `~/partqc-entrada/`
 - [ ] `ruff` e testes: não se aplicam, porque só este relatório mudou
+
+## SPEC_ISSUE levantados na correção (orquestrador)
+
+Encontrados pelo architect ao conferir a Parte B e os CAs, a pedido do orquestrador.
+
+- **SPEC_ISSUE-04:** a recusa do `--provisional-set` em repositório Git diz só "antes de ler o dataset e o plano", mas o `load_plan` testa antes a inbox e o plano. Com eles no mesmo repositório, o CA-28 pode ver `inbox must be outside any git repository`.
+- **SPEC_ISSUE-05:** o §4.9 diz que o `export` recusa `agent-suggestion`, mas ele só lê o dataset sintético da paridade (`ml/src/qc_ml/export.py:144`), e o ADR-024 não o lista.
