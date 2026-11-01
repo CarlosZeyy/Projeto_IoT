@@ -416,7 +416,7 @@ Copie para o celular só o `rootCA.pem`, da pasta mostrada por `mkcert -CAROOT`.
 
 ### Usar
 
-1. Abra o QR do `/live` no celular, conceda a câmera e informe o lote (o mesmo campo da `/capture`).
+1. Abra o QR do `/live` no celular, conceda a câmera e informe o lote (o mesmo campo da `/capture`). O lote vale depois de confirmado, com Enter ou saindo do campo: enquanto você digita, os quadros seguem com o lote anterior, e, no primeiro uso, nenhum quadro é enviado. Assim, uma pausa no meio da digitação não grava a inspeção num lote incompleto.
 2. Ponha a peça na mesa. A faixa mostra o tipo e o grau, o veredito (com o aviso, se o modelo for provisório), a confiança e o estado, sempre inteiros na largura do vídeo, e a barra de baixo é a estabilidade. **Sem pessoas no quadro** (R-14).
 3. Quando a classificação estabiliza, a inspeção é registrada, e a faixa fica verde por 2 s.
 4. Tire a peça da mesa antes da próxima. Enquanto ela continuar ali, nada mais é registrado. Com `LIVE_EMPTY_FRAMES` resultados `desconhecido` seguidos (padrão 3), a mesa conta como vazia.

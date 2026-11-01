@@ -55,15 +55,20 @@
   }
   var session = newSession();
 
-  function lotId() { return lotField.value.trim(); }
-  function saveLot() {
-    try { window.localStorage.setItem(LOT_STORE_KEY, lotId()); } catch (e) { /* ignore */ }
+  // The lot of the frames is the confirmed one, and never the field in the middle of the typing: a
+  // pause with the part on the table would record the inspection in an incomplete lot, and the lot
+  // is the subgroup of the p chart (ADR-013).
+  var lot = "";
+  function confirmLot() {
+    lot = lotField.value.trim();
+    try { window.localStorage.setItem(LOT_STORE_KEY, lot); } catch (e) { /* ignore */ }
   }
   function loadLot() {
     try {
       var stored = window.localStorage.getItem(LOT_STORE_KEY);
       if (stored !== null) lotField.value = stored;
     } catch (e) { /* ignore */ }
+    lot = lotField.value.trim();
   }
 
   // Largest font, up to `size`, that keeps the whole line within `maxWidth`.
@@ -167,7 +172,7 @@
   function send(blob) {
     var form = new FormData();
     form.append("image", blob, "frame.jpg");
-    form.append("lot_id", lotId());
+    form.append("lot_id", lot);
     form.append("session", session);
     var abort = new AbortController();
     var timeout = window.setTimeout(function () { abort.abort(); }, FRAME_TIMEOUT_MS);
@@ -180,14 +185,18 @@
 
   function tick() {
     if (inFlight || stopped || document.hidden || !video.videoWidth) return;  // frame dropped
-    if (!LOT_RE.test(lotId())) { showStatus(MESSAGES.lot, true); return; }
+    if (!LOT_RE.test(lot)) { showStatus(MESSAGES.lot, true); return; }
     inFlight = true;
     encodeFrame().then(send).catch(function () { showStatus(MESSAGES.other, true); })
       .then(function () { inFlight = false; });
   }
 
   loadLot();
-  lotField.addEventListener("change", saveLot);
+  lotField.addEventListener("change", confirmLot);
+  // Enter also confirms on the phones whose keyboard only fires "change" when leaving the field.
+  lotField.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") lotField.blur();
+  });
   window.addEventListener("pagehide", stop);
   window.addEventListener("resize", draw);
   if (!token) { showStatus(MESSAGES[401], true); return; }

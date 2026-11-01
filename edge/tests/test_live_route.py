@@ -794,6 +794,16 @@ def test_overlay_gives_the_verdict_its_own_line_and_fits_every_line() -> None:
     assert "width - 2 * BAND_MARGIN" in band
 
 
+def test_lot_of_the_frames_is_the_confirmed_one() -> None:
+    """RV-03 of SPEC-019: a pause in the middle of the typing does not change the lot (ADR-013)."""
+    script = (STATIC_DIR / "live.js").read_text(encoding="utf-8")
+    assert 'form.append("lot_id", lot)' in script
+    assert 'lotField.addEventListener("change", confirmLot)' in script
+    for name in ("send", "tick"):
+        assert "lotField" not in _js_function(script, name), name
+    assert 'event.key === "Enter"' in script
+
+
 def test_log_of_the_page_and_the_route_never_has_the_token(
     make_rig: Callable[..., _Rig], caplog: pytest.LogCaptureFixture
 ) -> None:
