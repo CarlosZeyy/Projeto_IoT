@@ -804,6 +804,48 @@ def test_lot_of_the_frames_is_the_confirmed_one() -> None:
     assert 'event.key === "Enter"' in script
 
 
+def test_lot_in_use_comes_right_after_the_field_and_starts_empty() -> None:
+    """SPEC-042 section 4.3: RV-01 of SPEC-019 made visible, between the field and the video."""
+    template = (TEMPLATES_DIR / "live.html").read_text(encoding="utf-8")
+    assert '</label>\n<p id="lot-in-use" class="status"></p>\n' in template
+    assert template.index('id="lot_id"') < template.index('id="lot-in-use"')
+    assert template.index('id="lot-in-use"') < template.index('id="stage"')
+    # A 40-character lot has no break opportunity: without this, it widens the page on a phone.
+    assert "#lot-in-use { overflow-wrap: anywhere; }" in template
+
+
+def test_show_lot_writes_as_text_and_runs_on_every_change_of_the_lot() -> None:
+    """SPEC-042 section 4.3; the behaviour in a real browser is CA-10."""
+    script = (STATIC_DIR / "live.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in script
+    show = _js_function(script, "showLot")
+    assert '"Lote em uso: " + (LOT_RE.test(lot) ? lot : "nenhum")' in show
+    assert 'inUse + " · pressione Enter para aplicar o lote digitado"' in show
+    assert "lotField.value.trim() !== lot" in show
+    assert '"status error"' in show
+    assert "lotInUse.textContent = " in show
+    # It only shows: confirming and reading the field for the frames stay where they were.
+    assert "lot = " not in show.replace("!== lot", "")
+    assert "localStorage" not in show
+    for name in ("loadLot", "confirmLot"):
+        assert _js_function(script, name).endswith("showLot();"), name
+    assert 'lotField.addEventListener("input", showLot)' in script
+    assert 'lotField.addEventListener("input", confirmLot)' not in script
+    # The lot field is read only after the element of the line exists, and before any early return.
+    assert script.index('el("lot-in-use")') < script.index("loadLot();")
+    assert script.index("loadLot();") < script.index("if (!token)")
+
+
+def test_emitted_band_has_the_lot_the_server_recorded_as_a_third_line() -> None:
+    """SPEC-042 section 4.3: ``inspection.lot_id``, and not the local variable."""
+    script = (STATIC_DIR / "live.js").read_text(encoding="utf-8")
+    lines = _js_function(script, "emittedLines")
+    assert '"Registrada: " + ' in lines
+    assert "LABELS.verdicts[" in lines
+    assert lines.rstrip().endswith('"Lote: " + inspection.lot_id];')
+    assert 'Lote: " + lot' not in script
+
+
 def test_page_restored_from_the_back_forward_cache_reloads() -> None:
     """RV-04 of SPEC-019: ``pagehide`` stops the camera, and nothing else restarts it."""
     script = (STATIC_DIR / "live.js").read_text(encoding="utf-8")
