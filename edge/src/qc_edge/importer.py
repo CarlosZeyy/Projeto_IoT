@@ -5,7 +5,7 @@ licensed external images (origin ``external``, ``item_id`` ``X<type>-NNNN``, onl
 This CLI is the only way such a file enters ``DATASET_DIR``::
 
     python -m qc_edge.importer --dataset-dir <D> --inbox <I> --plan <P> --privacy-checked
-                               [--external-sources <R>] [--dry-run]
+                               [--external-sources <R>] [--dry-run] [--provisional-set]
 
 * **Phase 1** validates the whole plan (a CSV filled in by the pair) before anything is
   written: every cell, every input file (inside ``--inbox``, regular, never a symlink, at most
@@ -27,6 +27,13 @@ image is saved without the metadata inherited from the input (a PNG ``comment``,
 the directories created for a row that fails are removed (section 4.5); a hash imported by
 another run meanwhile is skipped under the lock (section 4.6); and the ``PIL`` logger stays at
 ``INFO`` at least (section 4.4).
+
+Since SPEC-041 (section 4.9, ADR-024): the labeler ``agent-suggestion`` is only accepted with
+``--provisional-set``. That option builds the set of the provisional model: ``--dataset-dir``
+outside any Git repository (the first check of phase 1), a manifest without any other labeler, and
+plan rows only with ``agent-suggestion`` and origin ``external``. Without the option, nothing
+changes. The labelers of the manifest are only read in phase 1: a later run without the option
+that adds another labeler is not noticed here, and ``qc_ml.provisional`` refuses that set.
 
 The input files are only read: never changed, renamed nor deleted, and their bytes (with the
 EXIF) are never written under ``DATASET_DIR`` nor printed; only their SHA-256 enters the dataset
@@ -157,6 +164,10 @@ DEFAULT_EXTERNAL_SOURCES = (
     Path(qc_edge.__file__).resolve().parents[3] / "ml" / "external_sources.csv"
 )
 
+# SPEC-041 section 4.9; equal to ``qc_ml.data`` (CA-26), which ``qc_edge`` does not import. It is
+# not in ``qc_edge.collect.LABELERS``: the collect mode never accepts it.
+AGENT_SUGGESTION_LABELER = "agent-suggestion"
+
 ORIGIN_CONTRIBUTOR = "contributor"
 ORIGIN_EXTERNAL = "external"
 ORIGINS = frozenset({ORIGIN_CONTRIBUTOR, ORIGIN_EXTERNAL})
@@ -230,6 +241,8 @@ SOURCES_UNREADABLE_MESSAGE = "sources unreadable"
 EXCLUSIONS_MISMATCH_MESSAGE = "exclusions header mismatch"
 EXCLUSIONS_UNREADABLE_MESSAGE = "exclusions unreadable"
 DATASET_UNREADABLE_MESSAGE = "cannot read the dataset files"
+PROVISIONAL_IN_GIT_MESSAGE = "provisional set must be outside any git repository"
+NOT_PROVISIONAL_SET_MESSAGE = "dataset is not a provisional set"
 # Column shown for a problem of the whole record or file (no single column).
 NO_COLUMN = "-"
 
@@ -495,8 +508,16 @@ def _grade_problem(grade: str, object_type: str) -> str | None:
     return "invalid_grade" if grade and grade not in GRADE_VALUES else None
 
 
-def _row_problems(cells: dict[str, str], registry: dict[str, str] | None) -> list[tuple[str, str]]:
-    """``(column, code)`` of the cell rules of section 4.2 (``file`` aside), in column order."""
+def _row_problems(
+    cells: dict[str, str], registry: dict[str, str] | None, provisional_set: bool = False
+) -> list[tuple[str, str]]:
+    """``(column, code)`` of the cell rules of section 4.2 (``file`` aside), in column order.
+
+    With ``provisional_set`` (SPEC-041 section 4.9), the only valid labeler is
+    ``agent-suggestion`` and the only valid origin is ``external``.
+    """
+    labelers = frozenset({AGENT_SUGGESTION_LABELER}) if provisional_set else LABELERS
+    origins = frozenset({ORIGIN_EXTERNAL}) if provisional_set else ORIGINS
     problems: list[tuple[str, str]] = []
 
     def add(column: str, code: str | None) -> None:
@@ -509,9 +530,9 @@ def _row_problems(cells: dict[str, str], registry: dict[str, str] | None) -> lis
     add("item_id", _item_problem(item_id, origin))
     add("object_type", _object_type_problem(object_type, item_id))
     add("grade", _grade_problem(cells["grade"], object_type))
-    add("labeler", None if cells["labeler"] in LABELERS else "invalid_labeler")
+    add("labeler", None if cells["labeler"] in labelers else "invalid_labeler")
     add("angle", None if re.fullmatch(ANGLE_PATTERN, cells["angle"]) else "invalid_angle")
-    add("origin", None if origin in ORIGINS else "invalid_origin")
+    add("origin", None if origin in origins else "invalid_origin")
 
     contributor, source_id, source_ref = (
         cells["contributor"],
@@ -626,6 +647,32 @@ def _read_or_usage(
     return [] if rows is None else rows
 
 
+def _check_provisional_manifest(dataset_dir: Path) -> None:
+    """Refuse a manifest with a row whose ``labeler`` is not ``agent-suggestion`` (section 4.9).
+
+    Reads the rows here because ``ManifestEntry`` does not carry the labeler. A row too short to
+    have one counts as another labeler, and a blank line of the CSV is not a row. Called after
+    ``_read_dataset``, which has already checked the header.
+
+    Raises:
+        UsageError: ``dataset is not a provisional set``, another header, unreadable rows or a
+            read error.
+    """
+    try:
+        rows = _read_or_usage(
+            dataset_dir / MANIFEST_NAME,
+            MANIFEST_COLUMNS,
+            MANIFEST_MISMATCH_MESSAGE,
+            MANIFEST_UNREADABLE_MESSAGE,
+        )
+    except OSError as exc:
+        logger.error("cannot read the dataset: %s", exc.strerror or type(exc).__name__)
+        raise UsageError(DATASET_UNREADABLE_MESSAGE) from None
+    column = MANIFEST_COLUMNS.index("labeler")
+    if any(row and (len(row) <= column or row[column] != AGENT_SUGGESTION_LABELER) for row in rows):
+        raise UsageError(NOT_PROVISIONAL_SET_MESSAGE)
+
+
 def _read_plan(plan: Path) -> tuple[list[tuple[int, list[str]]], list[PlanProblem]]:
     """The data records of the plan with their record numbers, or the structural problems.
 
@@ -676,19 +723,30 @@ def inside_git_repository(path: Path) -> bool:
 
 
 def load_plan(
-    *, dataset_dir: Path, inbox: Path, plan: Path, external_sources: Path
+    *,
+    dataset_dir: Path,
+    inbox: Path,
+    plan: Path,
+    external_sources: Path,
+    provisional_set: bool = False,
 ) -> list[PlanRow]:
     """Phase 1 (SPEC-036 sections 4.1 and 4.2): validate everything, write nothing.
 
     Before the dataset and the plan are read, the inbox (after ``realpath``) and the directory
     of the plan (after the ``realpath`` of the plan) must be outside any Git repository
     (SPEC-038 section 4.7): a ``git add -A`` would publish photos of third parties with their
-    EXIF. ``external_sources`` and ``dataset_dir`` are not checked.
+    EXIF. ``external_sources`` is not checked, and ``dataset_dir`` only with ``provisional_set``.
+
+    With ``provisional_set`` (SPEC-041 section 4.9), the first check of all is ``dataset_dir``
+    (after ``realpath``) outside any Git repository, and the manifest and the rows must only
+    have the labeler ``agent-suggestion``, and the rows the origin ``external``.
 
     Raises:
         UsageError: a fixed message (exit code 2).
         PlanError: the problems of the plan (exit code 2).
     """
+    if provisional_set and inside_git_repository(Path(os.path.realpath(dataset_dir))):
+        raise UsageError(PROVISIONAL_IN_GIT_MESSAGE)
     if not inbox.is_dir():
         raise UsageError(INBOX_NOT_DIR_MESSAGE)
     inbox_real = Path(os.path.realpath(inbox))
@@ -702,6 +760,8 @@ def load_plan(
     if os.path.lexists(dataset_dir) and not dataset_dir.is_dir():
         raise UsageError(DATASET_NOT_DIR_MESSAGE)
     state = _read_dataset(dataset_dir)
+    if provisional_set:
+        _check_provisional_manifest(dataset_dir)
 
     records, problems = _read_plan(plan)
     if problems:
@@ -734,7 +794,7 @@ def load_plan(
             add(line, NO_COLUMN, "malformed_row")
             continue
         cells = dict(zip(PLAN_COLUMNS, record, strict=True))
-        row_problems = _row_problems(cells, registry)
+        row_problems = _row_problems(cells, registry, provisional_set)
         for column, code in row_problems:
             add(line, column, code)
 
@@ -1057,6 +1117,12 @@ def _parser() -> QuietArgumentParser:
         help="registry of external sources (default: ml/external_sources.csv)",
     )
     parser.add_argument("--dry-run", action="store_true", help="validate and normalise only")
+    parser.add_argument(
+        "--provisional-set",
+        action="store_true",
+        help="build the set of the provisional model: agent-suggestion labels, external images, "
+        "outside any git repository (ADR-024)",
+    )
     return parser
 
 
@@ -1099,6 +1165,7 @@ def main(
             inbox=args.inbox,
             plan=args.plan,
             external_sources=external_sources,
+            provisional_set=args.provisional_set,
         )
     except UsageError as exc:
         sys.stderr.write(exc.message + "\n")

@@ -21,6 +21,9 @@ decode slot happens on the event loop, and only the request holding a slot uses 
 SPEC-009: the sink is the SQLite outbox; the console shows its ``pending`` and ``dead`` counts, the
 last successful publication and the cloud connectivity (PT-BR label, with the code in
 ``data-connectivity``), and ``/api/status`` returns the same ``SinkStats``.
+
+SPEC-041 (R-06, ADR-024): an inspection made with a provisional model goes out with
+``source=simulated``, and the capture answer and the console say the model is provisional.
 """
 
 # No ``from __future__ import annotations`` here: FastAPI resolves the ``Depends`` annotations of
@@ -96,7 +99,7 @@ from qc_edge.collect import (
 from qc_edge.config import EdgeSettings
 from qc_edge.decision import THRESHOLD_NAMES, Thresholds
 from qc_edge.fsutil import DIR_MODE, create_private_file, make_private_dirs, set_mode
-from qc_edge.inference import InferenceError, Inferencer, short_sha
+from qc_edge.inference import InferenceError, Inferencer, is_provisional_version, short_sha
 from qc_edge.jpeg import write_capture_jpeg
 from qc_edge.limits import CAPTURE_MAX_BYTES, CAPTURE_MAX_REQUEST_BYTES
 from qc_edge.middleware import (
@@ -182,6 +185,9 @@ VERDICT_UNKNOWN = "desconhecido"
 # A known object without a grade: a hand tool the model does not grade (SPEC-016 section 4.4) or
 # a power tool, never graded (SPEC-021).
 VERDICT_UNGRADED = "sem grau"
+# SPEC-041 section 4.7: the page already shows ``labels.verdict``; ``capture.js`` does not change.
+VERDICT_PROVISIONAL_SUFFIX = " (modelo provisório)"
+MODEL_PROVISIONAL_NOTICE = " — PROVISÓRIO: resultados publicados como simulados (ADR-024)"
 
 # Classes of the collect mode in PT-BR, in the order of the selector: parafuso, porca, the hand
 # tools, the power tools and "outro" last. ``other`` is a model class, not a contract value, so it
@@ -513,6 +519,7 @@ def create_app(
             logger.warning("inference failed: %s", exc)
             return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, DETAIL_INFERENCE_FAILED)
         model = inferencer.model_info
+        provisional = is_provisional_version(model.model_version)
 
         # Built (and validated by the contract) before the photo is written, so an invalid
         # result never leaves an orphan file behind.
@@ -530,7 +537,7 @@ def create_app(
             model_version=model.model_version,
             model_sha256=model.model_sha256,
             latency_ms=result.latency_ms,
-            source=Source.LIVE,
+            source=Source.SIMULATED if provisional else Source.LIVE,  # R-06, ADR-024
         )
 
         path = store.save(inspection, form.image, image)
@@ -555,6 +562,8 @@ def create_app(
                 )
             )
         approved, verdict = _verdict(inspection.object_type, inspection.grade)
+        if provisional:
+            verdict += VERDICT_PROVISIONAL_SUFFIX
         logger.info(
             "capture accepted inspection_id=%s lot_id=%s object_type=%s grade=%s latency_ms=%d",
             inspection.inspection_id,
@@ -761,7 +770,8 @@ def _model_state(inferencer: Inferencer | None) -> str:
     if inferencer is None:
         return "não carregado (o modo inspeção responde 503)"
     info = inferencer.model_info
-    return f"carregado: {info.model_version} (sha256 {short_sha(info.model_sha256)})"
+    state = f"carregado: {info.model_version} (sha256 {short_sha(info.model_sha256)})"
+    return state + MODEL_PROVISIONAL_NOTICE if is_provisional_version(info.model_version) else state
 
 
 def _thresholds_status(inferencer: Inferencer | None) -> dict[str, dict[str, Any]] | None:

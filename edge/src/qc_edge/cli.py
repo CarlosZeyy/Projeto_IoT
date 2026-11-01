@@ -9,6 +9,8 @@ Model (SPEC-008 section 4.4): ``MODEL_DIR`` set -> ``OnnxInferencer``, with the 
 overrides of the environment; unset or empty (``""``) -> no model (inspect mode answers 503).
 The value is not stripped: ``MODEL_DIR`` with only spaces is set, is not a directory and exits
 with code 2 (a typo in ``.env`` must not start the gateway without a model).
+A provisional model (SPEC-041 section 4.7, ADR-024) gets a ``WARNING`` at startup: its results are
+published as ``source=simulated``.
 ``--stub-model`` takes precedence over ``MODEL_DIR`` (a warning is logged and the directory is not
 loaded): the gateway answers with ``StubInferencer`` results. Nothing is ever stored on disk nor
 published to the cloud in that mode (R-06).
@@ -62,7 +64,7 @@ from qc_edge.app import create_app
 from qc_edge.argv import ArgumentsError, QuietArgumentParser, describe_arguments, resolve_argv
 from qc_edge.config import EdgeSettings, config_error_message, missing_mqtt_credentials
 from qc_edge.heartbeat import HeartbeatLoop
-from qc_edge.inference import Inferencer, StubInferencer, short_sha
+from qc_edge.inference import Inferencer, StubInferencer, is_provisional_version, short_sha
 from qc_edge.mqtt_publisher import MqttPublisher
 from qc_edge.mqtt_transport import PahoMqttTransport
 from qc_edge.onnx_inferencer import THRESHOLD_ENV_VARS, ModelLoadError, OnnxInferencer
@@ -252,6 +254,10 @@ def _load_inferencer(settings: EdgeSettings, stub_model: bool) -> Inferencer | N
         info.model_version,
         short_sha(info.model_sha256),
     )
+    if is_provisional_version(info.model_version):
+        logger.warning(
+            "provisional model loaded: results are published as source=simulated (ADR-024)"
+        )
     for name, source in inferencer.threshold_sources.items():
         logger.info(
             "threshold %s=%r (source: %s)", name, getattr(inferencer.thresholds, name), source

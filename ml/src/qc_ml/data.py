@@ -15,6 +15,11 @@ Power tools (SPEC-021, ADR-021): four more object types, identification only. Th
 item prefix ``T``/``XT`` with the hand tools, their grade must be empty (like ``other``), they
 never enter ``tool_grade_coverage`` and a model always lists them in ``ungraded_object_types``.
 
+Suggested grades (SPEC-041 section 4.9, ADR-024): the ``labeler`` ``agent-suggestion`` only exists
+in the provisional set. ``load_manifest`` refuses it by default, in any ``DATASET_DIR``, with the
+problem ``agent_suggestion_label``; only ``qc_ml.provisional`` passes
+``allow_agent_suggestion=True``.
+
 Origin of the images (SPEC-035, ADR-020): ``DATASET_DIR/sources.csv`` says which images were
 imported (``contributor`` or ``external``) and the registry ``ml/external_sources.csv`` lists the
 external sources with their licence. Whether an image is external is decided **only** by its
@@ -135,6 +140,14 @@ URL_LENGTH: tuple[int, int] = (9, 300)
 SOURCE_REF_MAX = 200
 TITLE_MAX = 200
 ATTRIBUTION_MAX = 500
+# SPEC-041 section 4.9 (ADR-024): same value as qc_edge.importer.AGENT_SUGGESTION_LABELER (neither
+# package imports the other).
+AGENT_SUGGESTION_LABELER = "agent-suggestion"
+AGENT_SUGGESTION_CODE = "agent_suggestion_label"
+AGENT_SUGGESTION_MESSAGE = (
+    "agent-suggested labels are only allowed in the provisional set (ADR-024)"
+)
+
 # Unicode categories refused in the free texts (control, surrogate, format, line/paragraph sep.).
 FORBIDDEN_CATEGORIES: frozenset[str] = frozenset({"Cc", "Cs", "Cf", "Zl", "Zp"})
 
@@ -431,9 +444,17 @@ def load_exclusions(dataset_dir: Path | str) -> frozenset[str]:
 
 
 def _read_overrides(
-    dataset_dir: Path, manifest_paths: set[str], excluded: Iterable[str]
+    dataset_dir: Path,
+    manifest_paths: set[str],
+    excluded: Iterable[str],
+    *,
+    allow_agent_suggestion: bool = False,
 ) -> tuple[dict[str, str | None], list[ManifestProblem]]:
-    """Return ``image_path -> grade`` (last valid line wins) and the problems found."""
+    """Return ``image_path -> grade`` (last valid line wins) and the problems found.
+
+    A line of a non-excluded image with the ``labeler`` ``agent-suggestion`` is the problem
+    ``agent_suggestion_label``, unless ``allow_agent_suggestion`` (SPEC-041 section 4.9).
+    """
     path = dataset_dir / OVERRIDES_FILE
     if not path.is_file():
         return {}, []
@@ -445,6 +466,16 @@ def _read_overrides(
         image_path, grade = row["image_path"], row["grade"]
         if image_path in excluded_set:
             continue  # the image left the dataset; its correction no longer matters
+        if not allow_agent_suggestion and row["labeler"] == AGENT_SUGGESTION_LABELER:
+            problems.append(
+                ManifestProblem(
+                    AGENT_SUGGESTION_CODE,
+                    OVERRIDES_FILE,
+                    line,
+                    image_path or None,
+                    AGENT_SUGGESTION_MESSAGE,
+                )
+            )
         if image_path not in manifest_paths:
             problems.append(
                 ManifestProblem(
@@ -954,6 +985,7 @@ def load_manifest(
     apply_overrides: bool = True,
     verify_images: bool = True,
     external_sources: Path | str | None = None,
+    allow_agent_suggestion: bool = False,
 ) -> pd.DataFrame:
     """Load and validate ``dataset_dir/manifest.csv`` (SPEC-011 section 4.1, SPEC-035).
 
@@ -968,6 +1000,12 @@ def load_manifest(
     ``external_sources`` is the registry of the external sources; ``None`` means
     ``DEFAULT_EXTERNAL_SOURCES`` (``ml/external_sources.csv``). An absent registry is an empty
     one; the registry is always validated in full.
+
+    With ``allow_agent_suggestion=False`` (the default; SPEC-041 section 4.9, ADR-024), each kept
+    manifest row, and each ``labels_overrides.csv`` line of a non-excluded image, with the
+    ``labeler`` ``agent-suggestion`` is the problem ``agent_suggestion_label``. An excluded row
+    is not a problem (``docs/dataset-protocol.md`` section 8.1 stays a way out). Only
+    ``qc_ml.provisional`` passes ``True``.
 
     Raises:
         FileNotFoundError: ``manifest.csv`` does not exist.
@@ -1019,7 +1057,9 @@ def load_manifest(
 
     overrides: dict[str, str | None] = {}
     if apply_overrides:
-        overrides, override_problems = _read_overrides(root, seen, excluded)
+        overrides, override_problems = _read_overrides(
+            root, seen, excluded, allow_agent_suggestion=allow_agent_suggestion
+        )
         problems.extend(override_problems)
 
     grades: list[str | None] = []
@@ -1028,6 +1068,16 @@ def load_manifest(
         grade = grade or None
         grades.append(grade)
         problems.extend(_row_problems(root, line, row, grade, verify_images))
+        if not allow_agent_suggestion and row["labeler"] == AGENT_SUGGESTION_LABELER:
+            problems.append(
+                ManifestProblem(
+                    AGENT_SUGGESTION_CODE,
+                    MANIFEST_FILE,
+                    line,
+                    row["image_path"] or None,
+                    AGENT_SUGGESTION_MESSAGE,
+                )
+            )
     problems.extend(_item_conflicts(kept))
 
     registry = _read_registry(

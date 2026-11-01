@@ -16,13 +16,18 @@ the split are ignored when the split is read (``assign_splits``, ``rows_for``), 
 ``deferred type images`` log line.
 The power tools (SPEC-021) use the same extension and deferral, with the whole type as stratum.
 
+ADR-024 and SPEC-041 section 4.6: the CLI refuses a ``split_v1`` whose test misses one of the 10
+``screw``/``nut`` x grade strata or ``other/none``, counting only the non-external items
+(``floor_problems``). ``--allow-below-floor`` writes it anyway, with one ``below_floor`` warning
+per stratum, only with a recorded decision. From ``split_v2`` on, neither has any effect.
+
 No torch here (SPEC-011 section 4.5).
 
 CLI::
 
     python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42 \
         [--external-sources <file>] [--max-external-fraction 0.30] \
-        [--extend-test-types <t1,...>] [--defer-types <t1,...>]
+        [--extend-test-types <t1,...>] [--defer-types <t1,...>] [--allow-below-floor]
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ import sys
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from fractions import Fraction
 from pathlib import Path, PurePosixPath
@@ -49,6 +54,8 @@ import numpy as np
 import pandas as pd
 
 from qc_ml.data import (
+    GRADED_OBJECT_TYPES,
+    GRADES,
     ITEM_ID_PATTERN,
     ITEM_PREFIX_TYPES,
     KNOWN_OBJECT_TYPES,
@@ -87,6 +94,13 @@ TYPE_NOT_NEW = "object type is not new: "
 TYPE_IN_BOTH_LISTS = "object type in both --extend-test-types and --defer-types: "
 UNKNOWN_TYPE = "unknown object type: "
 DEFERRED_LOG = "deferred type images: "
+BELOW_FLOOR = "split_v1 below the floor: "
+BELOW_FLOOR_CODE = "below_floor"
+# SPEC-041 section 4.6: the test of split_v1 needs a non-external item in each of these strata.
+FLOOR_STRATA: tuple[tuple[str, str], ...] = (
+    *((object_type, grade) for object_type in GRADED_OBJECT_TYPES for grade in GRADES),
+    ("other", NO_GRADE),
+)
 
 EXIT_OK = 0
 EXIT_ERROR = 2
@@ -383,6 +397,25 @@ def item_history(splits: Sequence[pd.DataFrame], df: pd.DataFrame) -> dict[str, 
             "external images only go to train (ADR-020): " + " | ".join(outside)
         )
     return {item_id: next(iter(by_split)) for item_id, by_split in seen.items()}
+
+
+def floor_problems(df: pd.DataFrame, frame: pd.DataFrame) -> list[str]:
+    """The strata of ``FLOOR_STRATA`` without any item in the test of ``frame``, sorted by name.
+
+    ``df`` comes from ``load_manifest`` and ``frame`` from ``make_split``. Only the non-external
+    items count, each in the stratum of its dominant grade (``item_strata``, the same function of
+    the allocation). The 3 photos per item of the protocol are not checked here (SPEC-041 4.6).
+    """
+    split_of = dict(zip(frame["image_path"], frame["split"], strict=True))
+    external = df["item_id"].map(lambda i: is_external_item(str(i))).astype(bool)
+    own = df[~external]
+    strata = item_strata(own)
+    covered = {
+        strata[str(item_id)]
+        for item_id, image_path in zip(own["item_id"], own["image_path"], strict=True)
+        if split_of.get(image_path) == "test"
+    }
+    return sorted(stratum_name(stratum) for stratum in FLOOR_STRATA if stratum not in covered)
 
 
 def check_item_integrity(df: pd.DataFrame, splits: Sequence[str] | pd.Series) -> None:
@@ -984,6 +1017,11 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="new object types left out of this split version (ADR-022), comma-separated",
     )
+    parser.add_argument(
+        "--allow-below-floor",
+        action="store_true",
+        help="write a split_v1 below the floor; only with a recorded decision (ADR-024)",
+    )
     return parser
 
 
@@ -1001,6 +1039,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     still written when its ``deferred_types`` differ from the ones recorded in the previous
     ``split_v<M>.json`` (the decision itself is part of the split history). A type extended in an
     earlier version is never new again (SPEC-040 section 4.7, ``recorded_extended_types``).
+
+    SPEC-041 section 4.6 (ADR-024): without earlier versions, after ``make_split`` and before
+    anything is written, ``floor_problems``; a problem prints ``split_v1 below the floor:
+    <stratum>`` per stratum and the exit is 2, unless ``--allow-below-floor``, which adds a
+    ``below_floor`` warning per stratum to ``split_v1.json``. With earlier versions the flag is
+    accepted and ignored (a warning in the log).
     """
     configure_logging()
     try:
@@ -1088,6 +1132,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SplitError as exc:
         print(f"split error: {exc}", file=sys.stderr)
         return EXIT_ERROR
+
+    if versions:
+        if args.allow_below_floor:
+            logger.warning("--allow-below-floor has no effect after split_v1: ignored")
+    else:
+        below_floor = floor_problems(df, result.frame)
+        if below_floor and not args.allow_below_floor:
+            for stratum in below_floor:
+                print(BELOW_FLOOR + stratum, file=sys.stderr)
+            return EXIT_ERROR
+        floor_warnings = [{"code": BELOW_FLOOR_CODE, "stratum": s} for s in below_floor]
+        result = replace(result, warnings=[*result.warnings, *floor_warnings])
 
     if (
         previous is not None

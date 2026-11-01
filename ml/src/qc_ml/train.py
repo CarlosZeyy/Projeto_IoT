@@ -78,6 +78,7 @@ __all__ = [
     "compute_loss",
     "grade_class_weights",
     "load_config",
+    "require_torch",
     "run",
     "set_seeds",
     "train",
@@ -254,7 +255,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _require_torch() -> None:
+def require_torch() -> None:
     if torch is None:
         raise TrainError("training needs the train extra: uv sync --all-packages --extra train")
 
@@ -287,7 +288,7 @@ def compute_loss(
     (never ``NaN``). With ``grade_head="corn"`` the grade term is ``coral_pytorch``'s
     ``corn_loss`` on the same rows, without label smoothing nor weights.
     """
-    _require_torch()
+    require_torch()
     import torch.nn.functional as functional
 
     type_loss = functional.cross_entropy(type_logits, type_idx, label_smoothing=label_smoothing)
@@ -472,7 +473,7 @@ def train(config: TrainConfig, *, resume: bool = False) -> TrainResult:
         ConfigError: ``resume`` with a checkpoint of another configuration.
         ManifestError, SplitError: invalid dataset or split.
     """
-    _require_torch()
+    require_torch()
     from torch.utils.data import DataLoader
 
     from qc_ml.dataset import PartsDataset

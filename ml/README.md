@@ -1,8 +1,8 @@
 # qc-ml — dados, split, treino e avaliação
 
-Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste. A SPEC-035 acrescenta a **origem das imagens** (fotos de conhecidos e imagens externas, seção [Origem das imagens](#origem-das-imagens-spec-035)). A SPEC-016 acrescenta as **ferramentas manuais** (seção [Ferramentas (Fase 2)](#ferramentas-fase-2)) e a SPEC-021, as **ferramentas elétricas**, só identificadas (seção [Ferramentas elétricas (Fase 3)](#ferramentas-elétricas-fase-3)).
+Pacote do pipeline de ML do PartQC. A SPEC-011 entrega a parte de **dados**: validação do manifest, overrides, exclusões, relatório de dados, concordância entre rotuladores, split agrupado por peça e augmentations. A SPEC-012 entrega o **modelo**: treino em 2 fases, export ONNX com paridade, limiares escolhidos na validação e avaliação no teste. A SPEC-035 acrescenta a **origem das imagens** (fotos de conhecidos e imagens externas, seção [Origem das imagens](#origem-das-imagens-spec-035)). A SPEC-016 acrescenta as **ferramentas manuais** (seção [Ferramentas (Fase 2)](#ferramentas-fase-2)) e a SPEC-021, as **ferramentas elétricas**, só identificadas (seção [Ferramentas elétricas (Fase 3)](#ferramentas-elétricas-fase-3)). A SPEC-041 acrescenta o **modelo provisório**, só para ensaiar o fluxo, e o **piso do `split_v1`** (seção [Modelo provisório](#modelo-provisório-spec-041)).
 
-Referências: `docs/dataset-protocol.md`, `docs/architecture.md` §7, skill `ml-pipeline`, ADR-004, ADR-005, ADR-014, ADR-020, ADR-021 e ADR-022.
+Referências: `docs/dataset-protocol.md`, `docs/architecture.md` §7, skill `ml-pipeline`, ADR-004, ADR-005, ADR-014, ADR-020, ADR-021, ADR-022 e ADR-024.
 
 ## Instalação
 
@@ -11,7 +11,7 @@ uv sync --all-packages                 # sem torch: data, split, agreement, augm
 uv sync --all-packages --extra train   # + torch/timm: qc_ml.dataset (PartsDataset) e o treino
 ```
 
-`qc_ml.data`, `qc_ml.split`, `qc_ml.agreement`, `qc_ml.augment` e `qc_ml.synthetic` não importam torch. Da SPEC-012, `predict`, `decision`, `thresholds`, `evaluate`, `parity`, `report`, `config` e `pipeline` também não (rodam no CI só com onnxruntime). Exigem o extra `train`: `qc_ml.dataset`, `qc_ml.model`, `qc_ml.export` e o laço de `qc_ml.train` (os auxiliares puros de `qc_ml.train`, como `TrainConfig`, `grade_class_weights` e `EarlyStopper`, importam sem torch).
+`qc_ml.data`, `qc_ml.split`, `qc_ml.agreement`, `qc_ml.augment` e `qc_ml.synthetic` não importam torch. Da SPEC-012, `predict`, `decision`, `thresholds`, `evaluate`, `parity`, `report`, `config` e `pipeline` também não (rodam no CI só com onnxruntime), nem `qc_ml.provisional`, que só importa torch na função que treina. Exigem o extra `train`: `qc_ml.dataset`, `qc_ml.model`, `qc_ml.export` e o laço de `qc_ml.train` (os auxiliares puros de `qc_ml.train`, como `TrainConfig`, `grade_class_weights` e `EarlyStopper`, importam sem torch).
 
 ## Comandos
 
@@ -28,6 +28,7 @@ uv run --package qc-ml python -m qc_ml.data validate --dataset-dir ml/data
 - Com problemas: imprime um problema por linha (`<arquivo>:<registro>: <código>: <image_path>: <mensagem>`) e, depois, uma linha `count <código>: <n>` por código, em ordem alfabética.
 - `too_many_jpeg_scans` indica foto com vídeo anexado ("foto com movimento"): refotografe com o recurso desligado (`docs/dataset-protocol.md` §3). Não corte o arquivo.
 - `orphan_image` indica um `.jpg` sob `raw/` sem linha no manifest; `excluded_file_present`, uma foto excluída que ainda está em disco (`docs/dataset-protocol.md` §8.1).
+- `agent_suggestion_label` indica um grau sugerido por agente (`labeler=agent-suggestion`), no manifest ou em `labels_overrides.csv`. Esse valor só existe no conjunto provisório (ADR-024): `data`, `split`, `train`, `thresholds`, `evaluate` e `pipeline` o recusam em qualquer `DATASET_DIR`. A saída é a §8.1 do protocolo: linha excluída não gera problema.
 
 ### Relatório de dados
 
@@ -49,6 +50,7 @@ uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir 
 - Uma imagem de teste que sumiu do manifest sem estar em `exclusions.csv` é erro (saída 2, nada gravado). Uma imagem excluída sai do split novo com o aviso `excluded_previous_image`.
 - Os erros vão para a saída de erro (stderr).
 - `split_v1` só deve ser gerado com os dados reais da S3 (marco "teste final congelado" do `docs/plan.md`).
+- **Piso do `split_v1` (ADR-024):** sem nenhum split anterior, a CLI exige pelo menos uma peça não externa no teste em cada um dos 10 estratos de `screw`/`nut` × grau e em `other/none` (3 peças por estrato, 33 no total; cada peça conta só no estrato do grau dominante). Faltando algum, sai com 2, com uma linha `split_v1 below the floor: <estrato>` por estrato, e não grava nada. `--allow-below-floor` grava mesmo assim e acrescenta `{"code": "below_floor", "stratum": <estrato>}` a `warnings` no `split_v1.json`: use **só com decisão registrada**. A partir do `split_v2`, nem a recusa nem a flag têm efeito (a flag é aceita e ignorada, com um aviso no log). As 3 fotos por peça são do protocolo e não são conferidas aqui (o `data report` mostra `images_per_item`). Atingir o piso habilita o split, não obriga a gerá-lo: a data de corte é 15/11/2026.
 
 No código, as linhas de um split só se obtêm com `qc_ml.split.rows_for(df, split_df, "train" | "val" | "test")`. O `load_split` confere o `.sha256`: um split editado à mão é recusado.
 
@@ -219,9 +221,36 @@ As 4 ferramentas elétricas do contrato 0.6.0 (`angle_grinder`, `saw`, `drill` e
 5. Treino no Colab, `metrics.json` com a `type_confusion` completa (sem omitir tipo) e a entrada do CHANGELOG com a comparação de parafuso e porca.
 6. Modelo na borda e 4 ferramentas elétricas fotografadas pela página, com o resultado registrado no test-report (CA-14).
 
+## Modelo provisório (SPEC-041)
+
+Decisão de fundo no ADR-024. O modelo provisório existe **só para ensaiar o fluxo** celular → borda → nuvem → painel. Ele é treinado só com imagens externas, com graus sugeridos por um agente, e **não existe métrica de qualidade dele**: sem split, sem validação, sem teste, sem `metrics.json`, sem CHANGELOG e sem Release. O nome decide (`qc_ml.config.is_provisional_version`: contém `-provisional-`), e a borda publica as inspeções dele como `source=simulated`. Nenhum número desse modelo vai para o PRD §7.
+
+```bash
+uv run --package qc-ml python -m qc_ml.provisional --dataset-dir <D> --models-root <M> \
+    [--external-sources <R>] [--model-version partqc-mnv3-provisional-v1] \
+    [--epochs 8] [--seed 42] [--smoke]
+```
+
+- **Treino:** só a fase A (backbone `mobilenetv3_large_100` pré-treinado e congelado, `lr` 1e-3, de 5 a 10 épocas), com a loss, o label smoothing e os pesos de classe de sempre. O modelo final é o da última época. `--smoke` é só para testes: `mobilenetv3_small_050`, sem pesos pré-treinados, 1 época.
+- **Saída:** `<M>/<versão>/` com exatamente `model.onnx`, `model.sha256`, `labels.json`, `preprocessing.json`, `decision.json` (fixo em 0,50 / 0,50 / 0,60), `parity_fixture.npz` e `provisional_report.json` (contagens e a perda de treino, nunca uma métrica). Se o treino ou a paridade falharem, o diretório é apagado.
+- **Recusas (saída 2, nada gravado), nesta ordem:** versão sem `-provisional-` ou fora dos padrões de nome; `--dataset-dir` ou `--models-root` dentro de um repositório Git; diretório do modelo já existente e não vazio; manifest inválido; `item_id` não externo (`provisional dataset has own images: <n>`); `labeler` diferente de `agent-suggestion`, no manifest ou em `labels_overrides.csv`, fora as imagens excluídas (`other labelers: <n>`); tipo fora de `screw`, `nut` e `other` (`other types`) ou um dos três faltando (`needs the types`); grau sem imagem; `epochs` fora de 5 a 10, sem `--smoke`; sem torch.
+- **Caminho oficial:** `TrainConfig` recusa uma versão provisória (`train`, `export`, `thresholds`, `evaluate` e `pipeline` saem com 2), e `qc_ml.report changelog` e `release-notes` saem com 2 e `provisional model: no official report`, antes de ler o `metrics.json`.
+- **Limite conhecido:** a proibição dos graus sugeridos é pelo `labeler`. Um recorte reimportado à mão com `labeler` `a` ou `b` não é detectado, e aí ela é só a regra do `docs/dataset-protocol.md` §11.
+
+### Procedimento de operação (SPEC-041 §4.8)
+
+1. **Dupla ou orquestrador:** criar `~/partqc-provisorio/data` e `~/partqc-provisorio/models`.
+2. **Agente (`ml-engineer`, a pedido do orquestrador, sem commit):** em `~/partqc-entrada/candidatos/`, aplicar a rubrica (`docs/dataset-protocol.md` §1) a cada recorte e preencher o plano, fora do repositório, com `grade` e `labeler=agent-suggestion`. O `sugestoes.csv` e o rótulo da fonte são só pistas. Recorte sem decisão sai do plano. Só recortes das fontes registradas, nunca foto da dupla ou de conhecidos. Tamanho sugerido: as 46 `unusable` candidatas, cerca de 50 `perfect`, poucas `?`, os recortes da SDNET para `good`, `fair`, `poor` e **porca** (hoje, a única fonte de `nut`), e os 104 YCB.
+3. **Agente, no mesmo pedido (ADR-024, decisões 4 e 6; `docs/dataset-protocol.md` §11):** conferir as folhas de contato de todos os recortes do plano, com os da SDNET já recortados, e apagar a linha e o arquivo de qualquer recorte com pessoa, placa ou documento. As folhas que faltarem são geradas em `~/partqc-provisorio/folhas`. Um recorte de uma original da SDNET com moldura `PRIV` ou `PRIV?` nas folhas existentes (`LEIAME.md`) também sai do plano. O humano assume essa conferência ao aprovar, sem outro passo. Só depois disso, `--privacy-checked` é verdadeiro; a opção e a mensagem da SPEC-036 não mudam. Fora deste conjunto, a conferência continua humana (`docs/dataset-protocol.md` §10.5).
+4. `uv run --package qc-edge python -m qc_edge.importer --dataset-dir ~/partqc-provisorio/data --inbox ~/partqc-entrada/candidatos --plan <plano> --privacy-checked --provisional-set --dry-run`; conferir as linhas `failed`; rodar sem `--dry-run`.
+5. `uv run --package qc-edge python -m qc_edge.privacy --dataset-dir ~/partqc-provisorio/data` (`0 with private data`). **Não** rode `qc_ml.data validate` nessa pasta: ele recusa `agent-suggestion` de propósito, e o passo 6 valida o manifest antes de treinar.
+6. `uv sync --all-packages --extra train` e `uv run --package qc-ml python -m qc_ml.provisional --dataset-dir ~/partqc-provisorio/data --models-root ~/partqc-provisorio/models`. Treino no notebook, sem Drive nem Colab.
+7. `MODEL_DIR=~/partqc-provisorio/models/partqc-mnv3-provisional-v1` na borda; lotes `ENSAIO-…`.
+8. Depois da entrega, apagar `~/partqc-provisorio/` e as pastas de entrada (`docs/dataset-protocol.md` §10.6).
+
 ## Dataset sintético (testes)
 
-`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0, tool_items_per_stratum=0, external_tool_items_per_type=0, power_tool_items_per_type=0, external_power_tool_items_per_type=0)` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. Com `contributor_items_per_stratum` e `external_items_per_stratum`, acrescenta peças de conhecido (`S-501`…) e imagens externas (`XS-0001`…, 1 imagem cada) por estrato, com `sources.csv` e o registro `root/external_sources.csv` (fonte `synthetic`, `CC0-1.0`). Com peças de conhecido, `items_per_stratum` tem de manter as peças próprias abaixo de `S-501`/`N-501`/`O-501` (até 100), senão levanta `ValueError`. Com `tool_items_per_stratum = t` (SPEC-016), acrescenta `t` peças `T-NNN` por ferramenta × grau, numeradas a partir de `T-001` numa sequência única; com `external_tool_items_per_type = e`, `e` imagens externas `XT-NNNN` por ferramenta (1 imagem cada, graus em rodízio dentro de cada ferramenta). Com `power_tool_items_per_type = p` (SPEC-021), acrescenta `p` peças `T-NNN` sem grau por ferramenta elétrica, continuando a sequência `T-` depois das manuais; com `external_power_tool_items_per_type = q`, `q` imagens externas `XT-NNNN` sem grau por elétrica, continuando a sequência `XT-`. As ferramentas vêm depois de todas as outras peças (as elétricas depois das manuais), então as imagens anteriores não mudam; com todos em 0 (padrão), os arquivos são os mesmos, byte a byte. `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente (ferramentas inclusive). Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
+`qc_ml.synthetic.make_synthetic_dataset(root, items_per_stratum=4, images_per_item=2, include_other=True, seed=0, external_items_per_stratum=0, contributor_items_per_stratum=0, tool_items_per_stratum=0, external_tool_items_per_type=0, power_tool_items_per_type=0, external_power_tool_items_per_type=0, labeler="a")` cria, em `root`, o layout da SPEC-010 com JPEGs 256×256 gerados pelo Pillow e um `manifest.csv` válido. Os graus de `S-xxx`/`N-xxx` seguem em rodízio: `S-001` é perfect, `S-002` good, `S-003` fair, e assim por diante. Com `contributor_items_per_stratum` e `external_items_per_stratum`, acrescenta peças de conhecido (`S-501`…) e imagens externas (`XS-0001`…, 1 imagem cada) por estrato, com `sources.csv` e o registro `root/external_sources.csv` (fonte `synthetic`, `CC0-1.0`). Com peças de conhecido, `items_per_stratum` tem de manter as peças próprias abaixo de `S-501`/`N-501`/`O-501` (até 100), senão levanta `ValueError`. Com `tool_items_per_stratum = t` (SPEC-016), acrescenta `t` peças `T-NNN` por ferramenta × grau, numeradas a partir de `T-001` numa sequência única; com `external_tool_items_per_type = e`, `e` imagens externas `XT-NNNN` por ferramenta (1 imagem cada, graus em rodízio dentro de cada ferramenta). Com `power_tool_items_per_type = p` (SPEC-021), acrescenta `p` peças `T-NNN` sem grau por ferramenta elétrica, continuando a sequência `T-` depois das manuais; com `external_power_tool_items_per_type = q`, `q` imagens externas `XT-NNNN` sem grau por elétrica, continuando a sequência `XT-`. As ferramentas vêm depois de todas as outras peças (as elétricas depois das manuais), então as imagens anteriores não mudam; com todos em 0 (padrão), os arquivos são os mesmos, byte a byte. Pela SPEC-041, `items_per_stratum=0` é aceito quando `external_items_per_stratum > 0` (dataset só com externas), e `labeler` vai para todas as linhas do manifest. `add_synthetic_item(root, item_id, object_type, grade, n_images=2)` acrescenta imagens de uma peça nova ou existente (ferramentas inclusive). Os testes usam sempre `tmp_path`: nenhuma foto real entra no Git (R-02, R-14).
 
 ## Testes
 
@@ -229,4 +258,4 @@ As 4 ferramentas elétricas do contrato 0.6.0 (`angle_grinder`, `saw`, `drill` e
 uv run pytest -q ml/tests
 ```
 
-Os testes que precisam de torch (`test_dataset.py`, `test_model.py`, `test_tools_torch.py` e os *slow* de `test_pipeline_slow.py`) usam `pytest.importorskip("torch")` e são pulados no CI. Para rodá-los localmente: `uv sync --all-packages --extra train` e `uv run pytest -q ml/tests`. Depois, volte ao ambiente do CI com `uv sync --all-packages --locked`.
+Os testes que precisam de torch (`test_dataset.py`, `test_model.py`, `test_tools_torch.py` e os *slow* de `test_pipeline_slow.py`, `test_provisional.py`, `test_split_floor.py` e `test_agent_suggestion.py`) usam `pytest.importorskip("torch")` e são pulados no CI. Para rodá-los localmente: `uv sync --all-packages --extra train` e `uv run pytest -q ml/tests`. Depois, volte ao ambiente do CI com `uv sync --all-packages --locked`.

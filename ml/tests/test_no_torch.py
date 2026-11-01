@@ -26,6 +26,7 @@ EVALUATION_MODULES = (
     "qc_ml.steps",
     "qc_ml.pipeline",
     "qc_ml.train",
+    "qc_ml.provisional",  # SPEC-041 CA-14
 )
 
 

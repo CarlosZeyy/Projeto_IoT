@@ -23,6 +23,7 @@ __all__ = [
     "SKILL_DEFAULTS",
     "ConfigError",
     "TrainConfig",
+    "is_provisional_version",
     "load_config",
 ]
 
@@ -34,6 +35,9 @@ EPOCHS_A_RANGE: tuple[int, int] = (5, 10)  # skill ml-pipeline §4, phase A: 5 t
 
 VERSION_NAME_PATTERN = re.compile(r"partqc-[a-z0-9]+(-[a-z0-9]+)*-v[0-9]+")
 CONTRACT_VERSION_PATTERN = re.compile(MODEL_VERSION_PATTERN.strip("^$"))
+# SPEC-041 section 4.1 (ADR-024): this substring alone decides that a version is provisional.
+PROVISIONAL_MARKER = "-provisional-"
+PROVISIONAL_REFUSED = "provisional model versions are not allowed in the official pipeline"
 
 # Fields that have a default in the skill ml-pipeline / SPEC-012 §4.2; a different value is
 # allowed and listed in ``deviations_from_defaults``. Paths and the version name are not here.
@@ -56,6 +60,15 @@ HYPERPARAMETER_FIELDS: tuple[str, ...] = (
     "smoke",
 )
 REQUIRED_FIELDS: tuple[str, ...] = ("model_version", "dataset_dir", "split_file")
+
+
+def is_provisional_version(model_version: str) -> bool:
+    """``True`` if, and only if, ``model_version`` contains ``-provisional-`` (SPEC-041 4.1).
+
+    ``qc_edge.inference.is_provisional_version`` is the same rule (neither package imports the
+    other, and the contract does not change).
+    """
+    return PROVISIONAL_MARKER in model_version
 
 
 @dataclass(frozen=True)
@@ -131,6 +144,8 @@ class TrainConfig:
                 "model_version must match ^partqc-[a-z0-9]+(-[a-z0-9]+)*-v\\d+$ and "
                 f"{MODEL_VERSION_PATTERN}, got {self.model_version!r}"
             )
+        if is_provisional_version(self.model_version):
+            problems.append(PROVISIONAL_REFUSED)  # SPEC-041 section 4.5 (ADR-024)
         if self.grade_head not in GRADE_HEADS:
             problems.append(f"grade_head must be one of {', '.join(GRADE_HEADS)}")
         if not self.smoke:
