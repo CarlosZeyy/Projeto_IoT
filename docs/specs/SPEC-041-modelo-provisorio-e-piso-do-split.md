@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
+| Status | In Dev |
 | Rodada atual | r1 |
 | Autor da implementação | ml-engineer (Parte A: `ml/`), depois developer (Parte B: `edge/`), na mesma rodada |
 | Tags | security |
@@ -15,7 +15,7 @@
 >
 > **Reaprovada pelo humano em 2026-11-01:** SPEC_ISSUE-04 (§4.9 e CA-28). Ver o Histórico.
 >
-> **Aguardando reaprovação (ADR-019):** SPEC_ISSUE-06 (CA-07). Ver o Histórico.
+> **Reaprovada pelo orquestrador sob o ADR-019 em 2026-11-01:** SPEC_ISSUE-06 (CA-07). Ver o Histórico.
 
 ## 1. Contexto
 
@@ -293,3 +293,4 @@ O grau por sugestão de agente (ADR-024, decisão 4) veio depois do texto a que 
 | 2026-11-01 | Correção dos SPEC_ISSUE-01, 02 e 03 (§4.3, §4.4, CA-09, CA-23, CA-25) e do SPEC_ISSUE-05 (§4.9) aprovada pelo orquestrador sob o ADR-019 (commits do architect 111d2be e 35f2c2d). | `reviews/SPEC-041/r1-dev-report.md` | Orquestrador (ADR-019) |
 | 2026-11-01 | Correção do SPEC_ISSUE-04 (§4.9 e CA-28) reaprovada pelo humano (commit do architect 35f2c2d). | Resposta do humano de 2026-11-01, nesta sessão | Orquestrador, a pedido do humano |
 | 2026-11-01 | Correção do SPEC_ISSUE-06 (só o CA-07), pela opção (b) do relatório. CA-07, antigo: "tipos `screw`, `nut`, `other`), *quando* `python -m qc_ml.provisional --smoke` roda". Novo: "tipos `screw`, `nut`, `other`, com os demais argumentos de `make_synthetic_dataset` no padrão), *quando* `python -m qc_ml.provisional --smoke --seed 0` roda", mais a frase final: "Este CA não cobre a seed padrão: com a rede de `--smoke`, a seed 42 pode sair com 2 na paridade, e isso não é defeito (SPEC_ISSUE-06, no Histórico)." O resto do CA não muda. O §4.2 (`--seed 42` como padrão) e o `MIN_TOP2_GAP` (`1e-3`) não mudam. Os CAs 08 e 09 não mudam de texto: eles herdam o dado do CA-07, e nenhum confere o valor da seed. Evidência (`reviews/SPEC-041/r1-dev-report.md`, medição em torch 2.14.1, CPU, dataset de 44 imagens): entradas com gap ≥ `1e-3`, de 88, com 8 necessárias: seed 42 = 1, seed 0 = 88; os testes do autor rodaram a CLI com a paridade e `--seed 0`, com o extra `train` (1245 passed). Com 11 imagens, a seed 0 deu 0 entradas, por isso o CA fixa também o dataset. Por que não a opção (a), a recomendada pelo ml-engineer: ela cria um parâmetro público em `write_model_dir` e `make_parity_fixture` e acrescenta `export.py`, usado pelo caminho oficial, ao escopo (X-5, que a resposta 11 do ADR-024 mantém com o humano), além de baixar o gap a 2 vezes a tolerância de paridade (`1e-4`), sem paridade rodada com esse valor. Limites aceitos: o CA depende da seed e pode quebrar ao atualizar o torch, fixado no `uv.lock` (R-12), e os testes *slow* só rodam localmente; se quebrar, é um `SPEC_ISSUE` novo, que vai ao humano (X-9), sem trocar a seed por conta própria. O treino real continua sem medição de gap: se falhar, sai com 2 e sem modelo (§4.3). Classificação ADR-019: elegível (E-1 a E-5 cumpridos; nenhuma exclusão). E-1: SPEC_ISSUE-06. E-2: toca só este arquivo. E-3: aprovada e `Blocked` por este `SPEC_ISSUE`. E-4 tipo 2: forma de verificação do CA-07 ajustada, preservando a intenção (o fluxo do provisório grava os 7 arquivos, passa na paridade e carrega na borda). E-5: só o CA-07 e o aviso do topo. X-1 a X-4: nada de SPEC nova, ADR, outro documento ou contrato. X-5: nada de código, assinatura ou arquivo novos. X-6: o CA continua automático, nenhum caso de erro sai, e a seed de `--smoke`, só para testes, não é valor que o produto promete. X-7: o CA-07 não verifica regra inegociável; o CA-08 (R-11) herda o dado e continua igual, e, se essa herança for lida como X-7, ela está coberta pela resposta 11 do ADR-024, porque a regra fica igual. X-9: primeira correção do CA-07 (o CA-09, já corrigido no SPEC_ISSUE-01, não muda de texto), sem marcação de "exige humano" nem dependência do professor. | SPEC_ISSUE-06 de `reviews/SPEC-041/r1-dev-report.md`, seção "Parte A (ml-engineer)" | Orquestrador (loop da SPEC-041) |
+| 2026-11-01 | Correção do SPEC_ISSUE-06 (CA-07) aprovada pelo orquestrador sob o ADR-019 e a resposta 11 do ADR-024 (commit do architect 1e217fb). | `reviews/SPEC-041/r1-dev-report.md` | Orquestrador (ADR-019) |
