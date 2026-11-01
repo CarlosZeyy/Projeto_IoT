@@ -20,6 +20,7 @@ MAX_TOKEN_LENGTH = 512
 # Names of this machine accepted in the ``Host`` of the console (SPEC-025 section 4.1).
 CONSOLE_HOST_NAMES = ("127.0.0.1", "localhost", "[::1]")
 DEFAULT_HTTP_PORT = 80
+DEFAULT_HTTPS_PORT = 443
 
 
 def resolve_session_token(settings: EdgeSettings) -> str:
@@ -39,16 +40,18 @@ def token_matches(provided: str | None, expected: str) -> bool:
     )
 
 
-def is_allowed_console_host(host: str | None, port: int) -> bool:
+def is_allowed_console_host(host: str | None, port: int, *, tls: bool = False) -> bool:
     """``True`` only for ``127.0.0.1``, ``localhost`` or ``[::1]`` followed by ``:<port>``.
 
     The comparison ignores ASCII case and nothing else: no ``strip()``, no name resolution, no
-    prefix or suffix match (``localhost.`` and ``127.0.0.1.nip.io`` are refused). With
-    ``port == 80`` the names are also accepted without a port, as browsers omit the default one.
+    prefix or suffix match (``localhost.`` and ``127.0.0.1.nip.io`` are refused). On the default
+    port of the scheme (80, or 443 with ``tls``, SPEC-019) the names are also accepted without a
+    port, as browsers omit it.
     """
     if not host or not host.isascii():
         return False
     value = host.lower()
     if value in {f"{name}:{port}" for name in CONSOLE_HOST_NAMES}:
         return True
-    return port == DEFAULT_HTTP_PORT and value in CONSOLE_HOST_NAMES
+    default_port = DEFAULT_HTTPS_PORT if tls else DEFAULT_HTTP_PORT
+    return port == default_port and value in CONSOLE_HOST_NAMES

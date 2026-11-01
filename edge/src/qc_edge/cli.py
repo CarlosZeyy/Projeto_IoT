@@ -41,6 +41,10 @@ Publisher (SPEC-020 section 4.5): ``EDGE_PUBLISHER=http`` (default) -> ``HttpPub
 the variable, with or without the flag. The MQTT password never reaches a log, ``/api/status``
 nor the console.
 
+HTTPS (SPEC-019 section 4.1): ``EDGE_TLS_CERT`` and ``EDGE_TLS_KEY`` become the ``ssl_certfile`` and
+``ssl_keyfile`` of ``uvicorn`` (``uvicorn_kwargs``, a pure function). An invalid file exits with
+code 2 naming the variable; an invalid PEM makes ``uvicorn`` fail before serving any route.
+
 An invalid ``CLOUD_API_URL`` (``EdgeSettings``) or a set ``DEVICE_API_KEY`` that is not visible
 ASCII exits with code 2 naming the variable, never its value, with or without the flag. The loop
 stops with the app (lifespan); the outbox stays open until the process ends (every ``put`` is
@@ -54,7 +58,7 @@ import logging
 import sqlite3
 import sys
 from collections.abc import Sequence
-from typing import TextIO
+from typing import Any, TextIO
 
 import uvicorn
 from PIL import ImageFile
@@ -265,6 +269,27 @@ def _load_inferencer(settings: EdgeSettings, stub_model: bool) -> Inferencer | N
     return inferencer
 
 
+def uvicorn_kwargs(settings: EdgeSettings) -> dict[str, Any]:
+    """Arguments of ``uvicorn.run``, besides the app.
+
+    ``proxy_headers=False``: ``X-Forwarded-For`` from 127.0.0.1 must never change the client
+    address (the console is loopback-only). The access log is off because it would print the query
+    string of ``/capture`` and ``/live``, which carries the session token; ``RequestLogMiddleware``
+    logs instead. The TLS arguments exist only with HTTPS on (SPEC-019 section 4.1).
+    """
+    kwargs: dict[str, Any] = {
+        "host": settings.EDGE_HOST,
+        "port": settings.EDGE_PORT,
+        "proxy_headers": False,
+        "access_log": False,
+        "log_level": "info",
+    }
+    if settings.tls_enabled:
+        kwargs["ssl_certfile"] = str(settings.EDGE_TLS_CERT)
+        kwargs["ssl_keyfile"] = str(settings.EDGE_TLS_KEY)
+    return kwargs
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Load the settings, build the app and run ``uvicorn`` on ``EDGE_HOST:EDGE_PORT``."""
     configure_logging()
@@ -292,15 +317,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         logger.warning("stub model enabled: results are fake and nothing is published")
     elif inferencer is None:
         logger.warning("no model loaded: inspect mode answers 503 'model not loaded'")
-    logger.info("operator console: http://127.0.0.1:%d/", settings.EDGE_PORT)
-    # proxy_headers=False: X-Forwarded-For from 127.0.0.1 must never change the client address
-    # (the console is loopback-only). The access log is off because it would print the query
-    # string of /capture, which carries the session token; RequestLogMiddleware logs instead.
-    uvicorn.run(
-        app,
-        host=settings.EDGE_HOST,
-        port=settings.EDGE_PORT,
-        proxy_headers=False,
-        access_log=False,
-        log_level="info",
-    )
+    scheme = "https" if settings.tls_enabled else "http"
+    logger.info("operator console: %s://127.0.0.1:%d/", scheme, settings.EDGE_PORT)
+    uvicorn.run(app, **uvicorn_kwargs(settings))
