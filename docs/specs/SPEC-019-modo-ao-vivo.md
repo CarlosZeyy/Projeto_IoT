@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Dev |
+| Status | In Test |
 | Rodada atual | r2 |
 | Autor da implementação | developer |
 | Tags | security |
