@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038, SPEC-040)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038, SPEC-040, SPEC-041)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -6,7 +6,8 @@ Estado atual:
 
 - o inferenciador real é o `onnxruntime` na CPU, carregado de `MODEL_DIR` (SPEC-008, seção "Trocar o modelo"). Sem `MODEL_DIR` e sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
 - cada inspeção aceita é gravada no outbox SQLite (`OUTBOX_PATH`) antes da resposta ao celular, e um laço em segundo plano a envia para a `qc-api` quando `DEVICE_API_KEY` e `CLOUD_API_URL` estão definidos (SPEC-009, seção "Envio para a nuvem"). Só o JSON do resultado sobe; a foto nunca (R-02);
-- o modo coleta (SPEC-010) monta o dataset: funciona sem modelo e não chama o inferenciador nem o sink (seção "Modo coleta").
+- o modo coleta (SPEC-010) monta o dataset: funciona sem modelo e não chama o inferenciador nem o sink (seção "Modo coleta");
+- um modelo com `-provisional-` no nome serve só para ensaiar o fluxo, e as inspeções dele saem como `source=simulated` (SPEC-041, seção "Modelo provisório").
 
 ## Como rodar
 
@@ -98,6 +99,19 @@ Para trocar de modelo:
    ```
 2. Aponte `MODEL_DIR` para ele (no `.env` ou na linha de comando) e reinicie o `qc-edge`. O modelo só é lido na subida.
 3. Confira no console (<http://127.0.0.1:8000/>) a linha **Modelo** (`carregado: <model_version> (sha256 <12 primeiros caracteres>)`) e os **Limiares de decisão**, ou no log da subida (`model loaded: model_version=... sha256=...` e uma linha `threshold ...` por limiar).
+
+### Modelo provisório (SPEC-041)
+
+Um modelo cujo `model_version` contém `-provisional-` (ex.: `partqc-mnv3-provisional-v1`) serve só para ensaiar o fluxo e não tem métrica de qualidade (ADR-024). O nome do diretório decide sozinho (`qc_edge.inference.is_provisional_version`), pela mesma regra do `MODEL_DIR` acima: vale o nome do diretório alvo, e não o do link. Renomear o diretório tira a marca, porque a borda não tem outro sinal: nunca troque esse nome. O treino e o procedimento completo estão em `ml/README.md`, seção "Modelo provisório".
+
+Com um modelo assim:
+
+- toda inspeção sai com `source=simulated` (R-06): no outbox e na nuvem, ela fica fora do SPC padrão, da taxa `live` e dos alertas, e aparece no painel com o selo de simulado e a versão na coluna `Modelo`. Use lotes `ENSAIO-…`;
+- a resposta da captura traz o veredito com o sufixo ` (modelo provisório)`, em todos os casos, inclusive `desconhecido`, e o celular o mostra sem nenhuma mudança na página. `approved` não muda;
+- a linha **Modelo** do console acrescenta ` — PROVISÓRIO: resultados publicados como simulados (ADR-024)`;
+- a subida registra `WARNING provisional model loaded: results are published as source=simulated (ADR-024)`.
+
+`/api/status`, o heartbeat, o outbox, o publisher e o contrato não mudam, e o `--stub-model` também não.
 
 ### Limiares de decisão
 
@@ -199,6 +213,28 @@ O que acontece:
 - **PNG com comentário:** um PNG com chunk de texto `comment` (comum em datasets públicos) é importado sem o comentário; nenhum metadado da entrada vai para o JPEG gravado (SPEC-038).
 
 Depois de importar, rode `uv run --package qc-edge python -m qc_edge.privacy --dataset-dir ml/data` (deve terminar com `0 with private data`) e `uv run --package qc-ml python -m qc_ml.data validate --dataset-dir ml/data` (sem problemas), e só então apague os arquivos da pasta de entrada (`docs/dataset-protocol.md` §10.6).
+
+### Conjunto do modelo provisório: `--provisional-set` (SPEC-041)
+
+No conjunto do modelo provisório, e só nele, o grau é uma sugestão de agente, com o `labeler` fixo `agent-suggestion` (ADR-024, decisão 4). Esses recortes **nunca** entram em `ml/data/` nem em outro dataset oficial. Sem a opção, nada muda: essa linha é `invalid_labeler`, como qualquer valor fora de `a` e `b`. O modo coleta também nunca aceita esse valor.
+
+```bash
+uv run --package qc-edge python -m qc_edge.importer --dataset-dir ~/partqc-provisorio/data \
+    --inbox ~/partqc-entrada/candidatos --plan <plano> --privacy-checked --provisional-set --dry-run
+```
+
+Com a opção, sai com `2`, sem gravar nada, se:
+
+| Situação | Mensagem |
+|---|---|
+| `--dataset-dir` (depois de resolver os links) dentro de um repositório Git. É a primeira verificação, antes das recusas da pasta de entrada e do plano | `provisional set must be outside any git repository` |
+| o `manifest.csv` já existente tem alguma linha com outro `labeler` | `dataset is not a provisional set` |
+| uma linha do plano tem `labeler` diferente de `agent-suggestion` | `plan line <n>: invalid_labeler (labeler)` |
+| uma linha do plano tem `origin` diferente de `external` | `plan line <n>: invalid_origin (origin)` |
+
+O `--privacy-checked` continua obrigatório. Nesse conjunto, ele registra a conferência por agente do `docs/dataset-protocol.md` §11, feita antes da importação. Depois de importar, rode o `qc_edge.privacy`, mas **não** o `qc_ml.data validate`, que recusa `agent-suggestion` de propósito: o `qc_ml.provisional` valida o manifest antes de treinar.
+
+**Limite conhecido (ADR-024):** a guarda é pelo `labeler`. Um recorte reimportado à mão com `labeler` `a` ou `b` não é detectado; aí a proibição é só a regra do `docs/dataset-protocol.md` §11.
 
 ## Envio para a nuvem (SPEC-009)
 
