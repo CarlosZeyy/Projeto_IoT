@@ -4,6 +4,10 @@ Here there are the ``Inferencer`` protocol and ``StubInferencer``, used by
 ``qc-edge --stub-model`` and by tests; a stub result is never published to the cloud (R-06). The
 real inferencer (``qc_edge.onnx_inferencer.OnnxInferencer``) and the decision rule
 (``qc_edge.decision``) come with SPEC-008.
+
+SPEC-041: ``is_provisional_version`` tells a rehearsal model (ADR-024) by its name. It has the same
+rule as ``qc_ml.config.is_provisional_version``: neither package imports the other, and the
+contract does not change (R-04).
 """
 
 from __future__ import annotations
@@ -20,6 +24,13 @@ STUB_MODEL_VERSION = "stub-v0"
 STUB_MODEL_SHA256 = "0" * 64
 # SPEC-008: the console, the log and the integrity errors show the first 12 characters of a hash.
 SHORT_SHA_LENGTH = 12
+# ADR-024, decision 2: the name alone decides, like the ``X`` prefix of ADR-020.
+PROVISIONAL_MARKER = "-provisional-"
+
+
+def is_provisional_version(model_version: str) -> bool:
+    """Whether ``model_version`` names a provisional model: it contains ``-provisional-``."""
+    return PROVISIONAL_MARKER in model_version
 
 
 def short_sha(sha256: str) -> str:
