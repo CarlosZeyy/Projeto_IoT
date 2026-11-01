@@ -127,3 +127,80 @@ Encontrados pelo architect ao conferir a Parte B e os CAs, a pedido do orquestra
 
 - **SPEC_ISSUE-04:** a recusa do `--provisional-set` em repositório Git diz só "antes de ler o dataset e o plano", mas o `load_plan` testa antes a inbox e o plano. Com eles no mesmo repositório, o CA-28 pode ver `inbox must be outside any git repository`.
 - **SPEC_ISSUE-05:** o §4.9 diz que o `export` recusa `agent-suggestion`, mas ele só lê o dataset sintético da paridade (`ml/src/qc_ml/export.py:144`), e o ADR-024 não o lista.
+
+## Parte B (developer)
+
+**Estado: implementada, sem `SPEC_ISSUE` novo.** O SPEC_ISSUE-04 está cumprido no texto novo do §4.9 e do CA-28. O SPEC_ISSUE-06 é da Parte A, e eu não o toquei.
+
+Commits: `a4217e8`, `f3f4c7a`, `f9da7d9`.
+
+### Resumo
+
+- `edge/src/qc_edge/inference.py`: `is_provisional_version`, com a mesma regra do lado do ML.
+- `edge/src/qc_edge/app.py`: `source=simulated`, sufixo do veredito e aviso no console, com versão provisória.
+- `edge/src/qc_edge/cli.py`: o `WARNING` da subida.
+- `edge/src/qc_edge/importer.py`: `AGENT_SUGGESTION_LABELER` e `--provisional-set`. `load_plan` e `_row_problems` ganham um argumento com padrão falso. `ManifestEntry` e `read_manifest_entries` não mudam.
+- `edge/README.md`: seções "Modelo provisório" e "Conjunto do modelo provisório".
+
+Não mudam: `capture.js`, `/api/status`, heartbeat, outbox, publisher, contrato, API e `--stub-model`. Sem dependência nova e sem variável nova no `.env.example`.
+
+### Rastreabilidade
+
+| CA | Arquivo(s) | Teste do autor |
+|---|---|---|
+| 17 | `app.py`, `inference.py` | `test_provisional_model.py::test_provisional_model_is_simulated_in_the_answer_and_in_the_outbox`, `test_every_verdict_gets_the_suffix_and_keeps_approved`, `test_link_with_an_official_name_to_a_provisional_directory_is_simulated` |
+| 18 | `app.py` | `test_official_model_stays_live_without_the_suffix`, `test_stub_model_does_not_change`, `test_status_does_not_change_with_a_provisional_model` |
+| 19 | `app.py`, `cli.py` | `test_console_says_the_model_is_provisional`, `test_console_of_another_model_has_no_notice`, `test_console_without_a_model_has_no_notice`, `test_cli_warns_about_a_provisional_model`, `test_cli_does_not_warn_about_an_official_model`, `test_stub_model_flag_takes_precedence_without_the_warning` |
+| 20 (lado da borda) | `inference.py` | `test_is_provisional_version` |
+| 21 | `app.py` (sem campo novo) | `test_the_published_payload_is_only_the_contract` |
+| 26 (lado da borda) | `importer.py` | `test_importer_provisional.py::test_constant_is_not_a_collect_labeler`, `test_collect_mode_refuses_the_labeler` |
+| 27 | `importer.py` | `test_without_the_option_the_labeler_is_invalid`, `test_without_the_option_a_and_b_still_work`, `test_without_the_option_a_dataset_inside_git_stays_accepted`, `test_without_the_option_a_manifest_with_another_labeler_is_accepted` |
+| 28 | `importer.py` | `test_dataset_inside_git_with_inbox_and_plan_outside`, `test_the_dataset_check_comes_before_the_inbox_and_plan_checks`, `test_the_dataset_check_comes_before_a_missing_inbox`, `test_symlink_into_a_repository_is_refused`, `test_the_privacy_option_is_still_checked_first` |
+| 29 | `importer.py` | `test_a_valid_plan_is_imported_and_a_second_run_adds_to_it`, `test_a_repeated_plan_is_skipped`, `test_dry_run_writes_nothing`, `test_a_manifest_with_only_the_header_is_a_provisional_set` |
+| 30 | `importer.py` | `test_rows_of_another_kind_are_refused`, `test_a_manifest_with_another_labeler_is_refused`, `test_one_row_of_another_labeler_among_others_is_enough`, `test_a_row_too_short_to_have_a_labeler_is_another_labeler` |
+
+O CA-22 é manual e não foi executado: ele depende da operação do §4.8, depois do merge.
+
+### Decisões tomadas dentro do escopo
+
+- **Ordem da recusa do manifest:** `dataset is not a provisional set` vem logo depois de `_read_dataset`, antes de ler o plano. O §4.9 não fixa essa posição.
+- **Leitura do `labeler`:** é feita à parte, em `_check_provisional_manifest`, porque `ManifestEntry` não pode mudar. Uma linha curta demais para ter `labeler` conta como outro `labeler`, para recusar na dúvida. Uma linha em branco do CSV não conta como linha.
+- **Local do `WARNING`:** fica em `_load_inferencer`, depois de `model loaded`, então não aparece com `--stub-model`, que não carrega o `MODEL_DIR`.
+
+### Limites que o reviewer e o security-devops devem conferir
+
+Nenhum destes é `SPEC_ISSUE`: decorrem do texto da SPEC e do ADR-024.
+
+- **O nome é o único sinal na borda.** Renomear o diretório de um modelo provisório, tirando `-provisional-`, faz as inspeções saírem como `source=live`, sem nenhum aviso, e a borda não olha o `provisional_report.json`. O ADR-024 decide por "o nome decide sozinho". O `edge/README.md` avisa para não trocar o nome.
+- **A guarda do manifest vale só na fase 1.** Outra execução sem a opção, ou o modo coleta com o mesmo `DATASET_DIR`, pode acrescentar outro `labeler` depois da conferência, porque a fase 2 não relê o `labeler` sob o lock. O §4.9 põe essa leitura só no `load_plan`. O `qc_ml.provisional` recusa esse conjunto antes de treinar (`other labelers`).
+
+### Como rodar
+
+```bash
+uv run pytest -q edge/tests/test_provisional_model.py edge/tests/test_importer_provisional.py
+CI=true TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q
+```
+
+### Resultado dos testes
+
+| Ambiente | Comando | Resultado |
+|---|---|---|
+| Testes novos da Parte B | `uv run pytest -q edge/tests/test_provisional_model.py edge/tests/test_importer_provisional.py` | 57 passed |
+| Repositório inteiro, `CI=true`, `TEST_DATABASE_URL`, **com torch instalado** (2.14.1) | `uv run pytest -q` | 9696 passed, 117 skipped, em 1042,58 s. Sem falha |
+| Lint | `uv run ruff check .` e `uv run ruff format --check .` | limpos |
+
+A suíte inteira rodou com o extra `train` instalado, então não é o ambiente sem torch do CI, que eu não repeti. Ela rodou antes das duas últimas edições do `edge/README.md`, que só mudam texto. Os testes de aceite das SPECs anteriores passaram, inclusive os das SPECs 036 e 038: nenhum precisa de ajuste do tester, e não alterei nenhum teste existente.
+
+### Conferências manuais, sem teste no repositório
+
+Rodadas uma vez, com dados sintéticos em pasta temporária, sem treino e sem tocar em `~/partqc-entrada/`:
+
+- **Importador → ML:** um conjunto de 11 imagens importado com `--provisional-set` foi recusado por `load_manifest` no padrão (`agent_suggestion_label`) e aceito com `allow_agent_suggestion=True` (11 linhas). O `qc_ml.provisional` não foi rodado sobre esse conjunto.
+- **Os dois pacotes:** as 6 versões do CA-20 dão `True, True, False, False, False, False` nos dois lados, e as constantes do CA-26 são iguais e estão fora de `LABELERS`.
+
+### Checagens do autor
+
+- [x] Testes do autor passando
+- [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
+- [x] Nenhuma imagem real, `.onnx` ou operação sobre `~/partqc-entrada/`
+- [x] `.env.example`: sem variável nova
