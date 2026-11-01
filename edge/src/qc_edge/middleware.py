@@ -1,7 +1,8 @@
 """Pure ASGI middlewares of the edge gateway (SPEC-007 sections 4.5 and 4.7).
 
 * ``BodySizeLimitMiddleware``: 413 for a declared ``Content-Length`` above the limit, before the
-  body is read; chunked bodies are counted as they arrive.
+  body is read; chunked bodies are counted as they arrive. A route can have a limit of its own
+  (``path_limits``, SPEC-019 section 4.4).
 * ``UnhandledErrorMiddleware``: unexpected exception -> 500 ``{"detail": "internal server
   error"}``, without stack trace in the response; the traceback goes only to the server log.
 * ``RequestLogMiddleware``: one line per request (method, route, status, duration). The query
@@ -13,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Mapping
 
 from fastapi import HTTPException, status
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -63,18 +65,25 @@ def _declared_length(scope: Scope) -> int | None:
 
 
 class BodySizeLimitMiddleware:
-    """Refuse request bodies larger than ``limit`` bytes with 413."""
+    """Refuse request bodies larger than ``limit`` bytes with 413.
 
-    def __init__(self, app: ASGIApp, limit: int) -> None:
+    ``path_limits`` gives the limit of an exact path; every other path uses ``limit``.
+    """
+
+    def __init__(
+        self, app: ASGIApp, limit: int, path_limits: Mapping[str, int] | None = None
+    ) -> None:
         self.app = app
         self.limit = limit
+        self.path_limits = dict(path_limits or {})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        limit = self.path_limits.get(scope.get("path", ""), self.limit)
         declared = _declared_length(scope)
-        if declared is not None and declared > self.limit:
+        if declared is not None and declared > limit:
             await _send_json(send, status.HTTP_413_CONTENT_TOO_LARGE, DETAIL_REQUEST_TOO_LARGE)
             return
 
@@ -86,7 +95,7 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.limit:
+                if received > limit:
                     raise RequestTooLargeError()
             return message
 

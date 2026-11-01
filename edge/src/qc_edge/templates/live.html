@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PartQC — vídeo ao vivo</title>
+<link rel="stylesheet" href="/static/capture.css">
+<style>
+.stage { position: relative; background: #000; border-radius: 0.6rem; overflow: hidden; margin: 0.8rem 0; }
+.stage video { display: block; width: 100%; min-height: 12rem; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<main id="live" data-fps="$fps" data-labels="$labels">
+<h1>PartQC — vídeo ao vivo</h1>
+<label class="field">Lote
+<input type="text" id="lot_id" name="lot_id" maxlength="40" autocomplete="off" placeholder="L-001">
+</label>
+<p class="reminder" id="reminder">Sem pessoas no quadro</p>
+<div class="stage" id="stage">
+<video id="video" autoplay muted playsinline></video>
+<canvas id="overlay"></canvas>
+</div>
+<p id="status" class="status" role="status"></p>
+</main>
+<script src="/static/live.js"></script>
+</body>
+</html>

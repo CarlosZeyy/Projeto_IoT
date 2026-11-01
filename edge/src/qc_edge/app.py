@@ -24,13 +24,21 @@ last successful publication and the cloud connectivity (PT-BR label, with the co
 
 SPEC-041 (R-06, ADR-024): an inspection made with a provisional model goes out with
 ``source=simulated``, and the capture answer and the console say the model is provisional.
+
+SPEC-019: ``GET /live`` (phone page, token in the query) and ``POST /api/live/frame`` (one frame of
+the video, token in the header). A frame only becomes an inspection when the classification is
+stable (``qc_edge.live``), through the same recording path as the capture. With HTTPS on, the
+console QR codes use ``https://`` and there is a second one for ``/live``; the console always shows
+the latency per frame. Frames stay in memory and only an emitted one is written to ``captures/``.
 """
 
 # No ``from __future__ import annotations`` here: FastAPI resolves the ``Depends`` annotations of
 # the route closures at runtime, and a string annotation could not see the local dependencies.
+import asyncio
 import contextlib
 import csv
 import html
+import json
 import logging
 import math
 import os
@@ -99,9 +107,29 @@ from qc_edge.collect import (
 from qc_edge.config import EdgeSettings
 from qc_edge.decision import THRESHOLD_NAMES, Thresholds
 from qc_edge.fsutil import DIR_MODE, create_private_file, make_private_dirs, set_mode
-from qc_edge.inference import InferenceError, Inferencer, is_provisional_version, short_sha
+from qc_edge.inference import (
+    InferenceError,
+    Inferencer,
+    InferenceResult,
+    ModelInfo,
+    is_provisional_version,
+    short_sha,
+)
 from qc_edge.jpeg import write_capture_jpeg
-from qc_edge.limits import CAPTURE_MAX_BYTES, CAPTURE_MAX_REQUEST_BYTES
+from qc_edge.limits import (
+    CAPTURE_MAX_BYTES,
+    CAPTURE_MAX_REQUEST_BYTES,
+    LIVE_MAX_BYTES,
+    LIVE_MAX_REQUEST_BYTES,
+)
+from qc_edge.live import (
+    LIVE_SESSION_PATTERN,
+    LIVE_SWEEP_INTERVAL_S,
+    FrameLatency,
+    LiveSessions,
+    LiveSessionsFullError,
+    LiveStateMachine,
+)
 from qc_edge.middleware import (
     BodySizeLimitMiddleware,
     RequestLogMiddleware,
@@ -131,6 +159,9 @@ COLLECT_FIELDS = ("item_id", "object_type", "grade", "labeler", "angle", "notes"
 # (the image).
 MAX_FORM_FIELDS = 16
 MAX_FORM_FILES = 1
+LIVE_FRAME_PATH = "/api/live/frame"
+# lot_id and session, with room to spare; the single file part is the frame.
+MAX_LIVE_FORM_FIELDS = 4
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 PROXY_HEADERS = ("x-forwarded-for", "forwarded", "cf-connecting-ip")
@@ -142,6 +173,7 @@ DETAIL_MODEL_NOT_LOADED = "model not loaded"
 DETAIL_INFERENCE_FAILED = "inference failed"
 DETAIL_PERSIST_FAILED = "failed to persist inspection"
 DETAIL_INTERNAL = "internal server error"
+DETAIL_TOO_MANY_LIVE_SESSIONS = "too many live sessions"
 
 INVALID_SESSION_HTML = (
     '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">'
@@ -234,6 +266,15 @@ class CaptureForm:
 
 
 @dataclass(frozen=True)
+class LiveFrameForm:
+    """Validated fields of ``POST /api/live/frame``."""
+
+    image: bytes
+    lot_id: str
+    session: str
+
+
+@dataclass(frozen=True)
 class RecentInspection:
     """One row of the console table."""
 
@@ -255,6 +296,20 @@ def _verdict(object_type: ObjectType, grade: Grade | None) -> tuple[bool | None,
         return None, VERDICT_UNKNOWN if object_type is ObjectType.UNKNOWN else VERDICT_UNGRADED
     approved = not is_defective(grade)
     return approved, VERDICT_APPROVED if approved else VERDICT_REJECTED
+
+
+def _labels_pt(
+    object_type: ObjectType, grade: Grade | None, *, provisional: bool
+) -> tuple[bool | None, dict[str, str | None]]:
+    """``(approved, labels_pt)`` of a result, as the page shows them (SPEC-041 section 4.7)."""
+    approved, verdict = _verdict(object_type, grade)
+    if provisional:
+        verdict += VERDICT_PROVISIONAL_SUFFIX
+    return approved, {
+        "object_type": OBJECT_TYPE_LABELS_PT[object_type],
+        "grade": GRADE_LABELS_PT[grade] if grade is not None else None,
+        "verdict": verdict,
+    }
 
 
 def _qr_svg(text: str) -> str:
@@ -306,7 +361,10 @@ class _CaptureStore:
         if self._root not in created:
             set_mode(self._root, DIR_MODE)
 
-    def save(self, inspection: InspectionCreate, data: bytes, image: Image.Image) -> Path:
+    def save(
+        self, inspection: InspectionCreate, data: bytes, image: Image.Image | None = None
+    ) -> Path:
+        """``image`` is needed only for a PNG; without it, ``data`` (a JPEG) is written as is."""
         day_dir = self._root / inspection.inspected_at.astimezone(UTC).strftime("%Y-%m-%d")
         path = day_dir / f"{inspection.inspection_id}.jpg"
         with self._lock:
@@ -314,7 +372,10 @@ class _CaptureStore:
             handle = os.fdopen(create_private_file(path), "wb")
         try:
             with handle:
-                write_capture_jpeg(handle, data, image)
+                if image is None:
+                    handle.write(data)
+                else:
+                    write_capture_jpeg(handle, data, image)
         except BaseException:
             self.remove(path)
             raise
@@ -359,7 +420,33 @@ def create_app(
     dataset = DatasetWriter(settings.DATASET_DIR, clock=clock)
     console_template = Template((TEMPLATES_DIR / "console.html").read_text(encoding="utf-8"))
     capture_page = _render_capture_page()
+    live_page = _render_live_page(settings.LIVE_FPS, inferencer)
     services = tuple(background)
+    tls = settings.tls_enabled
+    scheme = "https" if tls else "http"
+    forbidden_page = FORBIDDEN_HTML.replace("http://", f"{scheme}://")
+    frame_latency = FrameLatency()
+
+    def new_live_machine() -> LiveStateMachine:
+        return LiveStateMachine(
+            window=settings.LIVE_WINDOW,
+            min_agree=settings.LIVE_MIN_AGREE,
+            min_confidence=settings.LIVE_MIN_CONFIDENCE,
+            empty_frames=settings.LIVE_EMPTY_FRAMES,
+        )
+
+    live_sessions = LiveSessions(
+        clock, machine_factory=new_live_machine, max_sessions=settings.LIVE_MAX_SESSIONS
+    )
+
+    async def sweep_live_sessions() -> None:
+        """Frames of a phone that closed the page leave memory without waiting for a request."""
+        while True:
+            await asyncio.sleep(LIVE_SWEEP_INTERVAL_S)
+            try:
+                live_sessions.sweep()
+            except Exception:
+                logger.exception("live session sweep failed")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -372,6 +459,7 @@ def create_app(
             )
         store.prepare()  # SEC-06: captures/ is 0700 before any request is served
         started: list[BackgroundService] = []
+        sweeper = asyncio.create_task(sweep_live_sessions())
         try:
             for service in services:
                 service.start()
@@ -384,6 +472,10 @@ def create_app(
                     service.stop()
                 except Exception:
                     logger.exception("background service failed to stop")
+            sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sweeper
+            live_sessions.clear()
             logger.info("qc-edge stopped")
 
     app = FastAPI(
@@ -395,9 +487,14 @@ def create_app(
     )
     app.state.settings = settings
     app.state.session_token = session_token
+    app.state.live_sessions = live_sessions
 
     # Added last = outermost: the request log sees every status, including 413 and 500.
-    app.add_middleware(BodySizeLimitMiddleware, limit=CAPTURE_MAX_REQUEST_BYTES)
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        limit=CAPTURE_MAX_REQUEST_BYTES,
+        path_limits={LIVE_FRAME_PATH: LIVE_MAX_REQUEST_BYTES},
+    )
     app.add_middleware(UnhandledErrorMiddleware)
     app.add_middleware(RequestLogMiddleware)
 
@@ -463,10 +560,40 @@ def create_app(
             raise _unprocessable("lot_id")
         return CaptureForm(image=data, lot_id=lot_id, mode=capture_mode)
 
-    def decode(data: bytes) -> Image.Image | JSONResponse:
-        """``load_capture_image`` (415 or 500 as a response); called holding a decode slot."""
+    async def read_live_form(request: Request) -> LiveFrameForm:
+        """Same order as ``read_capture_form``: token (401), image size (413), fields (422)."""
+        require_header_token(request)
+        form = await request.form(max_files=MAX_FORM_FILES, max_fields=MAX_LIVE_FORM_FIELDS)
         try:
-            return limits.load_capture_image(data)
+            upload = form.get("image")
+            data: bytes | None = None
+            if isinstance(upload, UploadFile):
+                data = await upload.read(LIVE_MAX_BYTES + 1)
+                if len(data) > LIVE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=DETAIL_IMAGE_TOO_LARGE,
+                    )
+            lot_id = form.get("lot_id")
+            session = form.get("session")
+        finally:
+            await form.close()
+
+        if data is None:
+            raise _unprocessable("image")
+        if not isinstance(lot_id, str) or re.fullmatch(LOT_ID_PATTERN, lot_id) is None:
+            raise _unprocessable("lot_id")
+        if not isinstance(session, str) or re.fullmatch(LIVE_SESSION_PATTERN, session) is None:
+            raise _unprocessable("session")
+        return LiveFrameForm(image=data, lot_id=lot_id, session=session)
+
+    def decode(
+        data: bytes, loader: Callable[[bytes], Image.Image] | None = None
+    ) -> Image.Image | JSONResponse:
+        """``loader``, by default ``load_capture_image`` (415 or 500 as a response); called holding
+        a decode slot."""
+        try:
+            return (loader or limits.load_capture_image)(data)
         except InvalidImageError as exc:
             logger.info("capture refused: invalid image (%s)", exc)
             return _error(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"invalid image: {exc}")
@@ -502,31 +629,25 @@ def create_app(
             }
         )
 
-    def inspect(form: CaptureForm) -> JSONResponse:
-        """Steps 3 to 8 of section 4.5; runs in a worker thread holding a decode slot."""
-        image = decode(form.image)
-        if isinstance(image, JSONResponse):
-            return image
+    def record_inspection(
+        model: ModelInfo,
+        lot_id: str | None,
+        inspected_at: datetime,
+        result: InferenceResult,
+        data: bytes,
+        image: Image.Image | None = None,
+    ) -> InspectionCreate | JSONResponse:
+        """The path of every inspection, by photo or by video: contract, photo, sink, console.
 
-        if inferencer is None:
-            return _error(status.HTTP_503_SERVICE_UNAVAILABLE, DETAIL_MODEL_NOT_LOADED)
-
-        inspection_id = uuid.uuid4()
-        inspected_at = clock()
-        try:
-            result = inferencer.infer(image)
-        except InferenceError as exc:
-            logger.warning("inference failed: %s", exc)
-            return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, DETAIL_INFERENCE_FAILED)
-        model = inferencer.model_info
-        provisional = is_provisional_version(model.model_version)
-
+        A ``SinkError`` removes the photo and is answered with 503; any other failure removes it
+        and propagates (500).
+        """
         # Built (and validated by the contract) before the photo is written, so an invalid
         # result never leaves an orphan file behind.
         inspection = InspectionCreate(
-            inspection_id=inspection_id,
+            inspection_id=uuid.uuid4(),
             device_id=settings.DEVICE_ID,
-            lot_id=form.lot_id,
+            lot_id=lot_id,
             inspected_at=inspected_at,
             object_type=result.object_type,
             grade=result.grade,
@@ -537,10 +658,11 @@ def create_app(
             model_version=model.model_version,
             model_sha256=model.model_sha256,
             latency_ms=result.latency_ms,
-            source=Source.SIMULATED if provisional else Source.LIVE,  # R-06, ADR-024
+            # R-06, ADR-024
+            source=Source.SIMULATED if is_provisional_version(model.model_version) else Source.LIVE,
         )
 
-        path = store.save(inspection, form.image, image)
+        path = store.save(inspection, data, image)
         try:
             sink.put(inspection)
         except SinkError as exc:
@@ -561,9 +683,6 @@ def create_app(
                     grade=inspection.grade,
                 )
             )
-        approved, verdict = _verdict(inspection.object_type, inspection.grade)
-        if provisional:
-            verdict += VERDICT_PROVISIONAL_SUFFIX
         logger.info(
             "capture accepted inspection_id=%s lot_id=%s object_type=%s grade=%s latency_ms=%d",
             inspection.inspection_id,
@@ -572,27 +691,112 @@ def create_app(
             inspection.grade.value if inspection.grade is not None else "-",
             inspection.latency_ms,
         )
+        return inspection
+
+    def inspect(form: CaptureForm) -> JSONResponse:
+        """Steps 3 to 8 of section 4.5; runs in a worker thread holding a decode slot."""
+        image = decode(form.image)
+        if isinstance(image, JSONResponse):
+            return image
+
+        if inferencer is None:
+            return _error(status.HTTP_503_SERVICE_UNAVAILABLE, DETAIL_MODEL_NOT_LOADED)
+
+        inspected_at = clock()
+        try:
+            result = inferencer.infer(image)
+        except InferenceError as exc:
+            logger.warning("inference failed: %s", exc)
+            return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, DETAIL_INFERENCE_FAILED)
+        model = inferencer.model_info
+
+        inspection = record_inspection(model, form.lot_id, inspected_at, result, form.image, image)
+        if isinstance(inspection, JSONResponse):
+            return inspection
+        approved, labels = _labels_pt(
+            inspection.object_type,
+            inspection.grade,
+            provisional=is_provisional_version(model.model_version),
+        )
         return JSONResponse(
             content={
                 "inspection": inspection.model_dump(mode="json"),
-                "labels_pt": {
-                    "object_type": OBJECT_TYPE_LABELS_PT[inspection.object_type],
-                    "grade": (
-                        GRADE_LABELS_PT[inspection.grade] if inspection.grade is not None else None
-                    ),
-                    "verdict": verdict,
-                },
+                "labels_pt": labels,
                 "approved": approved,
             }
         )
 
-    @app.post("/api/capture")
-    async def capture(form: Annotated[CaptureForm, Depends(read_capture_form)]) -> JSONResponse:
+    def live_frame_step(form: LiveFrameForm) -> JSONResponse:
+        """SPEC-019 section 4.4, after the fields; runs in a worker thread holding a decode slot.
+
+        Order: image (415), model (503), sessions (429). A failed inference does not reach the
+        session, and a failed recording resets it: the tentative frame wrote nothing, so the next
+        stable window emits again and there is still one inspection per part.
+        """
+        image = decode(form.image, limits.load_live_image)
+        if isinstance(image, JSONResponse):
+            return image
+        if inferencer is None:
+            return _error(status.HTTP_503_SERVICE_UNAVAILABLE, DETAIL_MODEL_NOT_LOADED)
+        try:
+            live_sessions.admit(form.session)
+        except LiveSessionsFullError:
+            return _error(status.HTTP_429_TOO_MANY_REQUESTS, DETAIL_TOO_MANY_LIVE_SESSIONS)
+
+        inspected_at = clock()
+        try:
+            result = inferencer.infer(image)
+        except InferenceError as exc:
+            logger.warning("inference failed: %s", exc)
+            return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, DETAIL_INFERENCE_FAILED)
+        frame_latency.record(result.latency_ms)
+        try:
+            step = live_sessions.feed(form.session, form.lot_id, result, form.image, inspected_at)
+        except LiveSessionsFullError:
+            return _error(status.HTTP_429_TOO_MANY_REQUESTS, DETAIL_TOO_MANY_LIVE_SESSIONS)
+
+        model = inferencer.model_info
+        inspection: InspectionCreate | None = None
+        if step.emit is not None:
+            emitted, frame, emitted_at = step.emit
+            try:
+                recorded = record_inspection(model, form.lot_id, emitted_at, emitted, frame)
+            except BaseException:
+                live_sessions.reset(form.session)
+                raise
+            if isinstance(recorded, JSONResponse):
+                live_sessions.reset(form.session)
+                return recorded
+            inspection = recorded
+
+        _, labels = _labels_pt(
+            result.object_type,
+            result.grade,
+            provisional=is_provisional_version(model.model_version),
+        )
+        return JSONResponse(
+            content={
+                "state": step.state,
+                "stability": step.stability,
+                "result": {
+                    "object_type": result.object_type.value,
+                    "grade": result.grade.value if result.grade is not None else None,
+                    "type_confidence": float(result.type_confidence),
+                    "labels_pt": labels,
+                },
+                "inspection": inspection.model_dump(mode="json") if inspection else None,
+            }
+        )
+
+    async def run_with_decode_slot(
+        work: Callable[[Any], JSONResponse], form: CaptureForm | LiveFrameForm
+    ) -> JSONResponse:
         """Waits for a decode slot on the event loop, then runs the blocking work in one thread.
 
         SEC-02: every decode of qc_edge (header probe included) holds one of these slots, in both
-        modes (SPEC-010 section 4.1). SEC-03: a request waiting for a slot uses no worker thread,
-        so the console and ``/api/status`` keep answering during a burst.
+        capture modes (SPEC-010 section 4.1) and in the live frames (SPEC-019 section 4.4). SEC-03:
+        a request waiting for a slot uses no worker thread, so the console and ``/api/status`` keep
+        answering during a burst.
         """
         acquired = False
         with anyio.move_on_after(decode_wait_s):
@@ -602,12 +806,20 @@ def create_app(
             logger.warning("capture refused: no decode slot within %.1f s", decode_wait_s)
             return _error(status.HTTP_503_SERVICE_UNAVAILABLE, DETAIL_SERVER_BUSY)
         try:
-            work = collect if form.mode is CaptureMode.COLLECT else inspect
             # A single call; abandon_on_cancel stays False, so a client that disconnects keeps
             # the slot until the thread really finishes.
             return await anyio.to_thread.run_sync(work, form)
         finally:
             decode_slots.release()
+
+    @app.post("/api/capture")
+    async def capture(form: Annotated[CaptureForm, Depends(read_capture_form)]) -> JSONResponse:
+        work = collect if form.mode is CaptureMode.COLLECT else inspect
+        return await run_with_decode_slot(work, form)
+
+    @app.post(LIVE_FRAME_PATH)
+    async def live_frame(form: Annotated[LiveFrameForm, Depends(read_live_form)]) -> JSONResponse:
+        return await run_with_decode_slot(live_frame_step, form)
 
     @app.get("/api/status", dependencies=[Depends(require_header_token)])
     def api_status() -> dict[str, Any]:
@@ -640,16 +852,24 @@ def create_app(
             )
         return HTMLResponse(capture_page, headers=PAGE_HEADERS)
 
+    @app.get("/live", response_class=HTMLResponse)
+    def live_page_route(request: Request) -> HTMLResponse:
+        if not token_matches(request.query_params.get(SESSION_TOKEN_QUERY), session_token):
+            return HTMLResponse(
+                INVALID_SESSION_HTML, status_code=status.HTTP_401_UNAUTHORIZED, headers=PAGE_HEADERS
+            )
+        return HTMLResponse(live_page, headers=PAGE_HEADERS)
+
     @app.get("/", response_class=HTMLResponse)
     def console(request: Request) -> HTMLResponse:
-        if not _is_local_console_request(request, settings.EDGE_PORT):
+        if not _is_local_console_request(request, settings.EDGE_PORT, tls=tls):
             return HTMLResponse(
-                FORBIDDEN_HTML, status_code=status.HTTP_403_FORBIDDEN, headers=PAGE_HEADERS
+                forbidden_page, status_code=status.HTTP_403_FORBIDDEN, headers=PAGE_HEADERS
             )
         ips = netinfo.detect_lan_ips()  # recomputed on every render (hotspot switch)
         requested_ip = request.query_params.get("ip")
         ip = requested_ip if requested_ip in ips else ips[0]
-        capture_url = _capture_url(ip, settings.EDGE_PORT, session_token)
+        capture_url = _page_url(scheme, ip, settings.EDGE_PORT, "/capture", session_token)
         with recent_lock:
             rows = list(recent)
         page = console_template.substitute(
@@ -658,6 +878,8 @@ def create_app(
             qr_svg=_qr_svg(capture_url),
             capture_url=html.escape(capture_url),
             other_ips=_other_ips_html(ips, ip),
+            live_pairing=_live_pairing_html(ip, settings.EDGE_PORT, session_token) if tls else "",
+            live_latency=html.escape(_live_latency_text(frame_latency)),
             model_state=html.escape(_model_state(inferencer)),
             thresholds=_thresholds_html(inferencer),
             **_sink_fields(sink),
@@ -682,6 +904,52 @@ def _render_capture_page() -> str:
         for grade in GRADE_ORDER
     )
     return template.substitute(object_type_options=object_types, grade_options=grades)
+
+
+def _render_live_page(fps: int, inferencer: Inferencer | None) -> str:
+    """``live.html``: the frame rate and the labels the page needs to show an emitted inspection.
+
+    The response brings ``labels_pt`` only for the current frame, and the emitted one can be
+    different. The labels and the verdict of each grade come from here, so the page repeats
+    neither ``qc_contracts.labels`` nor the defect rule; ``""`` is a known type without a grade.
+    """
+    provisional = inferencer is not None and is_provisional_version(
+        inferencer.model_info.model_version
+    )
+    known_type = ObjectType.SCREW  # the verdict without a grade only depends on not being unknown
+    verdicts = {
+        grade.value: _labels_pt(known_type, grade, provisional=provisional)[1]["verdict"]
+        for grade in GRADE_ORDER
+    }
+    verdicts[""] = _labels_pt(known_type, None, provisional=provisional)[1]["verdict"]
+    labels = {
+        "object_types": {member.value: label for member, label in OBJECT_TYPE_LABELS_PT.items()},
+        "grades": {member.value: label for member, label in GRADE_LABELS_PT.items()},
+        "verdicts": verdicts,
+    }
+    template = Template((TEMPLATES_DIR / "live.html").read_text(encoding="utf-8"))
+    return template.substitute(
+        fps=fps, labels=html.escape(json.dumps(labels, ensure_ascii=False), quote=True)
+    )
+
+
+def _live_pairing_html(ip: str, port: int, token: str) -> str:
+    """Second QR code of the console; the page only opens the camera over HTTPS (SPEC-019)."""
+    url = _page_url("https", ip, port, "/live", token)
+    return (
+        '<div class="qr" id="live-qr">'
+        f"{_qr_svg(url)}</div>\n<div>\n<p>Vídeo ao vivo: leia este QR code ou abra:</p>\n"
+        f'<p class="url" id="live-url">{html.escape(url)}</p>\n</div>'
+    )
+
+
+def _live_latency_text(latency: FrameLatency) -> str:
+    """Last latency per frame and p95 of the last 100 frames (SPEC-019 section 4.4)."""
+    summary = latency.summary()
+    if summary is None:
+        return "—"
+    last, p95 = summary
+    return f"última {last} ms · p95 {p95} ms"
 
 
 def _coverage_html(dataset: DatasetWriter) -> str:
@@ -736,9 +1004,9 @@ def _coverage_row_html(cell: CoverageCell) -> str:
     return f"<tr{css}>{tds}</tr>"
 
 
-def _capture_url(ip: str, port: int, token: str) -> str:
-    """URL of the phone page, encoded in the pairing QR code."""
-    return f"http://{ip}:{port}/capture?{SESSION_TOKEN_QUERY}={quote(token, safe='')}"
+def _page_url(scheme: str, ip: str, port: int, path: str, token: str) -> str:
+    """URL of a phone page, encoded in a pairing QR code."""
+    return f"{scheme}://{ip}:{port}{path}?{SESSION_TOKEN_QUERY}={quote(token, safe='')}"
 
 
 def _unprocessable(field: str) -> HTTPException:
@@ -747,7 +1015,7 @@ def _unprocessable(field: str) -> HTTPException:
     )
 
 
-def _is_local_console_request(request: Request, port: int) -> bool:
+def _is_local_console_request(request: Request, port: int, *, tls: bool = False) -> bool:
     """Loopback client, no proxy header and one loopback ``Host`` (docs/architecture.md §9).
 
     The ``Host`` check (SPEC-025 section 4.1) stops DNS rebinding: a hostile page whose name
@@ -759,7 +1027,7 @@ def _is_local_console_request(request: Request, port: int) -> bool:
     if any(name in request.headers for name in PROXY_HEADERS):
         return False
     hosts = request.headers.getlist("host")
-    if len(hosts) != 1 or not is_allowed_console_host(hosts[0], port):
+    if len(hosts) != 1 or not is_allowed_console_host(hosts[0], port, tls=tls):
         # The value comes from the client: only the reason is logged.
         logger.warning("console refused: host not allowed")
         return False
