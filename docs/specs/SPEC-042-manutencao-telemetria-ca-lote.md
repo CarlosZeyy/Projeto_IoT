@@ -11,7 +11,7 @@
 | Requisitos cobertos | RF-02, RF-10, RNF-05; R-02 (mantida, ver §1), R-06, R-12, R-14 |
 | ADRs relevantes | ADR-013 (o lote é o subgrupo da carta p), ADR-003 |
 
-> **Escopo decidido pelo humano em 2026-11-01:** "Uma SPEC-042 curta desliga a telemetria no código da borda e do treino, e inclui o aviso de remover a CA dos celulares e o lote em uso visível na tela do vídeo." O texto desta SPEC ainda aguarda a aprovação dele.
+> **Escopo decidido pelo humano em 2026-11-01:** "Uma SPEC-042 curta desliga a telemetria no código da borda e do treino, e inclui o aviso de remover a CA dos celulares e o lote em uso visível na tela do vídeo." O texto foi aprovado pelo humano em 2026-11-01.
 
 ## 1. Contexto
 
