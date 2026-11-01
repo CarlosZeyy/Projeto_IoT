@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
+| Status | In Dev |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
@@ -15,9 +15,9 @@
 >
 > **Reaprovada pelo humano em 2026-11-01** ("Sim, codar agora"): o teste do certificado passa a ser depois do merge. Ver o Histórico.
 >
-> **Aguardando reaprovação (ADR-019):** SPEC_ISSUE-01 a 09 e 12 (06 a 09 e 12 dependem do adendo ao relatório, E-1). Ver o Histórico.
+> **Reaprovada pelo orquestrador sob o ADR-019 em 2026-11-01:** SPEC_ISSUE-01 a 09. Ver o Histórico.
 >
-> **Aguardando reaprovação humana:** SPEC_ISSUE-10 (latência no console) e SPEC_ISSUE-11 (§6.4 na Definição de pronto). Ver o Histórico.
+> **Reaprovada pelo humano em 2026-11-01:** SPEC_ISSUE-10, 11 e 12. Ver o Histórico.
 
 ## 1. Contexto
 
@@ -204,3 +204,5 @@ Contexto comum: resultados de inferência montados pelo teste (`InferenceResult`
 | 2026-11-01 | Correção do SPEC_ISSUE-11, atribuído pelo architect à segunda observação do relatório (§8). Antigo: "`docs/architecture.md` §6.1 pelo architect". Novo: "§6.1 e §6.4 pelo architect". Evidência: o §6.4 lista as variáveis da borda, e faltarão `EDGE_TLS_*` e `LIVE_*`. Classificação ADR-019: exige humano (X-3: aponta uma mudança necessária em `docs/architecture.md`; a causa é o §4.6 já aprovado, e não esta correção, mas, na dúvida, a classificação é esta). | Observação do `reviews/SPEC-019/r1-dev-report.md` (`docs/architecture.md`) | Orquestrador (loop da SPEC-019) |
 | 2026-11-01 | Correção do SPEC_ISSUE-12, com achados da conferência pedida pelo orquestrador, fora do relatório. (a) §4.4 e CA-19 novo: antigo, nada sobre `InferenceError`; novo, 500 `inference failed`, sem `feed`, como a SPEC-007 §4.5, passo 5. (b) §4.3: antigo, nada sobre concorrência; novo, `feed`, `reset` e sessões serializados por lock, porque os 2 slots de decodificação (SPEC-007 §4.6) permitem duas requisições simultâneas da mesma sessão, e isso poderia gerar dois `EMIT`, contra o §2. (c) §4.2: antigo, sem definição; novo, `LiveStep.state` é o estado depois do passo, e a janela de resultados continua rolando em `WAIT_REMOVAL`, como o "limpam a janela" já supunha. (d) §4.5: antigo, a página não tinha lote; novo, campo de lote, porque a rota exige `lot_id`. (e) §3.1, CA-09 e CA-14: antigo, "o console oferece também o QR do `/live`"; novo, só com o TLS ligado, porque sem ele a página não abre a câmera e o CA-14 pede o console como antes. (f) §4.1: antigo, "ilegível" sem definição; novo, o arquivo que não abre para leitura, com o PEM inválido falhando no `uvicorn`, como o CA-09 já supunha. (g) §7: antigo, "no pior caso (...) 40 MiB"; novo, 40 MiB com os padrões e 240 MiB nos tetos do §4.6. Classificação ADR-019: elegível (E-1 a E-5 cumpridos; nenhuma exclusão), com a E-1 dependendo do adendo em `reviews/SPEC-019/r1-dev-report.md` que registra este ID e os itens (a) a (g); sem o adendo, exige humano. E-4 tipos 1 e 3: cada item esclarece um trecho, sem mudar o comportamento pedido, e o CA-19 cobre só o (a). X-5: nenhuma rota, variável ou arquivo novos. X-6: nenhum limite muda, e nenhum caso sai. X-7: não toca regra inegociável. X-9: primeira correção destes trechos. | Conferência do architect, a pedido do orquestrador ("confira se há outras contradições do mesmo tipo") | Orquestrador (loop da SPEC-019) |
 | 2026-11-01 | Decisões locais 2 (relógio para trás), 3 (limpeza no `lifespan`) e 7 (`Host` sem porta com `EDGE_PORT=443` e TLS) do relatório aceitas como implementação, sem mudar requisito nem classificação. A 7 fica só para o `Host` de loopback na porta 443 com TLS, e o portão de segurança a confere contra a SPEC-025 §4.1. | `reviews/SPEC-019/r1-dev-report.md` | Orquestrador (loop da SPEC-019) |
+| 2026-11-01 | Correção dos SPEC_ISSUE-01 a 09 aprovada pelo orquestrador sob o ADR-019 e, na 07, a resposta 11 do ADR-024 (commit do architect 77e3e12). | `reviews/SPEC-019/r1-dev-report.md` | Orquestrador (ADR-019) |
+| 2026-11-01 | Correção dos SPEC_ISSUE-10, 11 e 12 reaprovada pelo humano (commit do architect 77e3e12). | Resposta do humano de 2026-11-01, nesta sessão | Orquestrador, a pedido do humano |
