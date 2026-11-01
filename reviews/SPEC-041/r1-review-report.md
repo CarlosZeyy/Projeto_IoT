@@ -11,6 +11,8 @@
 
 Nenhum achado bloqueante ou alto. O código não precisa de rodada nova. **O merge continua impedido pela R-09** até o SPEC_ISSUE-07 (abaixo) ser fechado e até o portão de segurança da tag `security` sair.
 
+**Atualização:** o SPEC_ISSUE-07 foi corrigido e está fechado, e o veredicto vale até `3f233a0`. Ver a seção "Adendo".
+
 ## Achados
 
 | ID | Severidade | Arquivo:linha | Descrição | Sugestão |
@@ -108,6 +110,65 @@ Decorrem da SPEC e do ADR-024, e os relatórios já os declaram.
 - **Depois da correção:** se a reaprovação for delegada, ela ainda precisa da conferência do reviewer e do portão de segurança (ADR-019, passo 3), que este relatório não cobre, porque o commit ainda não existe. O APPROVED acima vale para o diff até `ca431e2`.
 
 Nenhum `SPEC_ISSUE` "exige humano" por reaprovação fora dos limites.
+
+## Adendo: conferência do SPEC_ISSUE-07 (até `3f233a0`)
+
+**Resultado: a reaprovação está dentro dos limites do ADR-019, e o SPEC_ISSUE-07 está fechado. O veredicto continua APPROVED, agora para o diff até `3f233a0`.** Nenhum achado novo: a contagem segue 0 bloqueantes, 0 altos, 1 médio, 4 baixos. Nenhum `SPEC_ISSUE` novo, nem "exige humano".
+
+Fiz esta conferência pelo `git show` de `59bd963`, `adf8c4a` e `806e804` e pelo código. O security-report só serviu para saber o que já estava apontado.
+
+### Reaprovação (checklist §1 e §6; ADR-019)
+
+| Item | Resultado | Evidência |
+|---|---|---|
+| E-1 Origem | ✅ | SPEC_ISSUE-07, com ID, na seção "SPEC_ISSUE" deste relatório |
+| E-2 Autoria | ✅ | `adf8c4a`, `Agent: architect`, toca só o arquivo da SPEC (+4 −1) |
+| E-3 Estado | ✅ | SPEC aprovada pelo humano (Histórico, `Draft` → `Ready`) e `Blocked` por este `SPEC_ISSUE` desde `59bd963`, que o `docs/plan.md` cita |
+| E-4 Natureza | ✅ | Tipo 1 na frase do §4.5, sem mudar o comportamento pedido; tipo 4 no aviso do topo e no Histórico |
+| E-5 Abrangência | ✅ | As 4 linhas acrescentadas são a frase do §4.5, a linha do Histórico e o aviso do topo, com a linha em branco que o separa |
+| X-1, X-2, X-4 | ✅ | Nada de SPEC nova, ADR ou contrato. O ADR-024 só pede a recusa no `TrainConfig`, sem citar a saída do `export` |
+| X-3 | ✅ | `ml/README.md:237` repete a frase antiga, mas a correção vale sem mudar o README: o erro é anterior a ela. `docs/architecture.md`, `docs/PRD.md`, `docs/dataset-protocol.md`, `docs/plan.md` e o ADR-024 não prometem essa saída. O README segue como o RV-02, baixo |
+| X-5 | ✅ | Nada novo: `export.py` importa torch no topo desde a sua criação (`2957070`, SPEC-012), e nenhum código mudou |
+| X-6 | ✅ | Nenhum CA muda, e o CA-15 não cita o `export`. O caso de erro continua: com o extra, saída 2; sem ele, nada roda nem é gravado. A saída do `export` não é valor do PRD, da arquitetura, do contrato nem limite de segurança |
+| X-7 | ✅ | A frase descreve a guarda do ADR-024 e não verifica regra inegociável: a SPEC marca com regra o CA-08 (R-11), a Parte B (R-06) e o CA-21 (R-02), e não o bloco "Guardas do caminho oficial", onde fica o CA-15. **A validade não depende da resposta 11**, que o Histórico cita só como reserva. Por isso, o RV-01 e o SEC-41-02 não afetam esta correção |
+| X-9 | ✅ | Primeira correção da frase: `git log -G` só traz `ffb50c0` (texto original) e `adf8c4a`. Ninguém marcou "exige humano". A pergunta 10 do `docs/professor-questions.md` trata do modelo provisório, mas a correção não depende da resposta |
+| Registro | ✅ | Classificação `elegível` no Histórico, com o texto antigo, o novo e a evidência. `806e804` é um commit só de status, com `Agent: orchestrator`: muda status, aviso do topo, linha de aprovação e a linha do plano |
+
+**O texto novo está certo.** "Sem esse extra", em vez do "Sem torch" que sugeri, é mais preciso, porque `export.py:35-36` também importa `onnx`, e os dois são do extra `train` (`ml/pyproject.toml:18`). Rodei os cinco comandos com uma config provisória:
+
+| Ambiente | `train`, `thresholds`, `evaluate`, `pipeline` | `export` |
+|---|---|---|
+| Com o extra `train` | saída 2, mensagem certa | saída 2, mensagem certa |
+| Sem torch, sem onnx ou sem os dois | saída 2, mensagem certa | saída 1, `ModuleNotFoundError` |
+
+Nenhum deles gravou artefato. O ambiente "sem" foi simulado, bloqueando os módulos no `sys.modules`, sem um ambiente real sem o extra.
+
+**Não verificável pelo repositório:** se o orquestrador informou o humano na sessão, com o texto antigo, o novo e o motivo (ADR-019, passo 2).
+
+### Commits depois de `673ccaa`
+
+Nenhum muda código de produção nem testes. `git diff --name-only 673ccaa..HEAD` traz só `docs/plan.md`, o arquivo da SPEC e `reviews/SPEC-041/r1-security-report.md`.
+
+| Commit | `Agent:` | Arquivos |
+|---|---|---|
+| `59bd963` | orchestrator | `docs/plan.md`, SPEC |
+| `adf8c4a` | architect | SPEC |
+| `806e804` | orchestrator | `docs/plan.md`, SPEC |
+| `3f233a0` | security-devops | `reviews/SPEC-041/r1-security-report.md` |
+
+De `ca431e2`, o último commit de código que revisei, até `3f233a0`, soma-se só este relatório. Por isso, o que foi revisado e testado em `ca431e2` continua valendo. Os quatro commits têm a identidade do projeto, e a busca por segredos nesse diff só achou a menção a `service_role` no texto do security-report.
+
+### O que rodei
+
+- `ml/tests/acceptance/test_spec_041.py`, com o filtro `ca15 or export_with_the_train_extra or official_guard`, com o extra `train` e sem banco: **7 passed**.
+- As reproduções da tabela acima, em diretórios temporários.
+
+**Não rodei** a suíte inteira nem nada com banco, como pedido. Para ela, vale o que este relatório já diz sobre o test-report e o CI do PR.
+
+### O que falta para o merge
+
+- A seção "Reaprovações sob o ADR-019" no PR, com as seis delegadas (01, 02, 03, 05, 06 e 07), a 04 como humana e a resposta 11 (RV-01).
+- Os checks do PR verdes e as decisões do humano listadas no security-report (SEC-41-01 e SEC-41-02). Elas não são desta conferência.
 
 ## Declaração
 
