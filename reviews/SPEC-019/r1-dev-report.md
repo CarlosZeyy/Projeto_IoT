@@ -76,3 +76,15 @@ Nada aqui pede correção na SPEC. Estão listadas para o architect apontar, nes
 - [ ] Testes unitários do autor: não escritos nem rodados
 - [ ] `.env.example`: não alterado, porque a implementação não começou
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
+
+## SPEC_ISSUE levantados na correção (orquestrador)
+
+Encontrados pelo architect ao avaliar as decisões locais e as observações deste relatório, a pedido do orquestrador. O texto antigo, o novo e a evidência de cada um estão no Histórico da SPEC.
+
+- **SPEC_ISSUE-06:** página do `/live` em `static/`, respondendo sem token.
+- **SPEC_ISSUE-07:** janela guardava bytes de quadros que nunca seriam gravados (R-14).
+- **SPEC_ISSUE-08:** formato e limite de corpo da rota de quadros.
+- **SPEC_ISSUE-09:** o CA-08 não conseguia exercitar a janela de cada sessão.
+- **SPEC_ISSUE-10:** o CA-12 pedia latência no console, fora do §3.1.
+- **SPEC_ISSUE-11:** a Definição de pronto citava só o §6.1 da `architecture.md`.
+- **SPEC_ISSUE-12:** erro de inferência, trava por sessão, estado em `WAIT_REMOVAL`, lote, QR do `/live` e textos.
