@@ -771,6 +771,29 @@ def test_page_files_are_self_contained_and_follow_the_section() -> None:
     assert script.index("!window.isSecureContext") < script.index(".getUserMedia(")
 
 
+def _js_function(script: str, name: str) -> str:
+    """Source of a top-level function of ``live.js``: two-space indent, closed by ``  }``."""
+    start = script.index(f"  function {name}(")
+    return script[start : script.index("\n  }\n", start)]
+
+
+def test_overlay_gives_the_verdict_its_own_line_and_fits_every_line() -> None:
+    """RV-01 of SPEC-019: the provisional warning (R-06) must never be cut off the canvas.
+
+    The suite runs no browser, so this only pins the shape of the code; the measures in a real
+    browser are in the dev report of the round.
+    """
+    script = (STATIC_DIR / "live.js").read_text(encoding="utf-8")
+    lines = _js_function(script, "resultLines")
+    assert "labels.verdict," in lines
+    assert "—" not in lines
+    fit = _js_function(script, "fitFont")
+    assert "ctx.measureText(line).width > maxWidth" in fit
+    band = _js_function(script, "drawBand")
+    assert "fitFont(ctx, line" in band
+    assert "width - 2 * BAND_MARGIN" in band
+
+
 def test_log_of_the_page_and_the_route_never_has_the_token(
     make_rig: Callable[..., _Rig], caplog: pytest.LogCaptureFixture
 ) -> None:

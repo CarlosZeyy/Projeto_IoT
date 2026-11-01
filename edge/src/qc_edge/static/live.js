@@ -5,6 +5,7 @@
   "use strict";
 
   var MAX_SIDE = 640, JPEG_QUALITY = 0.8, EMIT_SHOW_MS = 2000, FRAME_TIMEOUT_MS = 15000;
+  var BAND_MIN_PX = 56, BAND_LINE_PX = 22, BAND_MARGIN = 10, BAND_FONT = "system-ui, sans-serif";
   var LOT_STORE_KEY = "partqc.lot_id";  // the same key of the capture page
   var LOT_RE = /^[A-Za-z0-9_-]{1,40}$/;  // same rule as the server (re.fullmatch)
   var STATE_LABELS = { IDLE: "aguardando peça", DETECTING: "analisando", EMIT: "peça registrada",
@@ -65,13 +66,27 @@
     } catch (e) { /* ignore */ }
   }
 
-  function drawBand(ctx, width, top, height, color, lines) {
+  // Largest font, up to `size`, that keeps the whole line within `maxWidth`.
+  function fitFont(ctx, line, weight, size, maxWidth) {
+    ctx.font = weight + size + "px " + BAND_FONT;
+    while (size > 1 && ctx.measureText(line).width > maxWidth) {
+      size -= 1;
+      ctx.font = weight + size + "px " + BAND_FONT;
+    }
+  }
+
+  // No line may be cut, at any width or video proportion: the verdict and the warning of a
+  // provisional model are here (section 4.4, R-06).
+  function drawBand(ctx, width, height, color, lines) {
+    var band = Math.max(BAND_MIN_PX, BAND_LINE_PX * lines.length, Math.round(height / 6));
+    var row = band / lines.length;
     ctx.fillStyle = color;
-    ctx.fillRect(0, top, width, height);
+    ctx.fillRect(0, 0, width, band);
     ctx.fillStyle = "#fff";
+    ctx.textBaseline = "middle";
     lines.forEach(function (line, index) {
-      ctx.font = (index === 0 ? "bold " : "") + Math.round(height / (lines.length + 0.6)) + "px system-ui, sans-serif";
-      ctx.fillText(line, 10, top + (index + 1) * height / (lines.length + 0.2) - 6);
+      fitFont(ctx, line, index === 0 ? "bold " : "", Math.round(band / (lines.length + 0.6)), width - 2 * BAND_MARGIN);
+      ctx.fillText(line, BAND_MARGIN, (index + 0.5) * row);
     });
   }
 
@@ -83,7 +98,8 @@
 
   function resultLines(step) {
     var labels = step.result.labels_pt;
-    return [labels.object_type + (labels.grade === null ? "" : " " + labels.grade) + " — " + labels.verdict,
+    return [labels.object_type + (labels.grade === null ? "" : " " + labels.grade),
+      labels.verdict,
       Math.round(step.result.type_confidence * 100) + "% · " + (STATE_LABELS[step.state] || step.state)];
   }
 
@@ -95,11 +111,10 @@
     overlay.height = height;
     var ctx = overlay.getContext("2d");
     ctx.clearRect(0, 0, width, height);
-    var band = Math.max(56, Math.round(height / 6));
     if (emitted) {
-      drawBand(ctx, width, 0, band, "rgba(30, 142, 62, 0.9)", emittedLines(emitted));
+      drawBand(ctx, width, height, "rgba(30, 142, 62, 0.9)", emittedLines(emitted));
     } else if (last) {
-      drawBand(ctx, width, 0, band, "rgba(0, 0, 0, 0.6)", resultLines(last));
+      drawBand(ctx, width, height, "rgba(0, 0, 0, 0.6)", resultLines(last));
     }
     if (last) {
       ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
