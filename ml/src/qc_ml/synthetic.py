@@ -264,6 +264,7 @@ def _write_images(
     n_images: int,
     start: datetime,
     rng: np.random.Generator,
+    labeler: str = LABELER,
 ) -> list[list[str]]:
     rows: list[list[str]] = []
     folder = root / RAW_DIR / object_type / (grade or NO_GRADE_DIR)
@@ -280,7 +281,7 @@ def _write_images(
                 item_id,
                 object_type,
                 grade or "",
-                LABELER,
+                labeler,
                 str(angle),
                 ts.strftime(CAPTURED_AT_FORMAT),
                 CAPTURE_DEVICE,
@@ -320,6 +321,7 @@ def make_synthetic_dataset(
     external_tool_items_per_type: int = 0,
     power_tool_items_per_type: int = 0,
     external_power_tool_items_per_type: int = 0,
+    labeler: str = LABELER,
 ) -> Path:
     """Create a synthetic dataset in ``root`` and return ``root``.
 
@@ -361,6 +363,10 @@ def make_synthetic_dataset(
       that continue the ``XT-`` sequence after the external hand tools, each with 1 image
       (angle 0) and one ``external`` line with the source ``synthetic`` (and the registry).
 
+    SPEC-041 section 3.1: ``items_per_stratum = 0`` is accepted when
+    ``external_items_per_stratum > 0`` (a dataset only with external images), and ``labeler`` goes
+    to every manifest row. Without these values the files are byte for byte the same.
+
     ``input_sha256`` is the SHA-256 of the file written. With ``c = k = t = e = p = q = 0`` (the
     default) the files are byte for byte the ones of SPEC-011, and neither ``sources.csv`` nor
     ``external_sources.csv`` is created. The own items come first, then the contributor and
@@ -369,13 +375,15 @@ def make_synthetic_dataset(
 
     Raises:
         FileExistsError: ``root/manifest.csv`` already exists.
-        ValueError: non-positive counts, negative ``c``/``k``/``t``/``e``/``p``/``q``, too many
+        ValueError: non-positive counts (``items_per_stratum = 0`` needs ``k > 0``), negative
+            ``c``/``k``/``t``/``e``/``p``/``q``, too many
             items of a type (``T-`` items share one sequence: at most 999 over the 25 hand tool
             strata and the power tools; ``XT-`` items at most 9999), or ``c > 0`` with an own
             item numbered 501 or more (it would collide with a contributor item, SPEC-037
             section 4.5).
     """
-    if items_per_stratum < 1 or images_per_item < 1:
+    only_external = items_per_stratum == 0 and external_items_per_stratum > 0  # SPEC-041 3.1
+    if (items_per_stratum < 1 and not only_external) or images_per_item < 1:
         raise ValueError("items_per_stratum and images_per_item must be >= 1")
     if external_items_per_stratum < 0 or contributor_items_per_stratum < 0:
         raise ValueError(
@@ -481,7 +489,7 @@ def make_synthetic_dataset(
         if origin == "capture":
             offset = index * images_per_item  # the timestamps of SPEC-011
         start = BASE_TIME + timedelta(seconds=offset)
-        item_rows = _write_images(root, item_id, object_type, grade, n_images, start, rng)
+        item_rows = _write_images(root, item_id, object_type, grade, n_images, start, rng, labeler)
         offset += n_images
         rows += item_rows
         if origin in ("capture", "tool"):  # own items: no line in sources.csv
