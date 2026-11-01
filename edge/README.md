@@ -1,4 +1,4 @@
-# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038, SPEC-040, SPEC-041)
+# qc-edge — gateway de borda (SPEC-007, SPEC-008, SPEC-009, SPEC-010, SPEC-018, SPEC-019, SPEC-020, SPEC-025, SPEC-030, SPEC-034, SPEC-036, SPEC-038, SPEC-040, SPEC-041)
 
 O notebook roda o `qc-edge` na rede local. O celular lê o QR code do console, abre a página `/capture`, fotografa a peça e recebe o resultado. As fotos ficam só no notebook, em `EDGE_DATA_DIR/captures/` (modo inspeção) ou em `DATASET_DIR/raw/` (modo coleta) (R-02, R-14). Nada é servido dessas pastas e nada delas sobe para a nuvem.
 
@@ -7,7 +7,8 @@ Estado atual:
 - o inferenciador real é o `onnxruntime` na CPU, carregado de `MODEL_DIR` (SPEC-008, seção "Trocar o modelo"). Sem `MODEL_DIR` e sem `--stub-model`, o modo inspeção responde 503 `model not loaded`;
 - cada inspeção aceita é gravada no outbox SQLite (`OUTBOX_PATH`) antes da resposta ao celular, e um laço em segundo plano a envia para a `qc-api` quando `DEVICE_API_KEY` e `CLOUD_API_URL` estão definidos (SPEC-009, seção "Envio para a nuvem"). Só o JSON do resultado sobe; a foto nunca (R-02);
 - o modo coleta (SPEC-010) monta o dataset: funciona sem modelo e não chama o inferenciador nem o sink (seção "Modo coleta");
-- um modelo com `-provisional-` no nome serve só para ensaiar o fluxo, e as inspeções dele saem como `source=simulated` (SPEC-041, seção "Modelo provisório").
+- um modelo com `-provisional-` no nome serve só para ensaiar o fluxo, e as inspeções dele saem como `source=simulated` (SPEC-041, seção "Modelo provisório");
+- com HTTPS ligado, a página `/live` mostra o vídeo da câmera traseira e registra uma inspeção por peça, sem disparo (SPEC-019, seção "Vídeo ao vivo (HTTPS)"). Sem HTTPS, a foto por disparo funciona como sempre.
 
 ## Como rodar
 
@@ -46,6 +47,13 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 | `MQTT_PORT` | `1883` | 1 a 65535 |
 | `MQTT_USERNAME`, `MQTT_PASSWORD` | vazios | obrigatórias com `EDGE_PUBLISHER=mqtt` (com ou sem `--stub-model`) e na ponte; faltando uma → código 2 citando a variável. A senha é segredo (R-03): nunca aparece em log, no `/api/status` nem no console |
 | `MQTT_RESPONSE_TIMEOUT_S` | `15` | segundos que a borda espera a resposta da ponte a cada lote; número de 1 a 60 |
+| `EDGE_TLS_CERT`, `EDGE_TLS_KEY` | vazios (HTTP) | caminhos dos PEM (seção "Vídeo ao vivo (HTTPS)"). Só um preenchido, arquivo inexistente ou ilegível, ou a chave com permissão para grupo ou outros → código 2 citando a variável, nunca o conteúdo |
+| `LIVE_WINDOW` | `10` | quadros na janela; inteiro de 3 a 30 |
+| `LIVE_MIN_AGREE` | `8` | quadros iguais para registrar a peça; inteiro de 1 a `LIVE_WINDOW`. Ao reduzir `LIVE_WINDOW`, reduza este também |
+| `LIVE_MIN_CONFIDENCE` | `0.80` | média mínima da confiança de tipo desses quadros; número de 0,50 a 0,99 |
+| `LIVE_EMPTY_FRAMES` | `3` | resultados `unknown` seguidos que contam como mesa vazia; inteiro de 1 a 10 |
+| `LIVE_MAX_SESSIONS` | `4` | sessões de vídeo simultâneas; inteiro de 1 a 8 |
+| `LIVE_FPS` | `2` | quadros por segundo enviados pela página; inteiro de 1 a 5 |
 
 Variável vazia vale como não definida (o padrão vale).
 
@@ -55,8 +63,10 @@ Variável vazia vale como não definida (o padrão vale).
 |---|---|---|
 | `GET /` | só loopback, sem headers de proxy, `Host` de loopback | console do operador (HTML, sem JS), com a cobertura do dataset |
 | `GET /capture?t=<token>` | token na query | página do celular; token errado → 401 "Sessão inválida. Leia o QR code no console." |
-| `GET /static/capture.js`, `/static/capture.css` | livre | arquivos da página (sem segredo, sem recurso externo) |
+| `GET /live?t=<token>` | token na query | página do vídeo ao vivo (seção "Vídeo ao vivo (HTTPS)"); token errado → 401, como a `/capture` |
+| `GET /static/capture.js`, `/static/capture.css`, `/static/live.js` | livre | arquivos das páginas (sem segredo, sem recurso externo) |
 | `POST /api/capture` | header `X-Session-Token` | `multipart/form-data` com `image`, `lot_id` e `mode`; no modo `collect`, `item_id`, `object_type`, `grade`, `labeler`, `angle` e `notes` no lugar do `lot_id` |
+| `POST /api/live/frame` | header `X-Session-Token` | um quadro do vídeo: `multipart/form-data` com `image` (só JPEG), `lot_id` e `session` |
 | `GET /api/status` | header `X-Session-Token` | `device_id`, `contract_version`, `model` (`loaded`, `model_version`, `model_sha256`, `thresholds`), `sink` |
 
 Ordem das respostas de `POST /api/capture`: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`) → imagem (415) → modelo (503 `model not loaded`). Depois: falha do inferenciador → 500 `inference failed`; falha do sink → 503 `failed to persist inspection` (a foto é apagada). O modo `collect` segue a mesma ordem até a imagem (415) e depois grava no dataset (seção "Modo coleta").
@@ -367,6 +377,75 @@ Registre o resultado no test-report da SPEC-020.
 4. Confira as 10 na nuvem (dashboard).
 5. Derrube a ponte (Ctrl+C no terminal 2), inspecione 3 peças, confira no console que ficam pendentes, religue a ponte e confira as 3 na nuvem.
 6. Com o `mosquitto_sub` acima, confira que os lotes aparecem no tópico `partqc/v1/<DEVICE_ID>/batch`, só com o JSON do resultado, sem imagem.
+
+## Vídeo ao vivo (HTTPS)
+
+A página `/live` mostra o vídeo da câmera traseira com o resultado por cima e registra **uma** inspeção por peça quando a classificação fica estável, sem disparo (SPEC-019). Os quadros ficam só na memória do notebook, e só o quadro da inspeção vai para `captures/`, como uma foto da `/capture`. Nada de imagem vai para a nuvem (R-02). É preciso HTTPS, porque o navegador só libera `getUserMedia` em contexto seguro; sem ele, a página mostra `O vídeo ao vivo exige HTTPS (configure EDGE_TLS_CERT e EDGE_TLS_KEY).` e não pede a câmera. Túnel público é proibido (R-02): o certificado é local, de uma CA própria do `mkcert`.
+
+### Gerar o certificado
+
+Instale o [`mkcert`](https://github.com/FiloSottile/mkcert) (licença BSD-3-Clause) no notebook e rode, na raiz do repositório, com o IP da LAN mostrado no console:
+
+```bash
+mkcert -install                                     # cria a CA local e confia nela neste notebook
+mkdir -p edge/data/tls && chmod 700 edge/data/tls   # edge/data/ já está no .gitignore
+mkcert -cert-file edge/data/tls/cert.pem -key-file edge/data/tls/key.pem <ip-lan> 127.0.0.1 localhost
+chmod 600 edge/data/tls/key.pem
+```
+
+No `.env`:
+
+```bash
+EDGE_TLS_CERT=edge/data/tls/cert.pem
+EDGE_TLS_KEY=edge/data/tls/key.pem
+```
+
+- **Guarde o certificado e a chave em `edge/data/tls/`**, com a chave em `0600`. A chave nunca entra no repositório (R-03). Com a chave aberta para grupo ou outros, a borda não sobe (código 2).
+- O certificado vale para os IPs da geração. **Ao trocar de rede** (do Wi-Fi de casa para o hotspot, por exemplo), o IP muda: gere de novo com o IP novo, ou liste os dois no comando.
+- A borda confere se os arquivos abrem, e não o conteúdo: um PEM inválido faz o `uvicorn` falhar na subida (código 1), sem servir nenhuma rota.
+- Com HTTPS, o console fica em `https://127.0.0.1:<porta>/`, e os QR codes usam `https://`. A foto por disparo continua disponível, também por `https://`, e o console mostra um segundo QR, o do `/live`. Sem as duas variáveis, tudo fica como antes, em HTTP, sem o QR do `/live`.
+
+### Instalar a CA nos celulares
+
+Copie para o celular só o `rootCA.pem`, da pasta mostrada por `mkcert -CAROOT`. **Nunca copie o `rootCA-key.pem`**: quem tem esse arquivo emite certificados em que o celular confia.
+
+- **iOS:** instale o `rootCA.pem` como perfil e ative a "confiança total" em Ajustes > Geral > Sobre > Ajustes de Confiança de Certificado.
+- **Android:** instale como certificado de CA nas configurações de segurança. O README do `mkcert` só fala de apps em modo de desenvolvimento, e não há fonte oficial que confirme se o Chrome do Android confia numa CA instalada pelo usuário: é o que o teste abaixo verifica.
+
+**Teste depois do merge (SPEC-019 §3.3):** nos dois celulares, abra o QR do `/live` e confira se a câmera abre. Registre o navegador, a versão e o resultado. Se nenhum aceitar o certificado, o vídeo não funciona, e a apresentação usa só a foto por disparo, que não depende de nada disso (risco aceito pelo humano em 2026-11-01).
+
+### Usar
+
+1. Abra o QR do `/live` no celular, conceda a câmera e informe o lote (o mesmo campo da `/capture`). O lote vale depois de confirmado, com Enter ou saindo do campo: enquanto você digita, os quadros seguem com o lote anterior, e, no primeiro uso, nenhum quadro é enviado. Assim, uma pausa no meio da digitação não grava a inspeção num lote incompleto.
+2. Ponha a peça na mesa. A faixa mostra o tipo e o grau, o veredito (com o aviso, se o modelo for provisório), a confiança e o estado, sempre inteiros na largura do vídeo, e a barra de baixo é a estabilidade. **Sem pessoas no quadro** (R-14).
+3. Quando a classificação estabiliza, a inspeção é registrada, e a faixa fica verde por 2 s.
+4. Tire a peça da mesa antes da próxima. Enquanto ela continuar ali, nada mais é registrado. Com `LIVE_EMPTY_FRAMES` resultados `desconhecido` seguidos (padrão 3), a mesa conta como vazia.
+
+Regra de registro: com a janela cheia (`LIVE_WINDOW` quadros), o par tipo e grau mais frequente precisa ser o único mais frequente, não ser a mesa vazia, ter pelo menos `LIVE_MIN_AGREE` quadros e ter média de confiança de tipo de pelo menos `LIVE_MIN_CONFIDENCE`. A inspeção usa o quadro mais recente desse par, com o `source` de sempre: `live` ou, com um modelo provisório, `simulated`, com o aviso no veredito (SPEC-041). Trocar o lote recomeça a janela. Se a gravação falhar, a peça não fica sem registro: a próxima janela estável tenta de novo.
+
+### Rota `POST /api/live/frame`
+
+Ordem das respostas: token (401) → tamanho (413) → campos (422) → limitador (503 `server busy`, o mesmo da captura) → imagem (415) → modelo (503 `model not loaded`) → sessões (429 `too many live sessions`). Depois: falha do inferenciador → 500 `inference failed`, sem o quadro entrar na janela; falha do sink → 503 `failed to persist inspection`, com a foto apagada.
+
+Limites (`qc_edge/limits.py`):
+
+- campo `image` de até 1 MiB (1 048 576 bytes) e `Content-Length` de até 1,25 MiB (1 310 720 bytes). As outras rotas continuam com os limites da captura;
+- só JPEG, pelo conteúdo: PNG recebe 415, porque a janela guarda os bytes do quadro, e não a imagem decodificada;
+- até 1 M pixels, conferidos pelo cabeçalho antes de decodificar; depois, as regras do `qc_preprocess.load_image`.
+
+Sessões: uma por página aberta, até `LIVE_MAX_SESSIONS`. Uma sessão sem quadro há mais de 60 s é descartada, com os quadros dela. Com `--stub-model`, a rota funciona, e nada vai para a nuvem (R-06).
+
+A resposta 200 traz `state`, `stability`, `result` (o quadro atual, sempre preenchido) e `inspection` (só no passo que registra, com o quadro emitido, que pode ser outro).
+
+A 2 quadros por segundo, o vídeo disputa os 2 slots de decodificação com a captura: se a borda estiver ocupada, a página descarta o quadro, e quem fotografa pode ver "Borda ocupada". No pior caso, os quadros ocupam `LIVE_MAX_SESSIONS × LIVE_WINDOW × 1 MiB` de memória: 40 MiB com os padrões e 240 MiB nos tetos.
+
+### Latência
+
+O console mostra, em "Latência por quadro", a última latência (pré-processamento + inferência) e o p95 dos últimos 100 quadros de todas as sessões, ou `—` sem quadros. A meta é p95 ≤ 300 ms (RNF-02). Esse valor fica só no console.
+
+### Teste manual (CA-12 da SPEC-019)
+
+Depois do teste do certificado acima, com o IP da LAN no certificado e a CA nos dois celulares: abra o `/live` pelo QR do console, conceda a câmera, inspecione 5 peças seguidas, tirando cada uma da mesa entre elas, confira 5 inspeções na nuvem (ou no console, sem nuvem) e 5 arquivos em `captures/`, e registre a latência do console. Pode ser feito com o modelo provisório (SPEC-041), com as inspeções `simulated` e a latência só como indicativo.
 
 ## Firewall no Arch
 

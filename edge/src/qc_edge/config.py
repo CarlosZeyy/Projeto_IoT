@@ -30,16 +30,30 @@ validated with or without ``EDGE_PUBLISHER=mqtt``. ``BridgeSettings`` holds the 
 SPEC-025: ``EDGE_HOST`` is an IPv4 literal only (with ``::`` uvicorn listens on IPv6 only, and
 neither the console URL nor the QR code would open), and an ``EDGE_DATA_DIR`` created here gets
 mode ``0700`` (an existing one is left as it is).
+
+SPEC-019: ``EDGE_TLS_CERT`` and ``EDGE_TLS_KEY`` turn HTTPS on, both or neither. Each file must
+open for reading, and the key must have no permission for group or others; the content is never
+read here (an invalid PEM makes ``uvicorn`` fail at startup, before serving any route). ``LIVE_*``
+are the parameters of the live video mode (section 4.6).
 """
 
 from __future__ import annotations
 
 import ipaddress
+import os
+import stat
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from pydantic import AfterValidator, Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    SecretStr,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 from pydantic_core import PydanticCustomError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -73,11 +87,41 @@ DEFAULT_MQTT_HOST = "127.0.0.1"
 DEFAULT_MQTT_PORT = 1883
 DEFAULT_MQTT_RESPONSE_TIMEOUT_S = 15.0
 
+# Live video mode (SPEC-019 section 4.6).
+DEFAULT_LIVE_WINDOW = 10
+DEFAULT_LIVE_MIN_AGREE = 8
+DEFAULT_LIVE_MIN_CONFIDENCE = 0.80
+DEFAULT_LIVE_EMPTY_FRAMES = 3
+DEFAULT_LIVE_MAX_SESSIONS = 4
+DEFAULT_LIVE_FPS = 2
+TLS_PAIR_ERROR = "EDGE_TLS_CERT and EDGE_TLS_KEY must be set together"
+# A permission for group or others on the private key (SPEC-019 section 4.1).
+TLS_KEY_FORBIDDEN_MODE = 0o077
+
 
 def _check_mqtt_host(value: str) -> str:
     if value not in MQTT_LOOPBACK_HOSTS:
         raise ValueError("must be 127.0.0.1, ::1 or localhost (the broker runs on this notebook)")
     return value
+
+
+def _stat_readable_file(path: Path) -> os.stat_result:
+    """``stat`` of a regular file that opens for reading; its content is never read.
+
+    ``O_NONBLOCK``: opening a FIFO must not hang the startup.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    except (OSError, ValueError) as exc:
+        reason = getattr(exc, "strerror", None) or "invalid path"
+        raise ValueError(f"cannot open the file for reading ({reason})") from None
+    try:
+        info = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("must be a regular file")
+    return info
 
 
 MqttHost = Annotated[str, AfterValidator(_check_mqtt_host)]
@@ -128,6 +172,53 @@ class EdgeSettings(BaseSettings):
     MQTT_USERNAME: str | None = None
     MQTT_PASSWORD: SecretStr | None = None
     MQTT_RESPONSE_TIMEOUT_S: ResponseTimeout = DEFAULT_MQTT_RESPONSE_TIMEOUT_S
+    # SPEC-019: HTTPS of the gateway and the live video mode. ``EDGE_TLS_KEY`` and
+    # ``LIVE_MIN_AGREE`` are validated even when unset, against the field declared before them.
+    EDGE_TLS_CERT: Path | None = None
+    EDGE_TLS_KEY: Annotated[Path | None, Field(validate_default=True)] = None
+    LIVE_WINDOW: Annotated[int, Field(ge=3, le=30)] = DEFAULT_LIVE_WINDOW
+    LIVE_MIN_AGREE: Annotated[int, Field(ge=1, validate_default=True)] = DEFAULT_LIVE_MIN_AGREE
+    LIVE_MIN_CONFIDENCE: Annotated[float, Field(ge=0.50, le=0.99, allow_inf_nan=False)] = (
+        DEFAULT_LIVE_MIN_CONFIDENCE
+    )
+    LIVE_EMPTY_FRAMES: Annotated[int, Field(ge=1, le=10)] = DEFAULT_LIVE_EMPTY_FRAMES
+    LIVE_MAX_SESSIONS: Annotated[int, Field(ge=1, le=8)] = DEFAULT_LIVE_MAX_SESSIONS
+    LIVE_FPS: Annotated[int, Field(ge=1, le=5)] = DEFAULT_LIVE_FPS
+
+    @property
+    def tls_enabled(self) -> bool:
+        """Whether the gateway serves HTTPS (validation guarantees both files or neither)."""
+        return self.EDGE_TLS_CERT is not None
+
+    @field_validator("EDGE_TLS_CERT", "EDGE_TLS_KEY", mode="before")
+    @classmethod
+    def _tls_empty_is_unset(cls, value: Any) -> Any:
+        return None if value == "" else value
+
+    @field_validator("EDGE_TLS_CERT")
+    @classmethod
+    def _tls_cert_file(cls, value: Path | None) -> Path | None:
+        if value is not None:
+            _stat_readable_file(value)
+        return value
+
+    @field_validator("EDGE_TLS_KEY")
+    @classmethod
+    def _tls_key_file(cls, value: Path | None, info: ValidationInfo) -> Path | None:
+        # An invalid certificate is not in ``info.data`` and was already reported.
+        if "EDGE_TLS_CERT" in info.data and (info.data["EDGE_TLS_CERT"] is None) != (value is None):
+            raise ValueError(TLS_PAIR_ERROR)
+        if value is not None and _stat_readable_file(value).st_mode & TLS_KEY_FORBIDDEN_MODE:
+            raise ValueError("must not have permissions for group or others (use chmod 600)")
+        return value
+
+    @field_validator("LIVE_MIN_AGREE")
+    @classmethod
+    def _live_min_agree(cls, value: int, info: ValidationInfo) -> int:
+        window = info.data.get("LIVE_WINDOW")  # absent when LIVE_WINDOW itself is invalid
+        if window is not None and value > window:
+            raise ValueError("must not be greater than LIVE_WINDOW")
+        return value
 
     @field_validator("EDGE_PUBLISHER")
     @classmethod
