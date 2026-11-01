@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | security |
 | Depende de | SPEC-008, SPEC-025, SPEC-030, SPEC-041 (e SPEC-007, SPEC-009, SPEC-024). Sem mudança de contrato |
