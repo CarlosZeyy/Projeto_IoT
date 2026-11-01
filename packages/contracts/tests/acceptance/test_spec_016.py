@@ -4,8 +4,8 @@ Written by the tester from the SPEC acceptance criteria (black box), before read
 implementation. Covers CA-01 and CA-02. Tests named ``test_extra_*`` are exploratory edge cases
 around SPEC-016 section 4.1 that no CA spells out.
 
-Per ``docs/architecture.md`` section 10 ("Expectativas de versão"), this file is the current
-SPEC of ``qc-contracts``: the exact version comparison lives only in ``test_ca01_*`` here.
+Per ``docs/architecture.md`` section 10 ("Expectativas de versão"), this file only cites the
+version that SPEC-016 introduced (0.4.0).
 """
 
 from __future__ import annotations

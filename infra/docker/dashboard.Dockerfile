@@ -1,8 +1,8 @@
 # Imagem do qc-dashboard para a VPS (SPEC-015 §4.3, §4.10, ADR-018). Contexto de build: a raiz do
 # repositório, filtrada por infra/docker/dashboard.Dockerfile.dockerignore (§4.11). A chave de
-# leitura chega em tempo de execução pelo env_file do compose (R-03), e API_BASE_URL vem do
-# próprio compose. Só o pacote qc-dashboard e as dependências dele: sem ML (R-12) e sem driver
-# de banco (ADR-007).
+# leitura chega em tempo de execução pelo environment do compose, com o valor das Environment
+# Variables do recurso no Coolify, ADR-023 (R-03), e API_BASE_URL vem do próprio compose. Só o
+# pacote qc-dashboard e as dependências dele: sem ML (R-12) e sem driver de banco (ADR-007).
 
 FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 

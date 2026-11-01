@@ -30,7 +30,7 @@ Desligados por padrão. Com `ALERTS_ENABLED=true` e a configuração válida, a 
 1. monta a carta p da SPEC-006 com os parâmetros padrão (`baseline_lots=20`, `min_lot_size=5`), sem filtro de tipo e só com as inspeções com grau (ADR-021), lendo só os 3 lotes válidos mais recentes de cada origem (corte no SQL, ADR-017);
 2. escolhe os lotes fora de controle **concluídos**: a última inspeção tem pelo menos `ALERTS_LOT_IDLE_MINUTES` minutos e no máximo `ALERTS_LOOKBACK_HOURS` horas, pela hora do servidor em UTC. Lotes `simulated` só entram com `ALERTS_INCLUDE_SIMULATED=true`;
 3. grava cada lote na tabela `alerts_sent` (migração `005_alerts.sql`) **antes** de enviar: um lote nunca gera duas mensagens, mesmo com vários workers do uvicorn. Se a tabela já tem `ALERTS_MAX_PER_HOUR` linhas da última hora, o alerta é pulado sem gravar (pode sair numa verificação seguinte) e a API registra um aviso com a contagem;
-4. envia uma mensagem de texto puro, sem imagem (R-02), por `POST https://api.telegram.org/bot<token>/sendMessage`, com timeout total de 5 s (conexão, cabeçalhos, corpo e resolução de nome). A linha fica com `delivered = true` quando o Telegram responde `{"ok": true}`. Uma falha (erro HTTP, 429, timeout) fica com `delivered = false` e **não** é repetida. O envio roda numa thread de trabalho que a verificação espera por no máximo 5 s; se o servidor ainda não terminou, o envio conta como falha e a thread é abandonada (ela termina sozinha). Enquanto uma thread abandonada estiver viva, a verificação não grava nem envia outro alerta e registra o aviso `alerts check stopped: a previous send is still running`; os alertas pendentes saem numa verificação seguinte, se ainda estiverem na janela.
+4. envia uma mensagem de texto puro, sem imagem (R-02), por `POST https://api.telegram.org/bot<token>/sendMessage`, com timeout total de 5 s (conexão, cabeçalhos, corpo e resolução de nome). A requisição pede `Accept-Encoding: identity`; uma resposta com outra codificação nunca é descomprimida e conta como falha, sem ler o corpo (`telegram send failed: unsupported content encoding (status=<n>)`, SPEC-040). A linha fica com `delivered = true` quando o Telegram responde `{"ok": true}`. Uma falha (erro HTTP, 429, timeout, resposta comprimida) fica com `delivered = false` e **não** é repetida. O envio roda numa thread de trabalho que a verificação espera por no máximo 5 s; se o servidor ainda não terminou, o envio conta como falha e a thread é abandonada (ela termina sozinha). Enquanto uma thread abandonada estiver viva, a verificação não grava nem envia outro alerta e registra o aviso `alerts check stopped: a previous send is still running (abandoned_for_s=<n>, lot_id=<lote>, source=<origem>)`, em que `<n>` são os segundos desde o abandono e o lote é o que ficou sem reserva (SPEC-040); os alertas pendentes saem numa verificação seguinte, se ainda estiverem na janela.
 
 Exemplo de mensagem:
 
@@ -42,26 +42,34 @@ Com origem `simulated`, o texto começa com `[SIMULADO] ` e termina com `Origem:
 
 **Nunca derruba a ingestão.** A verificação roda numa thread, fora do caminho das requisições. Uma exceção é registrada (só a classe e, nos erros de banco, o SQLSTATE) e o laço continua. Com `ALERTS_ENABLED=true` e alguma variável inválida, a API sobe normalmente, registra **um** erro `alerts disabled: invalid configuration (<nome da variável>)`, sem o valor, e não inicia o laço.
 
-**O token nunca aparece** (R-03): ele vai só na URL do Telegram. Um filtro troca o token por `***` nos registros dos loggers `httpx` e `httpcore` (que registram a URL), e os erros do `httpx` são registrados só pela classe. Ele fica só no `infra/.env.api` da VPS, nunca no Git.
+**O token nunca aparece** (R-03): ele vai só na URL do Telegram. Um filtro troca o token por `***` nos registros dos loggers `httpx` e `httpcore` (que registram a URL), e os erros do `httpx` são registrados só pela classe. Ele fica só nas Environment Variables do `partqc-api` no Coolify (e no painel do Render, só com a reserva ativa), nunca no Git.
 
 **Custo** (R-01): a Bot API do Telegram é gratuita para mensagens comuns (<https://core.telegram.org/bots/faq>, conferido pelo architect em 2026-10-24); o teto de 10 mensagens por hora fica muito abaixo do limite de 20 por minuto num grupo.
 
 ### Criar o bot e ligar os alertas
 
-1. No Telegram, abra uma conversa com o `@BotFather`, envie `/newbot` e siga as instruções (nome e usuário do bot). Ele responde com o token: copie-o direto para o `infra/.env.api` da VPS (`TELEGRAM_BOT_TOKEN=...`), com um editor, e não o cole em nenhum outro lugar (chat, issue, commit).
+A API roda no recurso **`partqc-api`** do Coolify (ADR-023). Nenhum `.env` é criado à mão na VPS, e nenhum checkout é feito nela: a configuração fica nas Environment Variables do recurso. O passo a passo completo está no [`docs/deployment-plan.md`](../docs/deployment-plan.md) §8, item 5.
+
+1. No Telegram, abra uma conversa com o `@BotFather`, envie `/newbot` e siga as instruções (nome e usuário do bot). Ele responde com o token: copie-o direto para o campo `TELEGRAM_BOT_TOKEN` das Environment Variables do recurso **`partqc-api`** no Coolify (só runtime, Locked, Literal), nunca para o `partqc-web` nem para outro lugar (chat, issue, commit, arquivo). Deixe `ALERTS_ENABLED=false` por enquanto e faça **Redeploy** (ou **Restart**) só desse recurso, para o contêiner da API receber o token.
 2. Descubra o `chat_id`:
    - **conversa direta:** envie qualquer mensagem ao bot;
    - **grupo:** adicione o bot ao grupo do supervisor e envie uma mensagem no grupo.
 
-   Depois, na raiz do checkout na VPS (para o token não passar por outra máquina), leia o `chat_id` com o comando abaixo, que tira o token do `infra/.env.api` e o entrega ao `curl` por um descritor, sem deixá-lo no `argv` nem no histórico do shell. O `chat_id` é o `id` do objeto `chat` (negativo nos grupos):
+   Depois, **na VPS** (para o token não passar por outra máquina), leia o `chat_id` com o comando abaixo, que tira o token do ambiente do contêiner da API e o entrega ao `curl` por um descritor. O `docker exec` recebe só o nome da variável; o token não vai para o `argv` nem para o histórico do shell, e nenhum arquivo é gravado. O nome do contêiner vem da listagem do plano de deploy (convenções da §4 do [`docs/deployment-plan.md`](../docs/deployment-plan.md)). O `chat_id` é o `id` do objeto `chat` (negativo nos grupos):
 
    ```bash
-   t=$(sed -n 's/^TELEGRAM_BOT_TOKEN[=]//p' infra/.env.api | tr -d "\"' \r")
+   t=$(docker exec <contêiner da api> printenv TELEGRAM_BOT_TOKEN)
    curl -s -K <(printf 'url = "https://api.telegram.org/bot%s/getUpdates"\n' "$t") | python3 -m json.tool | grep -A4 '"chat"'
    unset t
    ```
 
-3. No `infra/.env.api`: `ALERTS_ENABLED=true`, `TELEGRAM_CHAT_ID=<id>` e, se quiser, os outros parâmetros da tabela acima. Reinicie só a API: `docker compose -f infra/compose.yaml up -d api`.
-4. Confira no log que apareceu `alerts enabled: ...` e nenhum `alerts disabled: invalid configuration`: `docker compose -f infra/compose.yaml logs api`.
+3. Nas Environment Variables do `partqc-api`: `ALERTS_ENABLED=true`, `TELEGRAM_CHAT_ID=<id>` e, se quiser, os outros parâmetros da tabela acima. Depois, **Redeploy** (ou **Restart**) só desse recurso.
+4. Confira, na aba de logs da `api` no painel, ou na VPS com o comando abaixo, que apareceu `alerts enabled: ...` e nenhum `alerts disabled: invalid configuration`:
 
-Para desligar, volte `ALERTS_ENABLED=false` e reinicie a API. Para trocar o token (vazado ou revogado), use `/revoke` no `@BotFather`, atualize o `infra/.env.api` e reinicie a API.
+   ```bash
+   docker logs --tail 200 <contêiner da api> 2>&1 | grep -E 'alerts (enabled|disabled)'
+   ```
+
+Para desligar, volte `ALERTS_ENABLED=false` nas Environment Variables do `partqc-api`, com **Redeploy** (ou **Restart**) só desse recurso. Para trocar o token (vazado ou revogado), use `/revoke` no `@BotFather`, cole o novo no campo `TELEGRAM_BOT_TOKEN` do `partqc-api` e faça o mesmo **Redeploy** (ou **Restart**).
+
+Se o aviso `alerts check stopped: a previous send is still running` aparecer por muitos minutos seguidos (o campo `abandoned_for_s` mostra há quantos segundos o envio foi abandonado), faça **Restart** só do `partqc-api` (SEC-17-03).

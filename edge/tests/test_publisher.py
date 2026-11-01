@@ -1,24 +1,28 @@
 """HTTP publisher (SPEC-009 section 4.2): request shape, status mapping, refusal summary.
 
 SPEC-030 section 4.1: total deadline and byte cap of the response.
+SPEC-040 section 4.1: ``Accept-Encoding: identity`` and refusal of any other encoding.
 """
 
 from __future__ import annotations
 
+import gzip
 import json
 import secrets
 import types
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 import pytest
 
-from qc_contracts import BatchCreate
+from qc_contracts import BatchCreate, HeartbeatCreate
 from qc_edge.publisher import (
     BATCH_PATH,
     HEALTH_PATH,
     MAX_RESPONSE_BYTES,
     REQUEST_DEADLINE_S,
+    UNSUPPORTED_ENCODING,
     HttpPublisher,
     PublishAuthError,
     PublishRejectedError,
@@ -483,3 +487,155 @@ def test_deadline_and_cap_must_be_positive(options: dict[str, Any]) -> None:
     (name,) = options
     with pytest.raises(ValueError, match=name):
         HttpPublisher(BASE, device_key(), **options)
+
+
+# -- SPEC-040 section 4.1: compressed responses (SEC-30-01) ---------------------------------------
+
+
+def encoded_publisher(
+    status: int,
+    headers: list[tuple[str, str]],
+    stream: httpx.SyncByteStream,
+    key: str | None = None,
+) -> tuple[HttpPublisher, list[httpx.Request]]:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(status, headers=headers, stream=stream)
+
+    publisher = HttpPublisher(
+        BASE, key or device_key(), transport=httpx.MockTransport(handler), device_id="edge-01"
+    )
+    return publisher, requests
+
+
+def test_the_constant_of_the_message() -> None:
+    assert UNSUPPORTED_ENCODING == "unsupported response encoding"
+
+
+def test_every_request_asks_for_identity(fake_cloud: types.ModuleType) -> None:
+    item = fake_cloud.make_inspection()
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == BATCH_PATH:
+            return httpx.Response(200, content=results_body([item]))
+        return httpx.Response(204 if request.method == "POST" else 200)
+
+    pub = HttpPublisher(
+        BASE, device_key(), transport=httpx.MockTransport(handler), device_id="edge-01"
+    )
+    pub.publish_batch([item])
+    pub.send_heartbeat(a_heartbeat())
+    assert pub.check_health() is True
+    assert [request.headers["accept-encoding"] for request in seen] == ["identity"] * 3
+
+
+def a_heartbeat() -> HeartbeatCreate:
+    return HeartbeatCreate(
+        sent_at=datetime.now(UTC),
+        model_version=None,
+        model_sha256=None,
+        app_version="0.1.0",
+        uptime_s=1,
+        outbox_pending=0,
+        outbox_dead=0,
+    )
+
+
+REFUSED_ENCODINGS: list[list[tuple[str, str]]] = [
+    [("Content-Encoding", "gzip")],
+    [("Content-Encoding", "gzip, gzip")],
+    [("Content-Encoding", "deflate")],
+    [("Content-Encoding", "br")],
+    [("Content-Encoding", "zstd")],
+    [("Content-Encoding", "GZIP")],
+    [("Content-Encoding", "identity, gzip")],
+    [("Content-Encoding", "identity"), ("Content-Encoding", "gzip")],
+    [("Content-Encoding", "unknown-coding")],
+]
+
+
+@pytest.mark.parametrize("headers", REFUSED_ENCODINGS, ids=str)
+@pytest.mark.parametrize("status", [200, 201, 413, 422])
+def test_publish_batch_refuses_an_encoding_without_reading(
+    fake_cloud: types.ModuleType, headers: list[tuple[str, str]], status: int
+) -> None:
+    stream = ChunkStream([b"never read"])
+    key = device_key()
+    pub, _ = encoded_publisher(status, headers, stream, key)
+    with pytest.raises(PublishTransientError) as excinfo:
+        pub.publish_batch([fake_cloud.make_inspection()])
+    assert str(excinfo.value) == "unsupported response encoding"
+    assert key not in str(excinfo.value) and "cloud.test" not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert stream.delivered == 0
+    assert stream.closed
+
+
+@pytest.mark.parametrize("headers", REFUSED_ENCODINGS, ids=str)
+@pytest.mark.parametrize("status", [204, 413, 422])
+def test_send_heartbeat_refuses_an_encoding_without_reading(
+    headers: list[tuple[str, str]], status: int
+) -> None:
+    stream = ChunkStream([b"never read"])
+    pub, _ = encoded_publisher(status, headers, stream)
+    with pytest.raises(PublishTransientError, match="^unsupported response encoding$"):
+        pub.send_heartbeat(a_heartbeat())
+    assert stream.delivered == 0
+    assert stream.closed
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [],
+        [("Content-Encoding", "")],
+        [("Content-Encoding", "identity")],
+        [("Content-Encoding", "Identity")],
+        [("Content-Encoding", " IDENTITY ")],
+        [("Content-Encoding", "identity, identity")],
+        [("Content-Encoding", "identity"), ("Content-Encoding", "identity")],
+    ],
+    ids=str,
+)
+def test_empty_or_identity_is_read_as_before(
+    fake_cloud: types.ModuleType, headers: list[tuple[str, str]]
+) -> None:
+    item = fake_cloud.make_inspection()
+    stream = ChunkStream([results_body([item])])
+    pub, _ = encoded_publisher(200, headers, stream)
+    assert pub.publish_batch([item]) == [PublishResult(item.inspection_id, "created")]
+    assert stream.delivered == 1
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 503, 302])
+def test_statuses_without_a_body_read_do_not_change(
+    fake_cloud: types.ModuleType, status: int
+) -> None:
+    stream = ChunkStream([b"never read"])
+    pub, _ = encoded_publisher(status, [("Content-Encoding", "gzip")], stream)
+    expected = PublishAuthError if status in (401, 403) else PublishTransientError
+    with pytest.raises(expected, match=f"^HTTP {status}$"):
+        pub.publish_batch([fake_cloud.make_inspection()])
+    assert stream.delivered == 0
+
+
+def test_check_health_ignores_the_encoding_and_never_reads() -> None:
+    stream = ChunkStream([b"never read"])
+    pub, requests = encoded_publisher(200, [("Content-Encoding", "gzip")], stream)
+    assert pub.check_health() is True
+    assert requests[0].url.path == HEALTH_PATH
+    assert stream.delivered == 0
+
+
+def test_a_real_gzip_body_is_never_decompressed(fake_cloud: types.ModuleType) -> None:
+    """The decoder of ``httpx`` would need the body: ``gzip`` valid and readable, still refused."""
+    item = fake_cloud.make_inspection()
+    stream = ChunkStream([gzip.compress(results_body([item]))])
+    pub, _ = encoded_publisher(200, [("Content-Encoding", "gzip")], stream)
+    with pytest.raises(PublishTransientError, match="^unsupported response encoding$"):
+        pub.publish_batch([item])
+    assert stream.delivered == 0

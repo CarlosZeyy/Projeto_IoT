@@ -14,6 +14,8 @@ are ever generated.
 
 Both commands fail (exit 2, nothing written) when a count they show is not a non-negative
 integer (SPEC-037 section 4.1): a value with a line break would otherwise forge a source line.
+``changelog`` also refuses, the same way, an invalid ``n_items_test_by_grade`` and ``warnings``
+with a control or line separator character (SPEC-040 section 4.6); the values are never echoed.
 
 SPEC-016 section 4.8 (ADR-022): when the model has hand or power tools (SPEC-021), the entry
 has a line ``- Tipos do modelo: <types>; sem grau: <types or nenhum>.`` before the table and the
@@ -39,6 +41,7 @@ import math
 import os
 import sys
 import tempfile
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -47,6 +50,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Literal
 
+from qc_contracts import Grade
 from qc_ml.artifacts import METRICS_FILE, read_model_sha256
 from qc_ml.data import (
     DEFAULT_EXTERNAL_SOURCES,
@@ -282,24 +286,57 @@ def model_types_lines(metrics: Mapping[str, Any]) -> list[str]:
 
 
 INVALID_COUNT = "invalid count in metrics.json: "
+INVALID_WARNING = "invalid warning in metrics.json: "
 SPLITS: tuple[str, ...] = ("train", "val", "test")
+GRADE_VALUES: frozenset[str] = frozenset(grade.value for grade in Grade)
+GRADE_COUNTS_FIELD = "n_items_test_by_grade"
+WARNINGS_FIELD = "warnings"
+# SPEC-040 section 4.6: control, format, surrogate, line and paragraph separator characters.
+FORBIDDEN_WARNING_CATEGORIES: frozenset[str] = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
 class InvalidCountsError(ValueError):
-    """Counts of ``metrics.json`` that are shown are not non-negative integers (exit 2).
+    """Values of ``metrics.json`` that are shown are invalid (exit 2).
 
-    ``fields`` are the paths of the invalid counts (e.g. ``counts.train.n_images``); the values
-    are never part of the message (SPEC-037 section 4.1).
+    ``fields`` are the paths of the invalid counts (e.g. ``counts.train.n_images``) and
+    ``warning_fields`` the paths of the invalid warnings (e.g. ``warnings.0``); the values are
+    never part of the message (SPEC-037 section 4.1, SPEC-040 section 4.6).
     """
 
-    def __init__(self, fields: Sequence[str]) -> None:
+    def __init__(self, fields: Sequence[str], warning_fields: Sequence[str] = ()) -> None:
         self.fields = list(fields)
-        super().__init__("\n".join(f"{INVALID_COUNT}{name}" for name in self.fields))
+        self.warning_fields = list(warning_fields)
+        super().__init__("\n".join(self.lines))
+
+    @property
+    def lines(self) -> list[str]:
+        """One line per invalid field: the counts, then the warnings."""
+        return [f"{INVALID_COUNT}{name}" for name in self.fields] + [
+            f"{INVALID_WARNING}{name}" for name in self.warning_fields
+        ]
 
 
 def is_valid_count(value: Any) -> bool:
     """A JSON integer ``>= 0`` (``bool`` is not a count, although it is an ``int`` in Python)."""
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _invalid_counts(metrics: Mapping[str, Any], *, data_section: bool) -> list[str]:
+    """The invalid fields of ``check_counts``, in its order."""
+    fields: list[str] = []
+    if data_section:
+        if not is_valid_count(_counts_of(metrics, "train").get("n_images")):
+            fields.append("counts.train.n_images")
+        for split in SPLITS:
+            by_origin = _counts_of(metrics, split).get("by_origin")
+            value = by_origin.get("external") if isinstance(by_origin, Mapping) else None
+            if not is_valid_count(value):
+                fields.append(f"counts.{split}.by_origin.external")
+    by_source = train_sources(metrics)
+    for source_id in sorted(by_source):
+        if not is_valid_count(by_source[source_id]):
+            fields.append(f"counts.train.by_source.{shown_source_id(source_id)}")
+    return fields
 
 
 def check_counts(metrics: Mapping[str, Any], *, data_section: bool) -> None:
@@ -314,21 +351,64 @@ def check_counts(metrics: Mapping[str, Any], *, data_section: bool) -> None:
         InvalidCountsError: with every invalid field, in that order.
         ValueError: ``counts.train.by_source`` is present but is not a JSON object.
     """
-    fields: list[str] = []
-    if data_section:
-        if not is_valid_count(_counts_of(metrics, "train").get("n_images")):
-            fields.append("counts.train.n_images")
-        for split in SPLITS:
-            by_origin = _counts_of(metrics, split).get("by_origin")
-            value = by_origin.get("external") if isinstance(by_origin, Mapping) else None
-            if not is_valid_count(value):
-                fields.append(f"counts.{split}.by_origin.external")
-    by_source = train_sources(metrics)
-    for source_id in sorted(by_source):
-        if not is_valid_count(by_source[source_id]):
-            fields.append(f"counts.train.by_source.{shown_source_id(source_id)}")
+    fields = _invalid_counts(metrics, data_section=data_section)
     if fields:
         raise InvalidCountsError(fields)
+
+
+def _invalid_grade_counts(metrics: Mapping[str, Any]) -> list[str]:
+    """The invalid fields of ``n_items_test_by_grade``; absent, ``null`` or empty is valid.
+
+    A key outside ``qc_contracts.Grade`` gives the whole field once; a known key with an invalid
+    value gives ``n_items_test_by_grade.<grade>``, in ``Grade`` order.
+    """
+    value = metrics.get(GRADE_COUNTS_FIELD)
+    if value is None or (isinstance(value, Mapping | list | str) and not value):
+        return []
+    if not isinstance(value, Mapping):
+        return [GRADE_COUNTS_FIELD]
+    fields = [GRADE_COUNTS_FIELD] if any(key not in GRADE_VALUES for key in value) else []
+    fields += [
+        f"{GRADE_COUNTS_FIELD}.{grade.value}"
+        for grade in Grade
+        if grade.value in value and not is_valid_count(value[grade.value])
+    ]
+    return fields
+
+
+def is_valid_warning(value: Any) -> bool:
+    """A ``str`` without any character of ``FORBIDDEN_WARNING_CATEGORIES``."""
+    return isinstance(value, str) and not any(
+        unicodedata.category(char) in FORBIDDEN_WARNING_CATEGORIES for char in value
+    )
+
+
+def _invalid_warnings(metrics: Mapping[str, Any]) -> list[str]:
+    """The invalid fields of ``warnings``: the field itself or ``warnings.<index>``, from 0."""
+    if WARNINGS_FIELD not in metrics:
+        return []
+    value = metrics[WARNINGS_FIELD]
+    if not isinstance(value, list):
+        return [WARNINGS_FIELD]
+    return [f"{WARNINGS_FIELD}.{i}" for i, item in enumerate(value) if not is_valid_warning(item)]
+
+
+def check_changelog_fields(metrics: Mapping[str, Any]) -> None:
+    """Every check of ``changelog`` before any line is built (SPEC-040 section 4.6).
+
+    In this order: the counts of the ``### Dados`` section, when it is generated
+    (``check_counts``), ``n_items_test_by_grade`` and ``warnings``. ``release-notes`` does not
+    show the last two and does not check them.
+
+    Raises:
+        InvalidCountsError: with every invalid field, in that order.
+        ValueError: ``counts.train.by_source`` is present but is not a JSON object.
+    """
+    fields = _invalid_counts(metrics, data_section=True) if _has_origins(metrics) else []
+    fields += _invalid_grade_counts(metrics)
+    warning_fields = _invalid_warnings(metrics)
+    if fields or warning_fields:
+        raise InvalidCountsError(fields, warning_fields)
 
 
 def _fraction_ceiling(numerator: Any, denominator: Any) -> str:
@@ -373,10 +453,9 @@ def changelog_entry(
     in the ``### Dados`` section; ``None`` is an empty registry.
 
     Raises:
-        InvalidCountsError: the section is generated and one of its counts is invalid.
+        InvalidCountsError: a value shown in the entry is invalid (``check_changelog_fields``).
     """
-    if _has_origins(metrics):
-        check_counts(metrics, data_section=True)  # before any line is built
+    check_changelog_fields(metrics)  # before any line is built
     types_lines = model_types_lines(metrics)  # checked before any line is built, too
     version = metrics.get("model_version", "?")
     lines = [f"## {version} — {_entry_date(metrics)}", ""]
@@ -493,8 +572,8 @@ def _print_problems(problems: Sequence[Any]) -> None:
 
 
 def _print_invalid_counts(prefix: str, exc: InvalidCountsError) -> None:
-    for name in exc.fields:
-        print(f"{prefix} {INVALID_COUNT}{name}", file=sys.stderr)
+    for line in exc.lines:
+        print(f"{prefix} {line}", file=sys.stderr)
 
 
 def _release_notes_main(args: argparse.Namespace) -> int:

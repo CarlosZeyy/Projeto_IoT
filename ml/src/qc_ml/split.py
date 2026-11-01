@@ -8,10 +8,12 @@ every version, outside the strata; ``rows_for`` refuses one in val or test; the 
 external images in train has a ceiling (``max_external_fraction``, 30% by default).
 
 ADR-022 and SPEC-016 section 4.7: a **new object type** (images in the dataset, no line in any
-earlier split version) needs a decision once there is an earlier version: ``--extend-test-types``
-(its non-external items are split 70/15/15, test included, once) or ``--defer-types`` (its images
-stay out of the split). The rows of a type without any line in the split are ignored when the
-split is read (``assign_splits``, ``rows_for``), with a ``deferred type images`` log line.
+earlier split version and, from SPEC-040 section 4.7, not in the ``test_extended_types`` of any
+earlier ``split_v<M>.json``) needs a decision once there is an earlier version:
+``--extend-test-types`` (its non-external items are split 70/15/15, test included, once) or
+``--defer-types`` (its images stay out of the split). The rows of a type without any line in
+the split are ignored when the split is read (``assign_splits``, ``rows_for``), with a
+``deferred type images`` log line.
 The power tools (SPEC-021) use the same extension and deferral, with the whole type as stratum.
 
 No torch here (SPEC-011 section 4.5).
@@ -36,7 +38,7 @@ import re
 import sys
 import tempfile
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from fractions import Fraction
@@ -266,8 +268,16 @@ def split_object_types(splits: Sequence[pd.DataFrame], df: pd.DataFrame) -> set[
     return found
 
 
-def new_object_types(df: pd.DataFrame, splits: Sequence[pd.DataFrame]) -> list[str]:
+def new_object_types(
+    df: pd.DataFrame,
+    splits: Sequence[pd.DataFrame],
+    *,
+    extended_before: Collection[str] = (),
+) -> list[str]:
     """Types with images in ``df`` and no line in any of ``splits`` (ADR-022, decision 1).
+
+    A type in ``extended_before`` (the test was already extended for it in an earlier version,
+    SPEC-040 section 4.7) is never new, even when none of its old lines resolves to a type.
 
     In the order of ``KNOWN_OBJECT_TYPES`` (any other type after them, sorted).
     """
@@ -276,7 +286,7 @@ def new_object_types(df: pd.DataFrame, splits: Sequence[pd.DataFrame]) -> list[s
     ordered = [t for t in KNOWN_OBJECT_TYPES if t in present] + sorted(
         present - set(KNOWN_OBJECT_TYPES)
     )
-    return [t for t in ordered if t not in seen]
+    return [t for t in ordered if t not in seen and t not in extended_before]
 
 
 def type_decision_problems(
@@ -284,6 +294,8 @@ def type_decision_problems(
     splits: Sequence[pd.DataFrame],
     extend_test_types: Sequence[str] = (),
     defer_types: Sequence[str] = (),
+    *,
+    extended_before: Collection[str] = (),
 ) -> list[str]:
     """Problems of ``--extend-test-types`` / ``--defer-types`` (SPEC-016 section 4.7), one per line.
 
@@ -293,6 +305,9 @@ def type_decision_problems(
     that is not new is refused (``object type is not new: <type>``); an extended type needs at
     least 3 non-external items (``too few items to extend the test: <type>``). Without earlier
     versions the lists are not used. Empty list = no problem.
+
+    ``extended_before`` has the types in ``test_extended_types`` of the earlier versions: they are
+    never new (``new_object_types``), so their new items follow ADR-014 (ADR-022, decision 5).
     """
     problems: list[str] = []
     extend, defer = list(extend_test_types), list(defer_types)
@@ -301,7 +316,7 @@ def type_decision_problems(
             problems.append(UNKNOWN_TYPE + value)
     if problems or not splits:
         return problems
-    new = new_object_types(df, splits)
+    new = new_object_types(df, splits, extended_before=extended_before)
     for object_type in dict.fromkeys(extend + defer):
         if object_type in extend and object_type in defer:
             problems.append(TYPE_IN_BOTH_LISTS + object_type)
@@ -867,8 +882,8 @@ def _same_split(frame: pd.DataFrame, previous: pd.DataFrame) -> bool:
     )
 
 
-def recorded_deferred_types(csv_path: Path) -> list[str] | None:
-    """``deferred_types`` of the ``split_v<N>.json`` next to ``csv_path``.
+def _recorded_types(csv_path: Path, key: str) -> list[str] | None:
+    """The list ``key`` of the ``split_v<N>.json`` next to ``csv_path``.
 
     ``[]`` for a JSON written before SPEC-016 (no key); ``None`` when the JSON is missing,
     unreadable or the key is not a list of strings.
@@ -879,10 +894,29 @@ def recorded_deferred_types(csv_path: Path) -> list[str] | None:
         return None
     if not isinstance(meta, dict):
         return None
-    value = meta.get("deferred_types", [])
+    value = meta.get(key, [])
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         return None
     return value
+
+
+def recorded_deferred_types(csv_path: Path) -> list[str] | None:
+    """``deferred_types`` of the ``split_v<N>.json`` next to ``csv_path`` (``_recorded_types``)."""
+    return _recorded_types(csv_path, "deferred_types")
+
+
+def recorded_extended_types(splits_dir: Path, versions: Sequence[int]) -> set[str]:
+    """Types in ``test_extended_types`` of the ``split_v<M>.json`` of ``versions`` (SPEC-040 4.7).
+
+    A JSON without the key, missing, unreadable or with the key out of format counts as an empty
+    list, as in ``recorded_deferred_types``.
+    """
+    found: set[str] = set()
+    for version in versions:
+        found.update(
+            _recorded_types(splits_dir / f"split_v{version}.csv", "test_extended_types") or []
+        )
+    return found
 
 
 def _type_list(text: str) -> list[str]:
@@ -965,7 +999,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     version; each problem is printed alone on its own stderr line (e.g. ``new object type
     without decision: pliers``) and the exit is 2. A version whose CSV equals the previous one is
     still written when its ``deferred_types`` differ from the ones recorded in the previous
-    ``split_v<M>.json`` (the decision itself is part of the split history).
+    ``split_v<M>.json`` (the decision itself is part of the split history). A type extended in an
+    earlier version is never new again (SPEC-040 section 4.7, ``recorded_extended_types``).
     """
     configure_logging()
     try:
@@ -1015,7 +1050,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_ERROR
 
     # SPEC-016 section 4.7: every new type needs a decision (ADR-022).
-    problems = type_decision_problems(df, frames, args.extend_test_types, args.defer_types)
+    problems = type_decision_problems(
+        df,
+        frames,
+        args.extend_test_types,
+        args.defer_types,
+        extended_before=recorded_extended_types(args.splits_dir, versions),
+    )
     if problems:
         for problem in problems:
             print(problem, file=sys.stderr)

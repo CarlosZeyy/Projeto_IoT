@@ -1,4 +1,5 @@
-"""``python -m qc_edge.privacy`` (SPEC-025 section 4.9; SPEC-030 sections 4.4 and 4.5).
+"""``python -m qc_edge.privacy`` (SPEC-025 section 4.9; SPEC-030 sections 4.4 and 4.5; SPEC-040
+section 4.2).
 
 Every dataset here is built in ``tmp_path`` from images generated in memory (R-14).
 """
@@ -24,8 +25,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from qc_edge import collect, privacy
 from qc_edge import jpeg as jpeg_module
-from qc_edge import privacy
 from qc_edge.collect import MANIFEST_COLUMNS
 from qc_edge.jpeg import JpegStructureError, jpeg_private_findings
 from qc_preprocess import load_image
@@ -441,7 +442,7 @@ def mixed(tmp_path: Path, jpeg_tools: types.SimpleNamespace) -> types.SimpleName
     (fair / "d.png").write_bytes(_png())
     (fair / "e.heic").write_bytes(secrets.token_bytes(64))
     (fair / "f").write_bytes(secrets.token_bytes(16))
-    (fair / ".g.jpg.abc123.tmp").write_bytes(secrets.token_bytes(32))
+    (fair / ".g.jpg.abc123_z.tmp").write_bytes(secrets.token_bytes(32))
     (fair / "h.jpg").mkdir()
     return types.SimpleNamespace(root=root, fair=fair)
 
@@ -477,7 +478,7 @@ def test_fix_keeps_names_and_leaves_other_files(
     jpeg_tools: types.SimpleNamespace,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    others = ("d.png", "e.heic", "f", ".g.jpg.abc123.tmp")
+    others = ("d.png", "e.heic", "f", ".g.jpg.abc123_z.tmp")
     before = {name: (mixed.fair / name).read_bytes() for name in (*others, "B.JPG", "c.Jpeg")}
     code = privacy.main(["--dataset-dir", str(mixed.root), "--fix"])
     out = capsys.readouterr().out.splitlines()
@@ -492,7 +493,7 @@ def test_fix_keeps_names_and_leaves_other_files(
     for name in others:
         assert (mixed.fair / name).read_bytes() == before[name]
     assert sorted(p.name for p in mixed.fair.iterdir()) == sorted(
-        [".g.jpg.abc123.tmp", "B.JPG", "a.jpg", "c.Jpeg", "d.png", "e.heic", "f", "h.jpg"]
+        [".g.jpg.abc123_z.tmp", "B.JPG", "a.jpg", "c.Jpeg", "d.png", "e.heic", "f", "h.jpg"]
     )
     assert privacy.main(["--dataset-dir", str(mixed.root)]) == 1
     assert capsys.readouterr().out.splitlines()[-1] == "checked 6 images, 3 with private data"
@@ -501,10 +502,20 @@ def test_fix_keeps_names_and_leaves_other_files(
 @pytest.mark.parametrize(
     ("name", "listed"),
     [
-        (".x.jpg.k3j2.tmp", False),  # an edge temporary
-        (".tmp", False),
+        (".x.jpg.k3j2_a0z.tmp", False),  # an edge temporary
+        (".x.JPEG.k3j2_a0z.tmp", False),  # --fix keeps the name of the original file
+        (".a.b.jpg.k3j2_a0z.tmp", False),
+        (".tmp", True),  # SPEC-040: only the exact format of mkstemp is ignored
+        (".x.tmp", True),
+        (".x.jpg.k3j2.tmp", True),  # fewer than 8 characters
+        (".x.jpg.k3j2_a0zz.tmp", True),  # more than 8 characters
+        (".x.jpg.K3J2_A0Z.tmp", True),  # mkstemp uses only lowercase letters
+        (".x.jpg.k3j-_a0z.tmp", True),
+        (".notes.txt.k3j2_a0z.tmp", True),  # the target is not a JPEG
+        (".jpg.k3j2_a0z.tmp", True),  # no target name before the random part
         ("x.jpg.tmp", True),  # no leading dot: not an edge temporary
         (".x.jpg.TMP", True),  # mkstemp always uses the lowercase suffix
+        (".x.jpg.k3j2_a0z.tmp.bak", True),
         (".hidden.jpg", True),  # checked as a JPEG
     ],
 )
@@ -639,3 +650,256 @@ def test_cannot_fix_logs_the_escaped_path(
     assert "cannot fix raw/y\\u2028.JPEG: No space left on device" in caplog.text
     assert " " not in caplog.text
     assert capsys.readouterr().out.splitlines()[0] == "raw/y\\u2028.JPEG: app1, app13, com, trailer"
+
+
+# -- SPEC-040 section 4.2: unreadable folders and the exact name of the temporaries ---------------
+
+
+def test_the_temporary_of_the_real_writer_is_ignored(
+    tmp_path: Path,
+    jpeg_tools: types.SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The name the edge really writes, for a ``.jpg``, a ``.JPG`` and a ``.jpeg`` target."""
+    root = tmp_path / "d"
+    fair = root / "raw" / "screw" / "fair"
+    fair.mkdir(parents=True)
+    clean = jpeg_tools.pillow_jpeg()
+    seen: list[str] = []
+    real_replace = os.replace
+
+    def spy_replace(source: Any, target: Any) -> None:
+        seen.append(Path(source).name)
+        assert privacy.is_edge_temporary(Path(source).name)
+        assert privacy.main(["--dataset-dir", str(root)]) == 0
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", spy_replace)
+    for name in ("S-001__0__20261022T141503Z.jpg", "b.JPG", "c.jpeg"):
+        collect.write_private_file_atomically(
+            fair / name, lambda handle: handle.write(clean), root=root
+        )
+    assert len(seen) == 3
+    capsys.readouterr()
+
+
+@pytest.fixture
+def restore_modes() -> Iterator[Callable[[Path, int], None]]:
+    changed: list[tuple[Path, int]] = []
+
+    def set_mode(path: Path, mode: int) -> None:
+        changed.append((path, stat.S_IMODE(path.stat().st_mode)))
+        path.chmod(mode)
+
+    yield set_mode
+    for path, mode in reversed(changed):
+        path.chmod(mode)
+
+
+needs_permissions = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the modes")
+
+
+@pytest.fixture
+def blocked(
+    tmp_path: Path, jpeg_tools: types.SimpleNamespace, restore_modes: Callable[[Path, int], None]
+) -> types.SimpleNamespace:
+    """A clean image, a folder with mode ``0o000`` and a folder with mode ``0o600``."""
+    root = tmp_path / "d"
+    raw = root / "raw"
+    with_metadata = jpeg_tools.pillow_jpeg(exif=jpeg_tools.gps_exif())
+    (raw / "screw" / "fair").mkdir(parents=True)
+    (raw / "screw" / "fair" / "S-001.jpg").write_bytes(jpeg_tools.pillow_jpeg())
+    (raw / "nut" / "good").mkdir(parents=True)
+    (raw / "nut" / "good" / "N-001.jpg").write_bytes(with_metadata)
+    (raw / "other" / "fair").mkdir(parents=True)
+    (raw / "other" / "fair" / "O-001.jpg").write_bytes(with_metadata)
+    restore_modes(raw / "nut" / "good", 0o000)
+    restore_modes(raw / "other" / "fair", 0o600)
+    return types.SimpleNamespace(root=root, raw=raw)
+
+
+@needs_permissions
+@pytest.mark.parametrize("options", [[], ["--fix"]], ids=["check", "fix"])
+def test_unreadable_folders_and_files_are_listed_in_path_order(
+    blocked: types.SimpleNamespace,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    options: list[str],
+) -> None:
+    (blocked.root / "manifest.csv").write_text(HEADER, encoding="utf-8")
+    with caplog.at_level(logging.ERROR, logger="qc_edge.privacy"):
+        assert privacy.main(["--dataset-dir", str(blocked.root), *options]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw/nut/good: unreadable",
+        "raw/other/fair/O-001.jpg: unreadable",
+        "checked 1 images, 0 with private data",
+    ]
+    assert "cannot read raw/nut/good: Permission denied" in caplog.text
+    assert "cannot read raw/other/fair/O-001.jpg: Permission denied" in caplog.text
+    assert str(blocked.root) not in caplog.text
+
+
+@needs_permissions
+def test_fix_rewrites_nothing_in_an_unreadable_folder(
+    blocked: types.SimpleNamespace,
+    jpeg_tools: types.SimpleNamespace,
+    restore_modes: Callable[[Path, int], None],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (blocked.root / "manifest.csv").write_text(HEADER, encoding="utf-8")
+    assert privacy.main(["--dataset-dir", str(blocked.root), "--fix"]) == 1
+    capsys.readouterr()
+    restore_modes(blocked.raw / "nut" / "good", 0o700)
+    restore_modes(blocked.raw / "other" / "fair", 0o700)
+    assert privacy.main(["--dataset-dir", str(blocked.root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw/nut/good/N-001.jpg: app1",
+        "raw/other/fair/O-001.jpg: app1",
+        "checked 3 images, 2 with private data",
+    ]
+
+
+@needs_permissions
+def test_an_unreadable_folder_name_is_escaped(
+    tmp_path: Path,
+    restore_modes: Callable[[Path, int], None],
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "d"
+    hostile = root / "raw" / "screw" / "a\nb"
+    hostile.mkdir(parents=True)
+    restore_modes(hostile, 0o000)
+    with caplog.at_level(logging.ERROR, logger="qc_edge.privacy"):
+        assert privacy.main(["--dataset-dir", str(root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw/screw/a\\x0ab: unreadable",
+        "checked 0 images, 0 with private data",
+    ]
+    assert "cannot read raw/screw/a\\x0ab: Permission denied" in caplog.text
+    assert "a\nb" not in caplog.text
+
+
+@needs_permissions
+def test_raw_itself_unreadable_is_listed(
+    tmp_path: Path, restore_modes: Callable[[Path, int], None], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "d"
+    (root / "raw").mkdir(parents=True)
+    restore_modes(root / "raw", 0o000)
+    assert privacy.main(["--dataset-dir", str(root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw: unreadable",
+        "checked 0 images, 0 with private data",
+    ]
+
+
+def test_raw_that_is_a_file_is_listed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "d"
+    root.mkdir()
+    (root / "raw").write_bytes(b"not a folder")
+    assert privacy.main(["--dataset-dir", str(root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw: unreadable",
+        "checked 0 images, 0 with private data",
+    ]
+
+
+def test_raw_absent_is_not_unreadable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "d"
+    root.mkdir()
+    assert privacy.main(["--dataset-dir", str(root)]) == 0
+    assert capsys.readouterr().out == "checked 0 images, 0 with private data\n"
+
+
+def test_a_subfolder_that_vanishes_during_the_walk_is_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only ``raw/`` absent means an empty dataset; anything else fails closed."""
+    root = tmp_path / "d"
+    gone = root / "raw" / "screw"
+    gone.mkdir(parents=True)
+    real_scandir = os.scandir
+
+    def vanishing(path: Any) -> Any:
+        if str(path) == str(gone):
+            raise FileNotFoundError(2, "No such file or directory", str(gone))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", vanishing)
+    assert privacy.main(["--dataset-dir", str(root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw/screw: unreadable",
+        "checked 0 images, 0 with private data",
+    ]
+
+
+def test_a_relative_dataset_dir_gives_relative_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "d"
+    (root / "raw" / "screw").mkdir(parents=True)
+    real_scandir = os.scandir
+
+    def refused(path: Any) -> Any:
+        if str(path).endswith("screw"):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", refused)
+    monkeypatch.chdir(tmp_path)
+    assert privacy.main(["--dataset-dir", "./d/"]) == 1
+    assert capsys.readouterr().out.splitlines()[0] == "raw/screw: unreadable"
+
+
+def test_a_failed_lstat_is_listed_and_not_counted(
+    tmp_path: Path,
+    jpeg_tools: types.SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "d"
+    fair = root / "raw" / "screw" / "fair"
+    fair.mkdir(parents=True)
+    (fair / "a.jpg").write_bytes(jpeg_tools.pillow_jpeg())
+    (fair / "b.jpg").write_bytes(jpeg_tools.pillow_jpeg())
+    real_lstat = os.lstat
+
+    def failing(path: Any, **kwargs: Any) -> Any:
+        if Path(path).name == "b.jpg":
+            raise OSError(5, "Input/output error")
+        return real_lstat(path, **kwargs)
+
+    monkeypatch.setattr(privacy.os, "lstat", failing)
+    with caplog.at_level(logging.ERROR, logger="qc_edge.privacy"):
+        assert privacy.main(["--dataset-dir", str(root)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "raw/screw/fair/b.jpg: unreadable",
+        "checked 1 images, 0 with private data",
+    ]
+    assert "cannot read raw/screw/fair/b.jpg: Input/output error" in caplog.text
+
+
+def test_an_error_without_strerror_logs_the_class(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "d"
+    (root / "raw" / "screw").mkdir(parents=True)
+    (root / "raw" / "screw" / "a.jpg").write_bytes(b"x")
+    real_lstat = os.lstat
+
+    def failing(path: Any, **kwargs: Any) -> Any:
+        if Path(path).name == "a.jpg":
+            raise OSError("no errno")
+        return real_lstat(path, **kwargs)
+
+    monkeypatch.setattr(privacy.os, "lstat", failing)
+    with caplog.at_level(logging.ERROR, logger="qc_edge.privacy"):
+        assert privacy.main(["--dataset-dir", str(root)]) == 1
+    capsys.readouterr()
+    assert "cannot read raw/screw/a.jpg: OSError" in caplog.text

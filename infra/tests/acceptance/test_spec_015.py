@@ -1545,7 +1545,6 @@ def test_extra_dockerfile_table_rows(component: str) -> None:
 # CA-29: infra/compose.yaml
 # ============================================================================================
 
-PUBLIC_HOST_RE = re.compile(r"^\$\{PUBLIC_HOST:\?[^}]*\}$")
 LIMITS = {
     "api": ("${API_MEM_LIMIT:-512m}", "${API_CPUS:-1.0}"),
     "dashboard": ("${DASHBOARD_MEM_LIMIT:-1g}", "${DASHBOARD_CPUS:-1.0}"),
@@ -1559,17 +1558,6 @@ def _env_dict(env: Any) -> dict[str, Any]:
     if isinstance(env, dict):
         return env
     return dict(item.split("=", 1) if "=" in item else (item, None) for item in env)
-
-
-def _env_file_paths(value: Any) -> list[tuple[str, Any]]:
-    items = value if isinstance(value, list) else [value]
-    out = []
-    for item in items:
-        if isinstance(item, str):
-            out.append((item, True))
-        else:
-            out.append((item["path"], item.get("required", True)))
-    return out
 
 
 def test_ca29_compose_structure() -> None:

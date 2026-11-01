@@ -143,7 +143,7 @@ GH_TOKEN="$(gh auth token --user CarlosZeyy)" gh release create model-<v> ml/mod
 
 - O arquivo tem a linha `sha256: …` do `model.sha256`, a seção "Fontes externas e créditos" e os caminhos do registro e do CHANGELOG. Se o modelo usou imagens externas, essa seção, com o crédito, a licença e os links de cada fonte, é **obrigatória** na página do Release: as licenças com atribuição (`CC-BY-4.0`, `MIT`, `Apache-2.0`, `BSD-3-Clause`) exigem o crédito. Sem externas, a seção diz que o modelo não usa imagens externas.
 - Se o `release-notes` sair com 2 e `source not in registry: <source_id>`, a fonte tem de ser registrada em `ml/external_sources.csv` antes de gerar as notas de novo: sem isso, não há notas nem Release. Nesse caso, o arquivo de `--output` não é criado nem alterado. A linha `licença não encontrada no registro` só aparece no CHANGELOG, como marca.
-- As contagens do `metrics.json` que aparecem nas notas e na seção `### Dados` do CHANGELOG têm de ser inteiros não negativos. Senão, os dois comandos saem com 2, com uma linha `invalid count in metrics.json: <campo>` por campo, e não gravam nada (SPEC-037).
+- As contagens do `metrics.json` que aparecem nas notas e na seção `### Dados` do CHANGELOG têm de ser inteiros não negativos. Senão, os dois comandos saem com 2, com uma linha `invalid count in metrics.json: <campo>` por campo, e não gravam nada (SPEC-037). O `changelog` confere também `n_items_test_by_grade` (chaves só dos 5 graus, valores inteiros não negativos) e `warnings` (lista de textos sem caractere de controle, de formato ou separador de linha), com `invalid warning in metrics.json: <campo>` para os avisos (SPEC-040).
 - O `release-notes.md` pode ir para o Git junto com o `model.sha256`.
 
 ## Ferramentas (Fase 2)
@@ -167,17 +167,20 @@ As 5 ferramentas manuais do contrato 0.4.0 (`pliers`, `adjustable_wrench`, `alle
 
 ### Extensão e adiamento do teste (ADR-022)
 
-O teste é congelado no `split_v1` (ADR-014). Um **tipo novo** (com imagens no dataset e nenhuma linha em nenhuma versão anterior do split) precisa de uma decisão explícita a cada split, depois do `split_v1`:
+O teste é congelado no `split_v1` (ADR-014). Um **tipo novo** (com imagens no dataset, nenhuma linha em nenhuma versão anterior do split e fora do `test_extended_types` de todo `split_v<M>.json` anterior) precisa de uma decisão explícita a cada split, depois do `split_v1`:
 
 ```bash
 # coleta ainda em andamento: as fotos das ferramentas ficam fora do split
-uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42     --defer-types pliers,adjustable_wrench,allen_key,flat_screwdriver,phillips_screwdriver
+uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42 \
+    --defer-types pliers,adjustable_wrench,allen_key,flat_screwdriver,phillips_screwdriver
 # coleta completa: o tipo ganha teste, uma única vez
-uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42     --extend-test-types pliers,allen_key --defer-types adjustable_wrench,flat_screwdriver,phillips_screwdriver
+uv run --package qc-ml python -m qc_ml.split --dataset-dir ml/data --splits-dir ml/splits --seed 42 \
+    --extend-test-types pliers,allen_key \
+    --defer-types adjustable_wrench,flat_screwdriver,phillips_screwdriver
 ```
 
 - Sem decisão, a CLI sai com 2, com uma linha `new object type without decision: <tipo>` por tipo, e não grava nada. Um tipo listado que não é novo (`object type is not new: <tipo>`), nas duas listas ao mesmo tempo, ou fora dos tipos conhecidos (`unknown object type: <tipo>`) também dá saída 2.
-- **Extensão:** as peças não externas do tipo são divididas 70/15/15 como no `split_v1` (mesma seed, um sorteio próprio por tipo), sem mudar nenhuma atribuição anterior. O estrato depende do critério de grau no momento da extensão, calculado no dataset lido pelo split: ferramenta **graduada** → (tipo, grau dominante); ferramenta **sem grau** → o tipo inteiro (com 6 peças, por exemplo, 4 vão para o treino, 1 para a validação e 1 para o teste). As externas (`XT-`) vão para o treino. Um tipo estendido que ficaria sem nenhuma peça no teste (em particular, com menos de 3 peças não externas) dá saída 2 com `too few items to extend the test: <tipo>`, sem gravar nada. Depois da extensão, o tipo volta à regra do ADR-014: peças novas só em treino e validação, e o teste dele fica o congelado na extensão, mesmo que ele mude de grupo depois.
+- **Extensão:** as peças não externas do tipo são divididas 70/15/15 como no `split_v1` (mesma seed, um sorteio próprio por tipo), sem mudar nenhuma atribuição anterior. O estrato depende do critério de grau no momento da extensão, calculado no dataset lido pelo split: ferramenta **graduada** → (tipo, grau dominante); ferramenta **sem grau** → o tipo inteiro (com 6 peças, por exemplo, 4 vão para o treino, 1 para a validação e 1 para o teste). As externas (`XT-`) vão para o treino. Um tipo estendido que ficaria sem nenhuma peça no teste (em particular, com menos de 3 peças não externas) dá saída 2 com `too few items to extend the test: <tipo>`, sem gravar nada. Depois da extensão, o tipo volta à regra do ADR-014: peças novas só em treino e validação, e o teste dele fica o congelado na extensão, mesmo que ele mude de grupo depois ou que todas as fotos antigas dele saiam por `exclusions.csv` (SPEC-040).
 - **Adiamento:** as imagens do tipo ficam fora do `split_v<N>.csv` e não são usadas em treino, validação nem teste. O tipo continua novo na versão seguinte. Uma versão é gravada quando a lista de adiados muda, mesmo que o CSV seja igual ao anterior; repetir a mesma decisão dá `split unchanged`.
 - O `split_v<N>.json` registra `test_extended_types` e `deferred_types`. No `split_v1`, as listas não são usadas (todos os tipos presentes entram na divisão normal).
 - **Leitura do split:** as imagens de um tipo sem nenhuma linha no split vigente (adiado) são ignoradas pelo `rows_for` e pela checagem de split desatualizado, com o aviso `deferred type images: <tipo>: <n>` no log. Para os tipos presentes no split, a checagem não muda.

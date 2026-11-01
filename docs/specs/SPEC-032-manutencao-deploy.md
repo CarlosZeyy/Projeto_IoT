@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Security |
+| Status | Done |
 | Rodada atual | r1 |
 | Autor da implementação | security-devops |
 | Tags | deploy, security, infra |

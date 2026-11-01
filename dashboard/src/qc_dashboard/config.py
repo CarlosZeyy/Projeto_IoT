@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpx
 import streamlit as st
 
 API_BASE_URL = "API_BASE_URL"
@@ -30,6 +31,10 @@ INSECURE_API_URL_MESSAGE = (
     "Configuração inválida: API_BASE_URL precisa usar https:// "
     "(http:// só em localhost ou 127.0.0.1)."
 )
+
+# Message of the ``InsecureApiUrlError`` raised when ``httpx`` cannot build the client or a request
+# (SPEC-040 section 4.4, defense in depth): the variable only, never its value (R-03).
+INVALID_API_URL_ERROR = "API_BASE_URL is not a valid URL"
 
 # Hosts where ``http://`` is accepted: the same rule as scripts/simulate.py (SPEC-015 §4.5).
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
@@ -92,6 +97,11 @@ def is_secure_api_url(url: str) -> bool:
     so is a URL with a control character (category ``Cc``: C0, DEL and C1) or an invalid port
     (not a number, or outside 0-65535), which would otherwise only fail in ``httpx.Client``
     (SPEC-029 §4.3).
+
+    A URL for which ``httpx`` cannot build a request is refused too (SPEC-040 §4.4): a host with
+    a ``Cf``/``Zl`` character or an NBSP, which ``httpx.URL`` refuses, or with an invalid
+    punycode label (``https://xn--zz.com``), which passes ``httpx.Client`` and only fails on the
+    IDNA encoding of the request. The request is built, never sent: no DNS nor connection here.
     """
     # Before urlsplit, which silently drops "\t", "\n" and "\r" (bpo-43882).
     if any(unicodedata.category(ch) == "Cc" for ch in url):
@@ -100,7 +110,8 @@ def is_secure_api_url(url: str) -> bool:
         parts = urlsplit(url)
         host = parts.hostname
         _ = parts.port  # raises ValueError for a port that is not a number or out of range
-    except ValueError:
+        httpx.Request("GET", url)
+    except (httpx.InvalidURL, ValueError):  # UnicodeError and idna.IDNAError are ValueError
         return False
     if parts.scheme == "https":
         return bool(host)

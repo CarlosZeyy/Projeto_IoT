@@ -12,6 +12,7 @@ import secrets
 import sqlite3
 import threading
 import types
+import typing
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,7 @@ from fastapi.testclient import TestClient
 import qc_edge
 from qc_contracts import MAX_HEARTBEAT_COUNT, HeartbeatCreate
 from qc_edge import cli
+from qc_edge import heartbeat as heartbeat_module
 from qc_edge.heartbeat import HeartbeatLoop
 from qc_edge.inference import ModelInfo
 from qc_edge.onnx_inferencer import OnnxInferencer
@@ -516,3 +518,55 @@ def test_capture_keeps_working_with_the_cloud_down(
         )
     assert response.status_code == 200
     assert spy.sink.stats().pending == 1
+
+
+# -- SPEC-040 section 4.3 (RV-03 = SEC-03 and RV-04 of SPEC-018) ----------------------------------
+
+
+def test_a_failure_to_build_logs_only_the_class(caplog: pytest.LogCaptureFixture) -> None:
+    marker = "marker-" + secrets.token_hex(8)
+
+    class Exploding(InMemorySink):
+        def stats(self) -> SinkStats:
+            raise RuntimeError(marker)
+
+    cloud = Cloud()
+    loop = HeartbeatLoop(publisher(cloud), Exploding(), None, interval_s=60)
+    with caplog.at_level(logging.DEBUG, logger="qc_edge"):
+        loop.run_once()
+    assert cloud.requests == []
+    assert not loop.auth_error
+    (record,) = [r for r in caplog.records if r.name == "qc_edge" and r.levelno >= logging.WARNING]
+    assert record.levelno == logging.ERROR
+    assert record.getMessage() == "heartbeat could not be built: RuntimeError"
+    assert record.exc_info is None
+    assert marker not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_the_loop_goes_on_after_a_failure_to_build() -> None:
+    class FailsOnce(InMemorySink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def stats(self) -> SinkStats:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("once")
+            return super().stats()
+
+    cloud = Cloud()
+    loop = HeartbeatLoop(publisher(cloud), FailsOnce(), None, interval_s=60)
+    loop.run_once()
+    assert cloud.requests == []
+    loop.run_once()
+    assert len(cloud.requests) == 1
+
+
+def test_cap_hints_and_behaviour() -> None:
+    assert typing.get_type_hints(heartbeat_module._cap) == {"value": float, "return": int}
+    assert heartbeat_module._cap(12.9) == 12
+    assert heartbeat_module._cap(-3.5) == 0
+    assert heartbeat_module._cap(0) == 0
+    assert heartbeat_module._cap(MAX_HEARTBEAT_COUNT + 10.5) == MAX_HEARTBEAT_COUNT

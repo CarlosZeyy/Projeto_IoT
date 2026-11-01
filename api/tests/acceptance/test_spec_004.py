@@ -779,9 +779,6 @@ SPEC002_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_002.py"
 SPEC002_PREPROCESS = "packages/preprocess/tests/acceptance/test_spec_002.py"
 SPEC023_PREPROCESS = "packages/preprocess/tests/acceptance/test_spec_023.py"
 SPEC024_PREPROCESS = "packages/preprocess/tests/acceptance/test_spec_024.py"
-SPEC026_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_026.py"
-SPEC016_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_016.py"
-SPEC018_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_018.py"
 SPEC021_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_021.py"
 
 # Tests collected per file on `main` (dad1880), measured with `pytest --collect-only -q`.

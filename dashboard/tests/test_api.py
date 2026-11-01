@@ -290,3 +290,96 @@ def test_get_client_without_settings_raises_config_error(no_config_env) -> None:
     with pytest.raises(config.ConfigError) as info:
         api.get_client()
     assert "API_BASE_URL" in str(info.value)
+
+
+# ---------- SPEC-040 section 4.4: defense in depth (SEC-29-01) ----------
+
+
+@pytest.fixture
+def any_url_passes(monkeypatch: pytest.MonkeyPatch, no_config_env: None) -> None:
+    """Past the check of ``config``: what is left is the defense in depth of this module."""
+    monkeypatch.setattr(config, "is_secure_api_url", lambda url: True)
+
+
+@pytest.mark.parametrize("url", ["https://api.exa\u200bmple.org", "https://api.exa\u00a0mple.org"])
+def test_get_client_converts_an_invalid_url(
+    monkeypatch: pytest.MonkeyPatch, any_url_passes: None, factory, url: str
+) -> None:
+    key = factory.new_key()
+    monkeypatch.setenv("API_BASE_URL", url)
+    monkeypatch.setenv("READ_API_KEY", key)
+    with pytest.raises(config.InsecureApiUrlError) as info:
+        api.get_client()
+    assert str(info.value) == "API_BASE_URL is not a valid URL"
+    assert info.value.__cause__ is None
+    assert key not in str(info.value)
+
+
+def test_read_converts_a_url_that_only_fails_on_the_request(
+    monkeypatch: pytest.MonkeyPatch, any_url_passes: None, factory
+) -> None:
+    key = factory.new_key()
+    monkeypatch.setenv("API_BASE_URL", "https://xn--zz.com")
+    monkeypatch.setenv("READ_API_KEY", key)
+    sent: list[httpx.Request] = []
+
+    def refuse(self: object, request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        raise AssertionError("real network used")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
+    client = api.get_client()
+    with pytest.raises(config.InsecureApiUrlError) as info:
+        client.health()
+    assert str(info.value) == "API_BASE_URL is not a valid URL"
+    assert "xn--zz" not in str(info.value) and key not in str(info.value)
+    assert sent == []
+
+
+def test_a_body_that_is_not_json_is_not_a_config_error(factory) -> None:
+    client, _ = make_client(
+        lambda request: httpx.Response(200, content=b"not json"), factory.new_key()
+    )
+    with pytest.raises(ApiError) as info:
+        client.health()
+    assert info.value.status == 200
+    assert not isinstance(info.value, config.ConfigError)
+
+
+def test_a_value_error_while_decoding_is_not_converted(
+    monkeypatch: pytest.MonkeyPatch, factory
+) -> None:
+    client, _ = make_client(json_response({"status": "ok"}), factory.new_key())
+
+    def broken_json(self: httpx.Response) -> object:
+        raise ValueError("bad body")
+
+    monkeypatch.setattr(httpx.Response, "json", broken_json)
+    with pytest.raises(ApiError):
+        client.health()
+
+
+def test_build_and_send_keep_the_timeout_and_the_key(factory) -> None:
+    """``build_request`` + ``send`` gives the same request as ``Client.get``."""
+    key = factory.new_key()
+    client, seen = make_client(json_response(factory.summary().model_dump(mode="json")), key)
+    client.summary(Filters(source="live"))
+    (request,) = seen
+    assert request.method == "GET"
+    assert request.headers["X-API-Key"] == key
+    assert request.url.params["source"] == "live"
+    assert request.extensions["timeout"] == httpx.Timeout(10.0).as_dict()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectError("x"), httpx.ConnectTimeout("x")],
+    ids=lambda error: type(error).__name__,
+)
+def test_send_errors_are_still_unavailable(error: httpx.HTTPError, factory) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error
+
+    client, _ = make_client(handler, factory.new_key())
+    with pytest.raises(ApiUnavailable):
+        client.health()

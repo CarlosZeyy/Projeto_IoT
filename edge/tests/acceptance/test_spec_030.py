@@ -498,13 +498,13 @@ def test_extra_ca02_refusal_above_the_cap_is_a_retry_not_dead(rig: Rig, status: 
     assert rig.cloud.streams[-1].delivered <= 9
 
 
-def test_extra_ca02_cap_is_configurable_and_counts_decoded_bytes(rig: Rig) -> None:
+def test_extra_ca02_cap_is_configurable_and_gzip_is_refused(rig: Rig) -> None:
     pub = publisher_for(rig.cloud, rig.mono, max_response_bytes=10)
     rig.cloud.respond = rig.cloud.stream_answer(200, [b"x" * 6, b"x" * 6, b"x" * 6])
     with pytest.raises(PublishTransientError, match=f"^{TOO_LARGE_MESSAGE}$"):
         pub.publish_batch([inspection()])
     assert rig.cloud.streams[-1].delivered == 2
-    # a gzip body (author's note): the cap applies to the decoded bytes, so it is still refused
+    # a gzip body: since SPEC-040 section 4.1 it is refused before the body is read
     data = gzip.compress(b"\x20" * (2 * 1024 * KIB))
     assert len(data) < 512 * KIB
     rig.cloud.respond = rig.cloud.stream_answer(
@@ -512,7 +512,7 @@ def test_extra_ca02_cap_is_configurable_and_counts_decoded_bytes(rig: Rig) -> No
         chunks(data, 1024),
         headers={"content-type": "application/json", "content-encoding": "gzip"},
     )
-    with pytest.raises(PublishTransientError, match=f"^{TOO_LARGE_MESSAGE}$"):
+    with pytest.raises(PublishTransientError, match="^unsupported response encoding$"):
         rig.publisher.publish_batch([inspection()])
 
 
@@ -930,7 +930,7 @@ def test_ca09_any_case_jpeg_is_checked_and_other_files_are_invalid(
     ds.write("d.png", png_bytes())
     ds.write("e.heic", secrets.token_bytes(64))
     ds.write("f", secrets.token_bytes(64))
-    ds.write(".g.jpg.abc123.tmp", secrets.token_bytes(64))
+    ds.write(".g.jpg.abc12345.tmp", secrets.token_bytes(64))
     (ds.folder / "h.jpg").mkdir()
 
     code, out, err = run_privacy(["--dataset-dir", str(ds.root)], capsys)
@@ -943,10 +943,10 @@ def test_ca09_any_case_jpeg_is_checked_and_other_files_are_invalid(
         "raw/screw/fair/f: invalid",
         "checked 6 images, 5 with private data",
     ]
-    assert ".g.jpg.abc123.tmp" not in out + err
+    assert ".g.jpg.abc12345.tmp" not in out + err
 
     untouched = {
-        n: (ds.folder / n).read_bytes() for n in ("d.png", "e.heic", "f", ".g.jpg.abc123.tmp")
+        n: (ds.folder / n).read_bytes() for n in ("d.png", "e.heic", "f", ".g.jpg.abc12345.tmp")
     }
     before = {n: loaded(ds.folder / n) for n in ("B.JPG", "c.Jpeg")}
     code, out, err = run_privacy(["--dataset-dir", str(ds.root), "--fix"], capsys)
@@ -969,7 +969,7 @@ def test_ca09_any_case_jpeg_is_checked_and_other_files_are_invalid(
         "d.png",
         "e.heic",
         "f",
-        ".g.jpg.abc123.tmp",
+        ".g.jpg.abc12345.tmp",
         "h.jpg",
     }
     assert (ds.folder / "h.jpg").is_dir()
@@ -1015,7 +1015,9 @@ def test_extra_ca09_names_that_are_not_jpeg_nor_temporaries_are_invalid(
     assert (ds.folder / name).read_bytes() == data
 
 
-@pytest.mark.parametrize("name", [".a.jpg.abc.tmp", ".tmp", ".x.tmp"], ids=lambda n: n)
+@pytest.mark.parametrize(
+    "name", [".a.jpg.abcdefgh.tmp", ".b.JPG.a1_b2_c3.tmp", ".x.jpeg.00000000.tmp"], ids=lambda n: n
+)
 def test_extra_ca09_edge_temporaries_are_ignored(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str
 ) -> None:
