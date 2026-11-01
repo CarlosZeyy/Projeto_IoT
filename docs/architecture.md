@@ -275,7 +275,7 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
    - `needs_review = type_confidence < type_threshold + 0.10 or (grade_confidence is not None and grade_confidence < grade_review_threshold)` (padrão 0,60);
    - depois de todas as comparações, que usam os valores brutos, `type_confidence` e `grade_confidence` são limitados a `[0, 1]` e `grade_score` a `[0, 4]`, as faixas do §3.2. O arredondamento do softmax em float32 pode dar `Σ i·p_i` um pouco acima de 4 (ex.: `p4 = 1.0` exato com `p3 ≈ 6e-8`), e o contrato recusaria a inspeção. O limite não muda nenhuma decisão (SPEC-008 §4.1, item 6).
 5. A foto é salva em `EDGE_DATA_DIR/captures/AAAA-MM-DD/<inspection_id>.jpg`.
-6. Monta o `InspectionCreate` e grava no **outbox** (SQLite) **antes** de responder. Com `--stub-model`, grava só em memória (§6.1).
+6. Monta o `InspectionCreate` e grava no **outbox** (SQLite) **antes** de responder. Com `--stub-model`, grava só em memória (§6.1). O `source` é `live`; a partir da SPEC-041 (ADR-024, `Proposto`), é `simulated` quando o `model_version` contém `-provisional-` (§7).
 7. Responde ao celular com o resultado e os rótulos PT-BR.
 8. Um laço em segundo plano publica os pendentes com `HttpPublisher`:
    - em lotes de até 100 via `/inspections/batch`, timeout de 5 s;
@@ -349,6 +349,8 @@ Cada versão vive em `ml/models/<model_version>/`. **O nome do diretório é o `
 | `parity_fixture.npz` | Cerca de 8 entradas pré-processadas, geradas a partir de imagens **sintéticas** (nunca fotos reais no Git), e as saídas do torch, para o teste de paridade com ONNX sem precisar de torch |
 
 Para distribuir o `model.onnx`, use um GitHub Release do repositório (anexo gratuito) ou copie manualmente para o notebook da borda.
+
+**Modelo provisório** (a partir da SPEC-041; ADR-024, `Proposto`). Uma versão cujo nome contém `-provisional-` serve só para ensaiar o fluxo. É gerada por `python -m qc_ml.provisional`, só com imagens externas, fora de `ml/data/` e fora do repositório, sem split e com limiares fixos. O diretório dela tem `provisional_report.json` no lugar de `metrics.json` e `training_config.json`, e nunca recebe Release nem entrada no CHANGELOG. O pipeline oficial e o `qc_ml.report` recusam esse nome, e a borda publica as inspeções dela com `source=simulated` (§6.2). Só o modelo oficial tem métricas. A CLI do split também recusa um `split_v1` abaixo do piso (`docs/dataset-protocol.md` §4).
 
 **Exibição das métricas** (regra única para o CHANGELOG da SPEC-012 e para a página "Sobre o modelo" do dashboard, SPEC-028; RV-07 de `reviews/SPEC-013/r1-review-report.md`). O `metrics.json` guarda o valor bruto, nunca arredondado (R-11). Na exibição:
 - 4 casas decimais e vírgula decimal, calculadas a partir de `Decimal(repr(valor))`;

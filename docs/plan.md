@@ -29,6 +29,9 @@ Atualizado pelo orquestrador (sessão principal) a cada mudança de status de SP
 | S2–S3 | Backup do dataset: só em mídia local até o merge da SPEC-025; a partir dele, no Drive, sempre depois do checklist do `docs/dataset-protocol.md` §8 | Dupla |
 | Já | Registrar os CAs manuais pendentes: CA-17 da SPEC-010 e CA-26 da SPEC-013 (antes do merge das SPECs 025 e 028) e CA-20/21 da SPEC-007 | Dupla |
 | S3 | Rotulagem dupla (20%) | Dupla |
+| Se o ADR-024 for aceito (proposta) | Fotografar as próprias peças até o piso (33 peças, 99 fotos; alvo prático de 40 peças, 120 fotos), sem esperar os colegas, e fazer a corrosão de `good`/`fair` se faltarem peças | Dupla |
+| Se o ADR-024 for aceito (proposta) | Rotular os candidatos externos para o modelo provisório (`~/partqc-entrada/candidatos/`; SPEC-041 §4.8) | Um membro da dupla |
+| Até a data de corte (proposta: 15/11) | Gerar o `split_v1` e levá-lo à `main` por PR; depois, o treino real (CA-28 da SPEC-012) | Dupla |
 | Contínuo | Aprovar SPECs (`Draft` → `Ready`) e ADRs (`Proposto` → `Aceito`); vetar um merge quando quiser (o merge dos PRs é feito pelo orquestrador sob delegação, ADR-016); reaprovar as correções de SPEC, exceto as correções pequenas de `SPEC_ISSUE`, que o orquestrador reaprova nos limites do ADR-019, com veto do humano | Dupla |
 
 ## 2. Quadro de SPECs
@@ -77,6 +80,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [038](specs/SPEC-038-manutencao-borda-deploy.md) | Manutenção da borda e do deploy (linhas inválidas do outbox, importação de fotos e respostas de erro do Caddy) | developer + security-devops | security, deploy, infra | 036, 032 mergeadas (e 034, 009, 015, 025, 030), 039 | S6–S7 | Done (CA-18 manual na VPS pendente) |
 | [039](specs/SPEC-039-manutencao-deploy-coolify.md) | Manutenção do deploy para o Coolify (compose sem portas publicadas, Caddy como roteador interno e segredos no painel; ADR-023 `Aceito`) | security-devops | deploy, security, infra | ADR-023 `Aceito`; 015 e 032 (código mergeado) | agora (direto na `main`, decisão do humano de 2026-10-25) | Done (CA-14 a CA-18 e CA-20 manuais na VPS pendentes) |
 | [040](specs/SPEC-040-manutencao-consolidada.md) | Manutenção consolidada antes da apresentação (respostas comprimidas no publisher e nos alertas, varredura de privacidade, URL do painel, CHANGELOG e split do ML, documentação de deploy) | developer + ml-engineer + security-devops | security, deploy, infra | 016, 017, 018, 036 e 038 mergeadas (e 029, 030, 031, 037, 039) | S7 (merge antes do ensaio do M4, 29/11) | In Security (r1; portões PASS; CA-18 manual só depois do deploy) |
+| [041](specs/SPEC-041-modelo-provisorio-e-piso-do-split.md) | Modelo provisório para o ensaio, separado do oficial, e piso do `split_v1` (ADR-024 `Proposto`) | ml-engineer + developer | security | ADR-024 `Aceito`; 008, 011, 012, 035, 036 e 040 mergeadas | S4 | Draft |
 
 > As SPECs `Ready` foram escritas na fundação documental e **aguardam a confirmação humana** antes da primeira execução do loop. Na prática, ao pedir "rode o loop da SPEC-XXX", a dupla está aprovando aquela SPEC. As marcadas "aguardando reaprovação" foram alteradas depois da aprovação e precisam de uma nova.
 
@@ -148,6 +152,20 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 - Fica fora (SPEC-040 §3.2): SEC-30-03 (prazo total na fase dos headers: mexe no caminho crítico do envio logo antes da apresentação), RV-01, RV-02 = SEC-02 e SEC-01 da 018, RV-02/RV-03 e SEC-29-02 da 029, RV-02/RV-04 da 016, SEC-16-02 (skill `contrato-api`, fora do loop) e as observações dos portões da 017. Já resolvidos: RV-01 da 031 (pela 037 §4.6) e SEC-17-01 (no plano de deploy da branch da 017). O SEC-39-06 está na 038.
 - Três partes na mesma rodada: developer (Parte A: `edge/`, `api/`, `dashboard/`), ml-engineer (Parte B: `ml/`) e security-devops (Parte C: comentários de `infra/docker/`, `.streamlit/config.toml` e `docs/deployment-plan.md`). Portão de segurança das Partes A e B pelo security-devops e da Parte C pelo reviewer (SPEC-040 §6).
 - Feito pelo architect junto com a SPEC: `docs/dataset-protocol.md` §8, passo 1 (RV-04 da 030). Depois do CA-15 manual da 039, o architect alinha só o texto do CA-15 dela (RV-03 da 039).
+
+**Modelo a tempo (ADR-024 `Proposto` e SPEC-041 `Draft` em 2026-10-31; aguardam aprovação humana).** Em 2026-10-31, o dataset próprio tem zero fotos, e não há `model.onnx`, Release nem `split_v1`. Proposta: duas trilhas, com R-11, ADR-014, ADR-020 e as metas do PRD §7 sem mudança.
+
+```text
+ADR-024 aceito ─► 041 ─► rotular candidatos ─► modelo provisório ─► ensaio do fluxo (CA-22 da 041)
+                  └────► fotos próprias até o piso ─► split_v1 na data de corte (15/11) ─► treino real ─► M3 (22/11) ─► M4 (29/11)
+```
+
+- **Trilha 1, modelo provisório:** só imagens externas, fora de `ml/data/` e do repositório, sem split, sem métrica e sem Release, com as inspeções em `source=simulated`. Só ensaia o fluxo.
+- **Trilha 2, modelo oficial:** único com `metrics.json`. O `split_v1` exige o piso de 33 peças (3 por tipo × grau e 3 `other`) e 99 fotos, e sai na data de corte, porque peça que chega depois não entra no teste. Sem o piso na data, não há modelo oficial, e a apresentação declara isso.
+- **Grau das externas:** continua sendo da dupla, com a rubrica; um membro basta no conjunto provisório.
+- **Posição:** a 041 pode entrar logo depois da aprovação, antes da 019 e não em paralelo a ela, porque as duas mudam `edge/src/qc_edge/app.py`. Ela depende de o humano ou da dupla obter recortes de porca e dos graus intermediários para o conjunto provisório: hoje, a única fonte de `nut` são os recortes da SDNET, ainda não feitos.
+- **SPECs afetadas, sem mudança de status nem de CA:** 012 (CA-28) e 008 (CA-16) continuam pendentes até o modelo oficial; a 019 herda a regra do `source` ao implementar `POST /api/live/frame` (nota a registrar no aceite); 011, 035 e 036 ganham, respectivamente, a recusa do piso na CLI do split, o conjunto provisório como outro uso das externas e um `--dataset-dir` fora de `ml/data/`, sem mudar o que já fazem.
+- **Só depois do aceite** (orquestrador): N-11 em `docs/rules.md` e a nota no PRD §7, com os textos do ADR-024.
 
 - A **SPEC-023** (pacotes 0.2.0, pendências do review da SPEC-002) entra **antes** da 004 e da 007 e pode correr em paralelo com a 003 (`002 → 023 → 004/007`).
 - A **SPEC-024** (`qc-preprocess` 0.3.0, SEC-01 do security-report da SPEC-023) entra **antes** da 007 (`023 → 024 → 007`). A 004 depende dela só pela migração das expectativas de versão (abaixo), e a 024 já está mergeada (PR #9).
@@ -249,3 +267,4 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | 2026-10-26 | SPEC-040 aprovada pelo humano (`Draft` → `Ready`, PR #57), com as recomendações do architect. Ordem: `016 → 018 → 017 → 038 → 040 → portão da Fase 3`; a 040 entra quando as anteriores estiverem mergeadas (dependem do CA-17 da 036) |
 | 2026-10-26 | Decisão do humano: a SPEC-020 (MQTT) é adiantada antes do portão da Fase 3, encadeada na 038, porque a Fase 2 está com o código pronto; a 019 (teste humano do certificado) e a 021 (fotos de ferramentas elétricas) seguem esperando |
 | 2026-10-26 | Decisão do humano: a SPEC-021 (ferramentas elétricas) é adiantada antes do portão da Fase 3, só código e testes sintéticos, encadeada na 020; a 019 espera o teste humano do certificado nos celulares (roteiro em `notas-locais/`) |
+| 2026-10-31 | ADR-024 (`Proposto`) e SPEC-041 (`Draft`, ml-engineer + developer, tag `security`): modelo provisório só com imagens externas para ensaiar o fluxo, isolado do oficial (`-provisional-` no nome, `source=simulated`, sem split, sem métrica, sem Release), e piso do `split_v1` (33 peças, 99 fotos) com data de corte proposta em 15/11. R-11, ADR-014, ADR-020, metas de volume e metas do PRD §7 sem mudança; o grau das externas continua sendo da dupla. Pergunta 10 ao professor. **Aguarda aprovação humana** (7 perguntas no ADR-024 e 3 na SPEC-041). Nenhuma outra SPEC muda de status |

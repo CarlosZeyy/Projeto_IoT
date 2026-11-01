@@ -106,6 +106,8 @@ Se algum grau ficar abaixo da meta, registre em `ml/reports/` e use pesos de cla
 
 **O que conta para as metas** (ADR-020): as fotos da página e as de conhecidos (peças físicas reais, §10.2). As imagens externas (§10.4) **não** contam: cada uma é uma "peça" sem relação com as peças da dupla, e elas nunca vão para a validação nem para o teste. O relatório de dados (SPEC-035) e a tabela de cobertura do console (SPEC-036) já as separam.
 
+**Piso do `split_v1`** (ADR-024, `Proposto`; vale a partir do aceite dele e do merge da SPEC-041). As metas acima não mudam. O piso é o menos com que o `split_v1` pode ser gerado: **3 peças físicas por tipo × grau e 3 objetos `other`, com pelo menos 3 fotos por peça** (33 peças e 99 fotos; 40 peças e 120 fotos, com 10 objetos `other`, tiram um aviso do `metrics.json`). As imagens externas não contam. O que esse teste de 11 peças permite e não permite afirmar está no Anexo do ADR-024.
+
 **Por que 12 peças por grau:** com o split 70/15/15 por peça, 8 peças deixam cerca de 1 peça por grau no teste, e as métricas ficam muito instáveis. Com 12 ou mais, sobram cerca de 2. Mesmo assim, o teste é pequeno: por isso o `metrics.json` traz intervalos de confiança por bootstrap (skill `ml-pipeline`). Como a mesma peça passa por vários estágios de corrosão, a estratificação usa o grau **dominante** da peça e é aproximada; o relatório de dados mostra a distribuição real por split.
 
 ## 5. Manifest (`DATASET_DIR/manifest.csv`)
@@ -142,6 +144,7 @@ Uma imagem que precisa **sair** do dataset (por exemplo, com uma pessoa no quadr
 
 - O split é **agrupado por `item_id`** (`StratifiedGroupKFold` ou equivalente): 70% treino, 15% validação e 15% teste, estratificado por tipo e grau dentro do possível. A seed fica fixada e o hash do split é salvo.
 - **Teste final:** congelado na primeira geração do split (S3). Novas peças entram **só** em treino e validação, salvo se a dupla decidir, com um ADR, recriar o teste.
+- **Quando gerar o `split_v1`** (ADR-024, `Proposto`; vale a partir do aceite dele e do merge da SPEC-041): só na data de corte, salvo decisão do humano, e nunca abaixo do piso (§4): a CLI recusa. Peça que chega depois do `split_v1` só vai para treino e validação, por isso atingir o piso não obriga a gerar o split.
 - **Imagem excluída (§8.1):** sai do split seguinte, inclusive do teste, com o aviso `excluded_previous_image` no `split_v<N>.json` (SPEC-011). Isso não é recriar o teste: nenhuma imagem muda de conjunto, e a exclusão é decidida pela foto (R-14), nunca pelo resultado do modelo. O relatório de métricas cita o aviso.
 - **Uma peça nunca muda de conjunto:** a peça que já esteve em treino, validação ou teste, em **qualquer** versão do split, continua nesse conjunto em todas as versões seguintes. Isso vale mesmo que todas as fotos dela tenham sido excluídas, um split tenha sido gerado sem ela e ela volte refotografada com o mesmo `item_id` (§2, passo 6). Para isso, o `python -m qc_ml.split` lê **todos** os `split_v*` anteriores e confere o hash de cada um (SPEC-011 §4.4). Ele sai com erro, sem gravar nada, se faltar uma versão na numeração, se um hash não conferir ou se uma peça aparecer em dois conjuntos ao longo das versões.
 - **Os `split_v*` antigos não se apagam nem se editam.** Se um faltar ou não conferir, restaure-o do Git. Um conflito de peça entre versões indica split editado à mão ou `item_id` reaproveitado para outra peça física: pare e investigue. Corrigir um split antigo que mexa no teste é recriar o teste e exige ADR.
@@ -257,6 +260,16 @@ Cada imagem externa é, em geral, uma "peça" própria (`XS-0001`, `XS-0002`…)
 - **A licença de uma fonte externa muda ou é contestada:** todas as imagens dessa `source_id` seguem a §8.1 (`reason=other`); a fonte continua no registro, e o modelo seguinte é treinado sem ela.
 - **`missing_source` no `validate`** (uma queda de energia entre a gravação do manifest e a do `sources.csv`): siga a §8.1 para essa imagem e importe o arquivo de novo.
 
+## 11. Conjunto provisório para o ensaio (ADR-024)
+
+`Proposto`; vale a partir do aceite do ADR-024 e do merge da SPEC-041. Até lá, nenhum modelo provisório existe.
+
+- **Não é o dataset.** Fica em `~/partqc-provisorio/`, fora de `ml/data/` e fora de qualquer repositório Git. Não tem split, validação nem teste, e não gera métrica nenhuma. Serve só para ensaiar o fluxo.
+- **Só imagens externas.** Entra pela importação (§10.6), com o mesmo plano e as mesmas fontes registradas. Nenhuma foto da dupla nem de conhecidos: a ferramenta recusa, para nenhuma peça do futuro teste ser vista por esse modelo. O teto de 30% (§10.4) não se aplica a este conjunto, porque ele nunca passa pelo split.
+- **O grau é da dupla, com a rubrica (§1), como em qualquer origem (§10.1).** O rótulo da fonte e o `sugestoes.csv` são só pistas, e um agente nunca decide um grau. Um membro basta, sem rotulagem dupla nem QWK. Recorte sem decisão possível sai do plano.
+- **Resultados:** as inspeções feitas com esse modelo saem `source=simulated`. Use lotes `ENSAIO-…`. Nenhum número do ensaio vai para o PRD §7.
+- **Fim:** depois da entrega, apague `~/partqc-provisorio/` e as pastas de entrada.
+
 ## Histórico de alterações
 
 | Data | Mudança | Por quê |
@@ -274,3 +287,4 @@ Cada imagem externa é, em geral, uma "peça" própria (`XS-0001`, `XS-0002`…)
 | 2026-10-24 | §1.1: a rubrica das ferramentas manuais deixa de ser rascunho e passa a ser o texto da SPEC-016 §4.11 (tabela por grau, mesma precedência do §1). §3: protocolo de captura das ferramentas manuais (SPEC-016 §4.11). Vale a partir do merge da SPEC-016 (Parte A). As ferramentas elétricas (SPEC-021, Fase 3) não entram aqui agora: a SPEC-021 não manda copiar a captura delas na aprovação, e a Fase 3 só roda depois do portão da Fase 2. Limpeza de consistência pós-aprovação, sem mudança de requisito | SPEC-016 `Ready` desde o PR #45 (2026-10-24); a §4.11 dela manda copiar o texto para cá quando ela virasse `Ready`. Architect, a pedido do orquestrador |
 | 2026-10-26 | §8, passo 1: sai o trecho "Até o merge da SPEC-030" (já mergeada); ficam três conferências antes de compactar: o código de saída da varredura, o `find ml/data/raw -type f ! -name '*.jpg'` e, até o merge da SPEC-040, a conferência de permissões | RV-04 de `reviews/SPEC-030/r1-review-report.md` e SEC-30-02/SEC-30-04 de `reviews/SPEC-030/r1-security-report.md` (R-14). Architect, junto com a SPEC-040 (`Draft`) |
 | 2026-10-27 | Ferramentas elétricas (Fase 3, só identificação, SPEC-021 §3.3): §1.2 nova (sem rubrica, grau sempre vazio); §2: unidades por tipo (mínimo 3, meta 6, conhecidos `T-501`… contam, tipo abaixo de 3 adiado); §3: protocolo de captura (desligada, fundo liso maior que a ferramenta, 50 a 80 cm, 40–70% da foto, 3 a 5 ângulos, R-14, `raw/<tipo>/_/`, externas só no treino); §4: meta de 90 imagens por tipo; §5: `item_id` `T`, os 4 valores de `object_type` e grau vazio (`grade_on_other`); §7: extensão única do teste e adiamento (ADR-022); §10.3: faixa `T-`/`XT-` com as elétricas. Vale a partir do merge da SPEC-021. Sem decisão nova: texto da SPEC-021 e do que foi implementado na r1 | Definição de pronto da SPEC-021 (§8). Architect, a pedido do orquestrador |
+| 2026-10-31 | §4: piso do `split_v1` (3 peças por tipo × grau, 3 objetos `other`, 3 fotos por peça); §7: quando gerar o `split_v1`; §11 nova: conjunto provisório para o ensaio. Metas de volume e rubrica sem mudança. Vale a partir do aceite do ADR-024 e do merge da SPEC-041 | Dataset próprio com zero fotos, sem modelo, com o ensaio em 29/11; ADR-024 (`Proposto`) e SPEC-041 (`Draft`). Architect, a pedido do orquestrador |
