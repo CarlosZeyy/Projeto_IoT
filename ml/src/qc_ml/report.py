@@ -17,6 +17,9 @@ integer (SPEC-037 section 4.1): a value with a line break would otherwise forge 
 ``changelog`` also refuses, the same way, an invalid ``n_items_test_by_grade`` and ``warnings``
 with a control or line separator character (SPEC-040 section 4.6); the values are never echoed.
 
+SPEC-041 section 4.5 (ADR-024): both commands refuse a provisional model (exit 2, nothing written),
+before ``metrics.json`` is read: it has no official report.
+
 SPEC-016 section 4.8 (ADR-022): when the model has hand or power tools (SPEC-021), the entry
 has a line ``- Tipos do modelo: <types>; sem grau: <types or nenhum>.`` before the table and the
 note that ``type_accuracy`` is not comparable with a model without those types. The types come
@@ -52,6 +55,7 @@ from typing import Any, Literal
 
 from qc_contracts import Grade
 from qc_ml.artifacts import METRICS_FILE, read_model_sha256
+from qc_ml.config import is_provisional_version
 from qc_ml.data import (
     DEFAULT_EXTERNAL_SOURCES,
     KNOWN_OBJECT_TYPES,
@@ -104,6 +108,7 @@ PRD_TARGETS: dict[str, Target] = {
     "latency_ms_p95": Target("<=", "300"),
 }
 
+PROVISIONAL_MESSAGE = "provisional model: no official report"
 NOT_IN_REGISTRY = "licença não encontrada no registro"
 INVALID_SOURCE_ID = "<invalid source_id>"
 NOTES_HEADING = "## Fontes externas e créditos"
@@ -632,6 +637,15 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def is_provisional_dir(model_dir: Path) -> bool:
+    """The name of ``model_dir``, as given or after ``realpath``, is a provisional version.
+
+    The ``realpath`` covers ``--model-dir .`` and a symbolic link with an official name.
+    """
+    names = (model_dir.name, Path(os.path.realpath(model_dir)).name)
+    return any(is_provisional_version(name) for name in names)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """``changelog``: print the entry (with ``--append``, also add it to the end of the file).
     ``release-notes``: print or write the Release notes. 0 on success, 2 on any error."""
@@ -639,6 +653,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = _parser().parse_args(argv)
     except SystemExit as exc:
         return EXIT_OK if exc.code == 0 else EXIT_ERROR
+    if is_provisional_dir(args.model_dir):  # SPEC-041 section 4.5: before reading metrics.json
+        print(PROVISIONAL_MESSAGE, file=sys.stderr)
+        return EXIT_ERROR
     if args.command == "release-notes":
         return _release_notes_main(args)
     try:
