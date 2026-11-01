@@ -59,7 +59,7 @@ Status possíveis: `Draft` → `Ready` → `In Dev` → `In Test` → `In Review
 | [016](specs/SPEC-016-ferramentas-manuais.md) | Fase 2: ferramentas manuais (contrato 0.4.0, tipos sem grau e teste estendido; ADR-021/022 `Aceito`) | developer + ml-engineer | contrato, security | 034, 035, 036, 037, 026, 028 (e 008, 010, 011, 012, 013) | S5–S6 | Done (CA-21 manual pendente até o treino real) |
 | [017](specs/SPEC-017-alertas-telegram.md) | Fase 2: alertas no Telegram | developer | security | 006, 015, 016, 026 (e 003, 004, 014) | S6 | Done (CA-13 manual pendente) |
 | [018](specs/SPEC-018-heartbeat-dispositivos.md) | Fase 2: heartbeat e dispositivos (contrato 0.5.0) | developer | contrato, security | 034, 016, 030 (e 004, 009, 013, 028) | S6 | Done (CA-13 manual pendente) |
-| [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030, 041 (e 007, 009, 024) | depois da 041 | In Test (r1) |
+| [019](specs/SPEC-019-modo-ao-vivo.md) | Fase 3: modo vídeo ao vivo (HTTPS na LAN) | developer | security | 008, 025, 030, 041 (e 007, 009, 024) | depois da 041 | In Review (r1) |
 | [020](specs/SPEC-020-mqtt.md) | Fase 3: transporte MQTT (Mosquitto local e ponte) | developer | security | 009, 030, 034 (e 004) | S8 | Done (CA-11 e CA-12 manuais pendentes) |
 | [021](specs/SPEC-021-ferramentas-eletricas.md) | Fase 3: ferramentas elétricas (só identificação, contrato 0.6.0) | developer + ml-engineer | contrato, security | 016, 018, 034 | S8 | Done (CA-14 manual pendente) |
 | [022](specs/SPEC-022-manutencao-setup.md) | Manutenção do setup (hook, CI sem senha, commits do architect) | developer | infra | 001 | S1 | Done |
