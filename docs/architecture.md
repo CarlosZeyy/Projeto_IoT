@@ -253,11 +253,12 @@ As migrações ficam em `infra/migrations/NNN_descricao.sql`, escritas para pode
 
 | Rota | Quem usa | Descrição |
 |---|---|---|
-| `GET /` | operador (navegador do notebook) | Console com QR code para `http://<ip-lan>:<porta>/capture?t=<token>`, status do modelo, tamanho do outbox, último envio, últimas inspeções. Só responde a cliente de loopback, sem headers de proxy e com `Host` de loopback (`127.0.0.1`, `localhost` ou `[::1]` na porta configurada, SPEC-025); senão, 403. Testes que chamam o console usam a URL base `http://127.0.0.1:<porta>` |
+| `GET /` | operador (navegador do notebook) | Console com QR code para `http://<ip-lan>:<porta>/capture?t=<token>` (`https://` com o TLS ligado, §6.4), status do modelo, tamanho do outbox, último envio, últimas inspeções. A partir da SPEC-019: só com o TLS ligado, também o QR de `https://<ip-lan>:<porta>/live?t=<token>`; com ou sem TLS, a última latência por quadro e o p95 dos últimos 100 quadros, de todas as sessões, em `id="live-latency"` (`—` sem quadros; esse valor não vai à resposta da rota nem à nuvem). Só responde a cliente de loopback, sem headers de proxy e com `Host` de loopback (`127.0.0.1`, `localhost` ou `[::1]` na porta configurada, SPEC-025; sem a porta, só na porta padrão do esquema: 80 sem TLS, 443 com TLS); senão, 403. Testes que chamam o console usam a URL base `http://127.0.0.1:<porta>`, ou `https://127.0.0.1:<porta>` com o TLS ligado |
 | `GET /capture?t=<token>` | celular | Página HTML/JS mínima: campo de lote, modo (inspeção/coleta), botão "Fotografar" (`<input type=file accept="image/*" capture="environment">`) e resultado. O JS redimensiona para no máximo 1280 px no lado maior e reencoda em JPEG (q=0,9) via canvas, o que também corrige a rotação EXIF |
 | `POST /api/capture` | celular | `multipart/form-data`: `image` (JPEG/PNG; limites próprios da rota: ≤ 3 MiB e ≤ 4 M pixels, checados pelo cabeçalho antes de decodificar (SPEC-007 §4.7); depois, as regras do `qc_preprocess.load_image`: ≤ 40 M pixels, proporção ≤ 10:1, JPEG com ≤ 64 marcadores de scan; tudo dentro do limitador de decodificações, §9), `lot_id`, `mode`; no modo `collect`, também `item_id`, `object_type`, `grade`, `labeler`, `angle`. Header `X-Session-Token`. Responde com o resultado ou a confirmação da coleta |
 | `GET /api/status` | console e celular | Modelo (versão, sha), outbox (pendentes), conectividade com a nuvem |
-| `GET /live?t=<token>` e `POST /api/live/frame` | celular | Vídeo ao vivo com uma inspeção por peça estável; exige HTTPS na LAN (`EDGE_TLS_CERT`/`EDGE_TLS_KEY`, CA local do `mkcert`). A partir da SPEC-019 (Fase 3) |
+| `GET /live?t=<token>` | celular | A partir da SPEC-019 (Fase 3). Página do vídeo ao vivo: campo de lote, `getUserMedia` com a câmera traseira, até `LIVE_FPS` quadros por segundo (lado maior ≤ 640 px, JPEG q=0,8, uma requisição em andamento por vez) e overlay com o resultado. Sem token válido, 401; com ou sem token, `Cache-Control: no-store`, `Referrer-Policy: no-referrer` e `X-Content-Type-Options: nosniff`. A câmera exige contexto seguro, ou seja, HTTPS na LAN (`EDGE_TLS_CERT`/`EDGE_TLS_KEY`, CA local do `mkcert`); fora dele, a página só mostra o aviso e não pede a câmera |
+| `POST /api/live/frame` | celular | A partir da SPEC-019 (Fase 3). `multipart/form-data`: `image` (só JPEG, pelo conteúdo; limites próprios da rota: ≤ 1 MiB, requisição ≤ 1,25 MiB e ≤ 1 M pixels, checados pelo cabeçalho antes de decodificar; depois, as regras do `qc_preprocess.load_image`; dentro do limitador de decodificações compartilhado com a captura, §9), `lot_id`, `session`. Header `X-Session-Token`. Infere cada quadro e responde 200 com `state`, `stability`, `result` (sempre o quadro atual) e `inspection`. Só quando a classificação fica estável (`qc_edge.live`, SPEC-019 §4.2), grava **uma** inspeção por peça pelo mesmo caminho da captura (§6.2, com o `source` da SPEC-041), salvando em `captures/` só o quadro emitido, e `inspection` vem preenchido. Os outros quadros ficam só em memória e nunca saem da LAN (R-02). Erros, nesta ordem: 401, 413, 422, 503 `server busy`, 415 (PNG também), 503 `model not loaded`, 429 `too many live sessions`; depois, 500 `inference failed` e as falhas de gravação da captura (SPEC-019 §4.4) |
 
 **Sem modelo carregado** (`MODEL_DIR` vazio, por exemplo na S2, antes do primeiro treino): a borda sobe normalmente, o modo `collect` funciona e o modo `inspect` responde 503 com `{"detail": "model not loaded"}` (a página mostra o rótulo PT-BR). O stub de desenvolvimento (`--stub-model`, SPEC-007) **nunca** publica na nuvem: com ele, a borda usa o `InMemorySink` e não abre o outbox, então as inspeções do stub somem quando o processo termina e nenhuma subida posterior pode enviá-las (SPEC-009 §4.4, R-06).
 
@@ -332,6 +333,22 @@ A partir da SPEC-020 (transporte MQTT, §6.2):
 - `MQTT_HOST`, `MQTT_PORT` e `MQTT_RESPONSE_TIMEOUT_S` são validadas em toda subida, com ou sem `EDGE_PUBLISHER=mqtt`. As mensagens de erro citam a variável, nunca o valor.
 - Com `EDGE_PUBLISHER=mqtt`, o `MqttPublisher` entra no `PublishLoop` nas mesmas condições do `HttpPublisher` (sem `--stub-model`, com `DEVICE_API_KEY` e `CLOUD_API_URL`, que a ponte usa). Com `--stub-model`, nada muda: `InMemorySink` e nenhum publisher (R-06).
 - A ponte (`BridgeSettings`) lê `DEVICE_ID`, `DEVICE_API_KEY` e `CLOUD_API_URL` (regras da SPEC-009, obrigatórias) e `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME` e `MQTT_PASSWORD`, só do ambiente do processo (`uv run --env-file .env --package qc-edge python -m qc_edge.mqtt_bridge`). Identificadores de cliente: `partqc-edge-<DEVICE_ID>` e `partqc-bridge-<DEVICE_ID>`.
+
+A partir da SPEC-019 (HTTPS na LAN e vídeo ao vivo, §6.1):
+
+| Variável | Padrão | Regra |
+|---|---|---|
+| `EDGE_TLS_CERT`, `EDGE_TLS_KEY` | vazias | caminhos de arquivos PEM. As duas vazias = HTTP. Só uma preenchida, arquivo que não abre para leitura ou chave com permissão de leitura para grupo ou outros (`mode & 0o077 != 0`) → código 2, com a mensagem citando a variável, sem o conteúdo do arquivo. O conteúdo do PEM não é conferido na configuração: um PEM inválido faz o `uvicorn` falhar na subida, sem servir nenhuma rota |
+| `LIVE_WINDOW` | `10` | inteiro de 3 a 30 (quadros na janela de estabilidade); outro → código 2 |
+| `LIVE_MIN_AGREE` | `8` | inteiro de 1 a `LIVE_WINDOW`, também quando fica no padrão (com `LIVE_WINDOW=5`, é preciso defini-la); outro → código 2 |
+| `LIVE_MIN_CONFIDENCE` | `0.80` | número de 0,50 a 0,99 (média de `type_confidence` do par estável); outro → código 2 |
+| `LIVE_EMPTY_FRAMES` | `3` | inteiro de 1 a 10 (resultados `unknown` seguidos que voltam a `IDLE`); outro → código 2 |
+| `LIVE_MAX_SESSIONS` | `4` | inteiro de 1 a 8; outro → código 2. Com o máximo atingido, uma sessão nova recebe 429; uma sessão sem quadro há mais de 60 s é descartada |
+| `LIVE_FPS` | `2` | inteiro de 1 a 5 (passado à página `/live`); outro → código 2 |
+
+- Com as duas variáveis de TLS preenchidas, o uvicorn sobe com `ssl_certfile` e `ssl_keyfile`, todas as rotas passam a HTTPS, e o console continua só para loopback, em `https://127.0.0.1:<porta>`. Sem elas, a foto por disparo continua igual, em HTTP.
+- O certificado e a chave ficam em `edge/data/tls/` (já ignorado pelo Git), com a chave em `0600`; a chave nunca entra no repositório (R-03). O passo a passo do `mkcert` está no `edge/README.md`.
+- Os limites de tamanho da rota (§6.1) são constantes de `qc_edge.limits`, e não variáveis de ambiente.
 
 ## 7. Modelo (`qc-ml`) — artefatos
 
