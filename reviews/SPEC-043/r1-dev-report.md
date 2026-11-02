@@ -6,60 +6,90 @@
 | Rodada | r1 |
 | Autor | developer (Parte A). A Parte B é do security-devops |
 | Branch | `spec/SPEC-043-manutencao-pos-deploy` |
-| Commits | só o deste relatório. Nenhum código da Parte A foi escrito |
+| Commits | ver "Commits da Parte A" |
 
 ## Resumo
 
-**Parte A interrompida antes de começar, por causa do SPEC_ISSUE-01.** O CA-09 e a primeira frase do CA-08 contradizem a §4.2 e a §7 para uma das quatro URLs mal formadas. Como manda o processo, parei sem escolher uma saída. Nenhum arquivo de produção ou de teste mudou.
+Parte A implementada depois da correção do SPEC_ISSUE-01 (commit `4944e15`, reaprovada pelo humano).
+
+- **DEP-01:** o lote do simulador espera até 60 s, e a mensagem do esgotamento manda repetir com a mesma seed.
+- **DEP-02:** `qc_api.conninfo.is_safe_conninfo` recusa a URL mal formada antes de conectar, na API, no `migrate.py` e no `register_device.py`.
+- **E2E-01:** a coluna `Modelo` do Histórico tem 240 px.
+- **E2E-02:** com `EDGE_HOST` diferente de `0.0.0.0`, o console só oferece esse endereço e, em loopback, avisa que o celular não abre.
+- **OBS-01:** o aviso passa a ser `API_UNAVAILABLE_TEXT`, com o texto da §4.8.
+
+## Commits da Parte A
+
+| Commit | Item |
+|---|---|
+| `b5cb88c` | Registro do SPEC_ISSUE-01 (primeira passagem, sem código) |
+| `ab4be60` | DEP-01 |
+| `d98a115` | DEP-02 |
+| `3a79ba6` | E2E-01 e OBS-01 (juntos, porque os dois mudam `dashboard/tests/test_pages.py`) |
+| `fa4f38f` | E2E-02 |
 
 ## Rastreabilidade (critério de aceite → implementação)
 
-Vazia: nada foi implementado nesta passagem.
-
-## SPEC_ISSUE
-
-### SPEC_ISSUE-01 — A primeira URL **M** tem a porta 6543, e o CA-09 pede para ela um erro que a §4.2 e a §7 não produzem
-
-**Trechos em conflito:**
-
-- A primeira URL **M** é `postgresql://u:<A>@<B>@db.example.org:6543/postgres`.
-- **§4.2:** a nova checagem entra "no início" de `_connect`. A §4.2 não muda `apply_migrations` nem `pending_migrations`, que hoje chamam `ensure_supported_connection` antes de `_connect`.
-- **§7, "Ordem no `migrate.py`":** "`ensure_supported_connection` vem antes da nova recusa".
-- **CA-09:** "*Dado* cada **M**, *quando* se chamam `apply_migrations` e `pending_migrations`, *então* levantam `DatabaseConnectionError`".
-- **CA-08:** a primeira frase diz que, com cada **M**, a saída contém `invalid database URL (not shown)`. A segunda frase diz que, com essa mesma URL, a recusa é a da porta 6543. No CA-08, a própria segunda frase mostra a intenção; no CA-09, nada trata esse caso.
-
-**Medição (código atual, `psycopg.connect` substituído por uma função que falha):** o parser devolve `host='<B>@db.example.org'` e `port='6543'`, e as duas funções levantam `UnsupportedConnectionError`, que não é subclasse de `DatabaseConnectionError` (as duas são filhas de `MigrationError`). Implementada a §4.2 ao pé da letra, nada muda nesse caminho, e o CA-09 falha com essa URL.
-
-**Saídas possíveis (a decisão é do architect):**
-
-| Opção | SPEC | Código da Parte A |
+| Critério | Arquivo(s) | Teste unitário do autor |
 |---|---|---|
-| (a) O CA-09 e a primeira frase do CA-08 valem para as outras três **M**. Para a URL com 6543, o CA-09 passa a esperar `UnsupportedConnectionError`, sem chamar `psycopg.connect` e sem sentinela | Só os dois CAs | Exatamente a §4.2 |
-| (b) `apply_migrations` e `pending_migrations` recusam a URL mal formada antes da checagem da porta, e só o `main` mantém a ordem da §7 | §4.2, §7 e CA-08, se ele mudar | Uma checagem a mais nas duas funções, e a ordem passa a diferir entre elas e o `main` |
+| CA-01 | `scripts/simulate.py` | `scripts/tests/test_simulate.py::test_timeouts` |
+| CA-02 | `scripts/simulate.py` | `scripts/tests/test_simulate.py::test_batch_that_needs_more_than_the_old_timeout_succeeds` |
+| CA-03 | `scripts/simulate.py` | `scripts/tests/test_simulate.py::test_exhausted_batch_tells_to_repeat_with_the_same_seed`, `::test_other_failures_do_not_suggest_repeating` |
+| CA-04 | Sem código novo: a idempotência já existia, e a §4.1 não muda a geração dos ids | `scripts/tests/test_simulate.py::test_send_and_resend_are_idempotent` (o caso com o banco real é do tester) |
+| CA-05 | `api/src/qc_api/conninfo.py` | `api/tests/test_conninfo.py` |
+| CA-06 | `api/src/qc_api/conninfo.py`, `api/src/qc_api/config.py` | `api/tests/test_config.py::test_malformed_database_url_is_refused_without_its_pieces`, `api/tests/test_app_no_db.py::test_startup_fails_with_a_malformed_url_before_the_pool` |
+| CA-07 | Regressão, sem código novo | `api/tests/test_app_no_db.py::test_logs_have_no_password` (já existia) |
+| CA-08 | `infra/migrate.py` | `infra/tests/test_migrate_malformed_url.py::test_main_exits_2_with_the_hint`, `::test_main_keeps_the_port_6543_message` |
+| CA-09 | `infra/migrate.py` | `infra/tests/test_migrate_malformed_url.py::test_functions_refuse_before_connecting`, `::test_port_6543_keeps_its_own_refusal`, `::test_host_port_is_unknown`; `infra/tests/test_cli.py::test_closed_port_exits_1_without_leaking_password` (já existia) |
+| CA-10 | `scripts/register_device.py` | `api/tests/test_register_device.py::test_malformed_url_exits_2_before_generating_a_key`, `::test_unreachable_database_exits_1_without_leaking` (já existia) |
+| CA-11 | `dashboard/views/historico.py`, `dashboard/src/qc_dashboard/formatting.py` | `dashboard/tests/test_pages.py::test_history_model_column_has_a_fixed_width` |
+| CA-12 | Os mesmos do CA-11 | Ensaio do tester, fora da suíte |
+| CA-13 | `edge/src/qc_edge/netinfo.py`, `edge/src/qc_edge/app.py` | `edge/tests/test_pages.py::test_console_in_loopback_warns_and_never_offers_the_lan`, `edge/tests/test_live_route.py::test_console_with_tls_in_loopback_keeps_both_urls_off_the_lan`, `edge/tests/test_netinfo.py` |
+| CA-14 | `edge/src/qc_edge/netinfo.py`, `edge/src/qc_edge/app.py` | `edge/tests/test_pages.py::test_console_with_a_specific_lan_host_offers_only_it` |
+| CA-15 | `edge/src/qc_edge/app.py`, `edge/README.md` | `edge/tests/test_pages.py::test_console_on_all_interfaces_is_as_before`, `::test_console_on_all_interfaces_without_lan_has_only_the_no_lan_warning` |
+| CA-16, CA-17 | Parte B | Fora desta parte |
+| CA-18 | Manual, depois do merge | Humano |
+| CA-19 | `dashboard/src/qc_dashboard/filters.py`, `dashboard/README.md` | `dashboard/tests/test_pages.py::test_timeout_then_retry`, `::test_unavailable_text_does_not_suggest_a_cold_start`, `dashboard/tests/test_devices.py::test_page_api_unavailable` |
 
-**Sugestão do autor:** a opção (a). Ela mantém uma única ordem no módulo, e a URL continua recusada sem conectar e sem mostrar a senha, que é o objetivo do DEP-02. O CA-09 verifica a R-03, então a classificação pelo ADR-019 (exclusão X-7) precisa ser avaliada pelo architect.
+## Testes de aceite de SPECs anteriores (ajuste do tester)
 
-### Conferido sem encontrar outro conflito
+Falham de propósito por causa desta SPEC e não foram tocados por mim (`docs/architecture.md` §10):
 
-Leitura do código e sondagens fora do repositório, **sem** a Parte A implementada, para que a retomada não pare de novo pelo mesmo tipo de problema:
-
-- **CA-05:** a saída de `conninfo_to_dict` para as 15 URLs do CA, comparada à mão com a tabela da §4.2, dá o resultado pedido em todas. As quatro **M** caem pela regra esperada: `host` com `@` na primeira, `port` não numérica na segunda e na quarta, `dbname` com `@`, `/` e `:` na terceira.
-- **CA-10:** o `register_device.py` não tem a checagem da porta 6543, então as quatro **M** chegam à nova recusa. O conflito é só do `migrate.py`.
-- **CA-11:** numa página mínima no `AppTest` com o Streamlit 1.65.0, `TextColumn(width=240)` aparece como `json.loads(proto.columns)["Modelo"]["width"] == 240`. A chave citada na §7 existe.
-- **CA-19:** em `dashboard/README.md` e `filters.py`, `acordando` e `free tier` só aparecem nos trechos que a §4.8 troca. `dashboard/src/qc_dashboard/api.py`, linha 6, cita "free tier" num comentário, fora do §3.1 e do CA.
-- **CA-13 a CA-15:** `console.html` não traz `no-lan-warning`, `loopback-warning` nem `Outros IPs` fora do `$ip_warning` e do `_other_ips_html`, e `detect_lan_ips` só é chamada em `app.py`, linha 869.
+| Teste | Requisito | Situação |
+|---|---|---|
+| `scripts/tests/acceptance/test_spec_014.py::test_extra_timeouts` | §4.1 | Na tabela da §3.1 da SPEC |
+| `dashboard/tests/acceptance/test_spec_013.py`: `test_ca13_timeout_shows_waking_and_retry_recovers` (3 casos), `test_ca13_model_page_badge_check_timeout`, `test_extra_gateway_statuses_wake_up_warning` (3 casos), `test_extra_retry_while_still_down_is_bounded` | §4.8 | Constante `WAKING`, na tabela da §3.1 |
+| `dashboard/tests/acceptance/test_spec_028.py`: `test_ca05_model_page_without_the_api`, `test_ca07_retry_does_not_clear_the_cache`, `test_extra_spc_caption_right_under_title_and_after_failure` | §4.8 | Constante `WAKING`, na tabela da §3.1 |
+| `dashboard/tests/acceptance/test_spec_029.py::test_ca01_spec013_suite_passes_and_hides_key_with_local_secrets` | §4.8 | **Fora da tabela, sem ajuste próprio:** ele roda a suíte da SPEC-013 num subprocesso e falha pelas 8 falhas acima. Deve voltar a passar quando o `WAKING` da SPEC-013 mudar |
 
 ## Como rodar e verificar
 
-Nada a rodar: não há mudança de código.
+```bash
+uv run ruff check . && uv run ruff format --check .
+CI=true TEST_DATABASE_URL=postgresql://postgres@localhost:55432/partqc_test uv run pytest -q
+```
+
+Resultado no código dos commits acima, com o contêiner `partqc-pg`: **13 failed, 10299 passed, 167 skipped** em 16 min 25 s. As 13 falhas são exatamente as da tabela "Testes de aceite de SPECs anteriores": 1 da SPEC-014, 8 da SPEC-013, 3 da SPEC-028 e 1 da SPEC-029. Nenhum teste do autor falha. Os skips incluem os testes que pedem torch, MQTT, modelo real ou medição de rede. O `ruff check` e o `ruff format --check` estão limpos.
 
 ## Decisões tomadas dentro do escopo da SPEC
 
-Nenhuma.
+- `netinfo.is_loopback` e `netinfo.ALL_INTERFACES` são auxiliares novos, e `_ip_warning_html` em `app.py` aplica a tabela da §4.4. O `is_fallback` só é verdadeiro com `0.0.0.0` ou em loopback, então a ordem "loopback primeiro" já cobre as três linhas da tabela.
+- `_host_port` deixou o `try` e passa a usar só o `is_safe_conninfo`, que já cobre a falha do parser.
+- **Limite observado:** `host=a\0b` não é recusada, porque o parser corta a string no caractere nulo e devolve `host=a`. O trecho depois dele nem chega ao `host`, então a regra da §4.2 é cumprida.
+- Nos testes novos, o esquema da URL fica numa constante separada (`"postgresql" + "://"`), porque o scanner de segredos do repositório marca `u:{a}/{b}@` (`reviews/checklist.md` §4).
+- `dashboard/src/qc_dashboard/api.py`, linha 6, ainda cita "free tier" num comentário. Ficou como está: o arquivo não está na §3.1, e o CA-19 não o cobre.
+
+## SPEC_ISSUE
+
+**SPEC_ISSUE-01: resolvido** pelo architect com a saída (a) (commit `4944e15`, reaprovado pelo humano). A implementação segue a §4.2 e a §7, e a URL com a porta 6543 levanta `UnsupportedConnectionError`.
+
+Registro original: o CA-09 e a primeira frase do CA-08 pediam, para a URL com a porta 6543, um erro que a §4.2 e a §7 não produzem. A medição mostrou `host` com `@` e `port` igual a `6543`, e as duas funções levantando `UnsupportedConnectionError`. Os detalhes estão no commit `b5cb88c`.
+
+Nenhum `SPEC_ISSUE` novo.
 
 ## Checagens do autor
 
-- [ ] `uv run ruff check .` e `uv run ruff format --check .` limpos: não rodados, sem mudança de código
-- [ ] Testes unitários do autor passando: não rodados, sem mudança de código
+- [x] `uv run ruff check .` e `uv run ruff format --check .` limpos
+- [x] Testes unitários do autor passando
 - [x] `.env.example` atualizado (se houver variável nova): não há variável nova, e o arquivo é da Parte B
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
