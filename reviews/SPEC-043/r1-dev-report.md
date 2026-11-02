@@ -143,3 +143,17 @@ Nenhum.
 - §3.3, item 1, antes do merge: conferir que a senha atual do banco tem só letras e números.
 - §3.3, item 2, depois do merge: **Deploy** no `partqc-api` e depois no `partqc-web`, e `git pull` na borda.
 - CA-18, depois do deploy, com o registro no `deployment-plan.md` §9 e num dev-report.
+
+## CA-18, em produção (2026-11-02, pelo orquestrador, depois do merge e do deploy)
+
+Veredicto: PASS. Publicação de `e9de058` nos dois recursos pelo botão **Deploy**.
+
+| Passo | Resultado |
+|---|---|
+| 1. `smoke_test.py` | 8 × `PASS` |
+| 2. `simulate.py --lots 3 --seed 4301` | código 0, `sent=75 created=75 duplicate=0` |
+| 3. `simulate.py --lots 10 --lot-size 50 --seed 4302` | código 0, `sent=500 created=500 duplicate=0`, 72 s |
+| 4. Mesma seed | código 0, `sent=500 created=0 duplicate=500`, 73 s |
+| 5. `SIM-%` | 745 linhas, 745 `inspection_id` distintos |
+| 6. `Histórico`, origem `Simulado` | selo visível e `sim-v0` em `Modelo` |
+

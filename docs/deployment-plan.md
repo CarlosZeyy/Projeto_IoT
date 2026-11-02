@@ -647,14 +647,22 @@ Esperado: nenhuma linha nos quatro `git grep` (código de saída 1) e nenhum avi
 | CA-13 | API na VPS: health, redirecionamento HTTP → HTTPS, 401 sem chave, HSTS sem `includeSubDomains`, emissor do certificado, `/docs` e `/openapi.json` não publicados | PASS: health `ok` com contrato 0.6.0; `307` de HTTP para HTTPS; `401` sem chave; HSTS `max-age=31536000`, sem `includeSubDomains`; emissor Let's Encrypt, válido até 31/01/2027. `/api/docs`, `/api/redoc` e `/api/openapi.json` dão `404`; `/docs` e `/openapi.json` caem na página do painel, sem conteúdo da API | 2026-11-02 |
 | CA-14 | RLS e grants em produção (passo 1, item 4) | PASS: RLS ligado nas 4 tabelas, 0 políticas. A migração deixou 56 grants a `anon` e `authenticated`, e o `revoke` do passo 1, item 4, os levou a 0. REST com a chave pública: `401` nas 4 tabelas, nenhuma linha | 2026-11-02 |
 | CA-15 | Smoke em produção: 8 × `PASS` (passo 11) | PASS: 8 × `PASS` | 2026-11-02 |
-| CA-16 | Keep-alive por `workflow_dispatch` verde em ≤ 10 min (passo 10) | Pendente do humano: gravar o secret `KEEPALIVE_URL` e disparar o workflow | 2026-11-02 |
-| CA-17 | Dashboard na VPS: desktop e celular, WebSocket `wss://<subdominio>/_stcore/stream` com 101 por 5 min, filtros, selo de simulado, "Sobre o modelo" (mensagem com `ml/models/partqc-mnv3-v1/metrics.json` enquanto não houver `metrics.json`; repetir depois do merge do primeiro `metrics.json` da SPEC-012 e da atualização da §4), `printenv API_BASE_URL` começa com `https://` | Parcial. Desktop: 5 páginas, filtros, selo de simulado e a mensagem de "Sobre o modelo" conferidos. Faltam o celular e os 5 min do WebSocket | 2026-11-02 |
+| CA-16 | Keep-alive por `workflow_dispatch` verde em ≤ 10 min (passo 10) | PASS: secret gravado pelo humano; `workflow_dispatch` concluído com sucesso | 2026-11-02 |
+| CA-17 | Dashboard na VPS: desktop e celular, WebSocket `wss://<subdominio>/_stcore/stream` com 101 por 5 min, filtros, selo de simulado, "Sobre o modelo" (mensagem com `ml/models/partqc-mnv3-v1/metrics.json` enquanto não houver `metrics.json`; repetir depois do merge do primeiro `metrics.json` da SPEC-012 e da atualização da §4), `printenv API_BASE_URL` começa com `https://` | Parcial. Desktop: 5 páginas, filtros, selo de simulado, mensagem de "Sobre o modelo" e `API_BASE_URL` com `https://`. WebSocket pelo navegador: aberto por 317 s, sem queda, com a VPS sobrecarregada no momento (47 s para abrir). Falta o celular | 2026-11-02 |
 | CA-18 | R-01: Supabase e GitHub Actions sem cartão; VPS preexistente e sem mudança de plano (confirmação escrita do humano); Coolify auto-hospedado, sem plano pago; domínio já existente; Render sem cartão e serviço `free` se ativado | Pendente: confirmação escrita do humano | 2026-11-02 |
 | CA-19 | `search_path`, migração pelo modo session e restrições da `002` (passo 1, itens 2 e 3) | PASS: schema `public`; migrações 001 a 006 pelo modo session, `0 pending`; 9 restrições da `002` presentes | 2026-11-02 |
 | CA-26 | `statement_timeout` (§8, item 1) | PASS: `alter role postgres set statement_timeout = '15s'`; leituras medidas em 0,3 ms e 0,2 ms, com 76 linhas; `rolconfig` com `15s`; `15s` pela porta 6543, depois de o pooler renovar as conexões (logo após o `alter`, ainda `2min`) | 2026-11-02 |
 | CA-40 | Rede e coexistência na VPS (§4, "Firewall"), com o proxy do Coolify sem reinício | PASS: 3 contêineres sem portas; `:8501` fechada; `:8000` é do painel do Coolify, anterior ao PartQC; `ufw` igual; `StartedAt` do proxy igual; portfólio e painel respondendo | 2026-11-02 |
 | CA-42 | Na máquina do humano, o comando do CA-42 acima: nenhuma linha com o subdomínio, o IPv4 público ou os UUIDs dos dois recursos | PASS: nenhuma linha com subdomínio, IPv4 ou UUIDs, conferido pelo orquestrador | 2026-11-02 |
-| CA-43 | `.env*` fora das imagens (passo 7, item 4); ciclo de atualização, rollback por branch e volta à `main` com health 200; certificado sem nova emissão no ciclo | Parcial. Item do passo 7, item 4: PASS. Faltam o ciclo de atualização, o rollback por branch e a volta à `main` | 2026-11-02 |
+| CA-43 | `.env*` fora das imagens (passo 7, item 4); ciclo de atualização, rollback por branch e volta à `main` com health 200; certificado sem nova emissão no ciclo | PASS. `.env*` fora das imagens. Atualização para um commit novo: health 200 e smoke 8 × `PASS`. Rollback por `deploy/rollback`: o log mostra o commit escolhido e os 3 contêineres ficaram nele, com health 200. Volta à `main`: smoke 8 × `PASS` e branch apagada. `serial` do certificado igual antes e depois. Com as imagens em cache, cada recurso publicou em 1 a 3 min | 2026-11-02 |
+
+### Outros CAs manuais em produção (SPECs 018, 020 e 043)
+
+| CA | O que | Resultado | Data |
+|---|---|---|---|
+| SPEC-018 CA-13 | Heartbeat: `online`, `offline` em até 3 min e `sim-01` como simulado | PASS, em `reviews/SPEC-020/r1-manual-test-report.md` | 2026-11-02 |
+| SPEC-020 CA-12 | MQTT: 10 inspeções, 3 pendentes com a ponte derrubada e reenvio ao religar | PASS, no mesmo relatório. Sem celular: imagens públicas pela rota real | 2026-11-02 |
+| SPEC-043 CA-18 | Simulador em produção | PASS: smoke 8 × `PASS`; `--lots 3`: `sent=75`, código 0; `--lots 10 --lot-size 50`: `sent=500`, código 0, em 72 s; repetido com a mesma seed: `created=0 duplicate=500`, em 73 s; `SIM-%`: 745 linhas e 745 ids distintos; `Histórico`: selo visível e `sim-v0` em `Modelo` | 2026-11-02 |
 
 ### CA manual da SPEC-032 (headers e endurecimento)
 
@@ -669,7 +677,7 @@ Depois da atualização da §4 ("Atualização") com a SPEC-032 e a SPEC-039 na 
 
 | CA | O que | Resultado | Data |
 |---|---|---|---|
-| SPEC-032 CA-09 | Serviços de pé com `read_only` e `pids_limit`; headers novos e sem `server`/`via`; painel de ponta a ponta (CA-17, passos 1 a 3, da SPEC-015); `PIDS` ≤ metade do limite; nenhum `Read-only file system` no log | Parcial. Headers novos, sem `server` nem `via`; `PIDS` de 6 a 7 com uma aba; nenhum `Read-only file system`. Faltam as 3 abas e o painel no celular | 2026-11-02 |
+| SPEC-032 CA-09 | Serviços de pé com `read_only` e `pids_limit`; headers novos e sem `server`/`via`; painel de ponta a ponta (CA-17, passos 1 a 3, da SPEC-015); `PIDS` ≤ metade do limite; nenhum `Read-only file system` no log | Parcial. Headers novos, sem `server`/`via`; `PIDS` de no máximo 10 com 3 abas (limite 256); nenhum `Read-only file system`. Falta o painel no celular | 2026-11-02 |
 
 ### CA manual da SPEC-017 (alertas no Telegram)
 
