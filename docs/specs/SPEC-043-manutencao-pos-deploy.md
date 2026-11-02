@@ -1,4 +1,4 @@
-# SPEC-043: Manutenção pós-deploy (simulador em produção, senha nos erros de conexão, Histórico, console da borda e passo a passo do Coolify)
+# SPEC-043: Manutenção pós-deploy (simulador em produção, senha nos erros de conexão, Histórico, aviso de API indisponível, console da borda e passo a passo do Coolify)
 
 | Campo | Valor |
 |---|---|
@@ -24,6 +24,7 @@ Componentes, em `docs/architecture.md`: §4 (API e erros de banco no log), §6.1
 | DEP-03 | CA-20 da SPEC-039 | baixa, texto | **Entra** (§4.7): corrigido pelo architect na SPEC-039 e no ADR-023, e pela Parte B no plano. **Exige humano** (ADR-019) |
 | E2E-01 | `dashboard/views/historico.py` | baixa | **Entra** (§4.3): largura fixa na coluna `Modelo` |
 | E2E-02 | `edge/src/qc_edge/app.py`, `console` | baixa | **Entra** (§4.4): o console só oferece o endereço em que a borda escuta |
+| OBS-01 | `dashboard/src/qc_dashboard/filters.py`, `API_WAKING_TEXT` | baixa | **Entra por decisão do humano** (§4.8): na VPS a API não dorme, e "API acordando (free tier)" pode esconder uma queda real na apresentação |
 | Passo a passo do deploy | Primeira publicação | baixa | **Entra** (§4.5) |
 | `revoke` na migração | Passo 1, item 4, do plano | decisão | **Fica o passo manual, sem migração** (§4.6) |
 
@@ -43,7 +44,7 @@ Componentes, em `docs/architecture.md`: §4 (API e erros de banco no log), §6.1
 
 ## 2. Objetivo
 
-`scripts/simulate.py --lots 3` e `--lots 10 --lot-size 50` terminam com código 0 em produção; nenhuma ferramenta nem a API tentam conectar com uma URL de banco mal formada, nem mostram um trecho da senha; a coluna `Modelo` aparece inteira no Histórico a 1500 px; o console da borda só oferece o endereço em que ela escuta; e o plano de deploy descreve o que a primeira publicação mostrou.
+`scripts/simulate.py --lots 3` e `--lots 10 --lot-size 50` terminam com código 0 em produção; nenhuma ferramenta nem a API tentam conectar com uma URL de banco mal formada, nem mostram um trecho da senha; a coluna `Modelo` aparece inteira no Histórico a 1500 px; o painel diz que a API está indisponível, sem sugerir que ela só está acordando; o console da borda só oferece o endereço em que ela escuta; e o plano de deploy descreve o que a primeira publicação mostrou.
 
 ## 3. Escopo
 
@@ -55,6 +56,7 @@ Componentes, em `docs/architecture.md`: §4 (API e erros de banco no log), §6.1
 - `api/src/qc_api/conninfo.py`, novo, e `api/src/qc_api/config.py` (§4.2);
 - `infra/migrate.py` e `scripts/register_device.py` (§4.2);
 - `dashboard/views/historico.py` e `dashboard/src/qc_dashboard/formatting.py` (§4.3);
+- `dashboard/src/qc_dashboard/filters.py`, `dashboard/README.md` e, nos testes do autor, `dashboard/tests/test_pages.py` e `dashboard/tests/test_devices.py` (§4.8);
 - `edge/src/qc_edge/netinfo.py`, `edge/src/qc_edge/app.py` e `edge/README.md` (§4.4);
 - testes do autor em `scripts/tests/`, `api/tests/`, `infra/tests/`, `dashboard/tests/` e `edge/tests/`, fora de `acceptance/`.
 
@@ -62,15 +64,16 @@ Componentes, em `docs/architecture.md`: §4 (API e erros de banco no log), §6.1
 
 **Architect, junto com esta SPEC:** `docs/specs/SPEC-039-manutencao-deploy-coolify.md` e `docs/adr/ADR-023-coolify-proxy-e-caddy-interno.md` (§4.7), as anotações de `docs/architecture.md` §4 e §6.1 e `docs/plan.md`.
 
-**Tester:** `scripts/tests/acceptance/test_spec_043.py` (CA-01 a CA-04 e CA-10), `api/tests/acceptance/test_spec_043.py` (CA-05 a CA-07), `infra/tests/acceptance/test_spec_043.py` (CA-08, CA-09, CA-16 e CA-17), `dashboard/tests/acceptance/test_spec_043.py` (CA-11), `edge/tests/acceptance/test_spec_043.py` (CA-13 a CA-15), mais o ensaio do CA-12.
+**Tester:** `scripts/tests/acceptance/test_spec_043.py` (CA-01 a CA-04 e CA-10), `api/tests/acceptance/test_spec_043.py` (CA-05 a CA-07), `infra/tests/acceptance/test_spec_043.py` (CA-08, CA-09, CA-16 e CA-17), `dashboard/tests/acceptance/test_spec_043.py` (CA-11 e CA-19), `edge/tests/acceptance/test_spec_043.py` (CA-13 a CA-15), mais o ensaio do CA-12.
 
 **Testes de aceite de SPECs anteriores** (`docs/architecture.md` §10, aplicação explícita). O tester ajusta só o que o requisito citado muda e registra na tabela do test-report:
 
 | Arquivo | Teste | O que muda | Requisito |
 |---|---|---|---|
 | `scripts/tests/acceptance/test_spec_014.py` | `test_extra_timeouts` | `batch.extensions["timeout"]["read"]` passa de `10` a `60`; o `90` da saúde continua | §4.1 |
+| `dashboard/tests/acceptance/test_spec_013.py` e `test_spec_028.py` | a constante `WAKING` | passa a ser o texto da §4.8; as asserções continuam | §4.8 |
 
-Se outro teste antigo falhar por causa de um requisito desta SPEC, vale a mesma regra. Esta SPEC substitui, sem editar o arquivo, o "timeout 10 s" da SPEC-014 §4.3, item 2.
+Se outro teste antigo falhar por causa de um requisito desta SPEC, vale a mesma regra. Esta SPEC substitui, sem editar os arquivos, o "timeout 10 s" da SPEC-014 §4.3, item 2, e o texto do aviso na SPEC-013 (§4 e CA-13).
 
 ### 3.2 Fora
 
@@ -78,7 +81,7 @@ Se outro teste antigo falhar por causa de um requisito desta SPEC, vale a mesma 
 - **Prazos da borda (`publisher.py`, 5 s e 15 s) e SEC-30-03:** sem mudança. A borda esvaziou as filas em produção (§7).
 - **Migração com o `revoke`, `alter default privileges` e a opção "Automatically expose new tables":** fora (§4.6).
 - **Nenhum diff em `packages/contracts`, `infra/migrations/`, `infra/compose*.yaml` e `infra/Caddyfile`.** O `dashboard` já não tem a chave `networks`; o DEP-03 é só de texto.
-- **OBS-01 a OBS-05 do ensaio local:** fora. O OBS-01 (`API acordando (free tier)`) fica como pergunta (§9, pergunta 6).
+- **OBS-02 a OBS-05 do ensaio local:** fora. O OBS-01 entra (§4.8).
 - **"Outros IPs" listando as redes do Docker com `EDGE_HOST=0.0.0.0` (E2E-02):** fora. O `edge/README.md` já avisa (SEC-07), e o endereço é real naquela máquina.
 - **CAs manuais pendentes do deploy** (`KEEPALIVE_URL`, 2FA e webhook, celular, ciclo de rollback, confirmação da R-01): tarefas humanas, sem mudança de texto.
 - **Outras páginas do painel:** "Dispositivos" já mostra `Modelo` inteiro.
@@ -217,6 +220,21 @@ Medido no Coolify 4.5.3: a rede é `internal`, com 2 contêineres (`api` e `cadd
 | ADR-023, decisão 1, e "Quando revisitar" | architect, junto com esta SPEC (emenda 2, proposta) | Sem isto, o gatilho mandaria parar o `partqc-web` e trocar a senha do banco na próxima repetição do CA-20 |
 | `deployment-plan.md` §7, item 10, e §9, linha do CA-20 | Parte B | Item 10: no Coolify 4.5.3, o `dashboard` não está na rede; se entrar depois de uma atualização, é o risco aceito que o item já descreve. Linha do CA-20, coluna "O que": `true 2` (`api` e `caddy`); na coluna "Resultado", "Desvio" dá lugar a "Texto corrigido pela SPEC-043" |
 
+### 4.8 Aviso de API indisponível no painel (OBS-01)
+
+Em `filters.py`, `API_WAKING_TEXT` passa a se chamar `API_UNAVAILABLE_TEXT`, com o valor exato:
+
+```python
+API_UNAVAILABLE_TEXT = (
+    "API indisponível: pode ser uma queda da API ou do banco. "
+    "Tente de novo em ~1 min; se continuar, confira o servidor."
+)
+```
+
+Só o texto muda. Continuam iguais os casos que mostram o aviso (timeout, erro de conexão e HTTP 502, 503 e 504), o botão `Tentar novamente`, a ausência de repetição automática e a mensagem de chave inválida. O "~1 min" continua cobrindo o despertar da reserva no Render. O `dashboard/README.md` passa a citar o texto novo.
+
+**SPECs `Done`:** nenhuma precisa de ajuste. A SPEC-028 §3.2 e a SPEC-029 §3.2 só deixaram o texto fora do escopo delas, e a SPEC-015 §3.2 já prevê a troca "numa SPEC futura do dashboard". O texto da SPEC-013 fica substituído (§3.1). Nos riscos das SPECs 015 e 039, "API acordando" passa a se ler como este aviso.
+
 ## 5. Critérios de aceite
 
 Nenhum CA usa rede externa. As senhas fictícias são montadas em tempo de execução (`reviews/checklist.md` §4), com um sentinela em cada metade (`<A>` antes do separador e `<B>` depois), geradas com `secrets.token_hex`. "Sem sentinela" quer dizer: nem `<A>` nem `<B>` na saída capturada, inclusive no traceback e no `caplog`.
@@ -245,6 +263,7 @@ As URLs mal formadas (**M**) são: `postgresql://u:<A>@<B>@db.example.org:6543/p
 
 - **CA-11 (E2E-01)** — *Dado* a página Histórico no `AppTest`, com uma inspeção `source=simulated` e `model_version="partqc-mnv3-provisional-v1"`, *quando* ela renderiza, *então* `json.loads(at.dataframe[0].proto.columns)["Modelo"]["width"] == 240`; as colunas de `at.dataframe[0].value` são exatamente `formatting.HISTORY_COLUMNS`; a célula `Modelo` é `partqc-mnv3-provisional-v1`, e `Origem` é `simulado`; e o selo `Contém dados simulados` aparece.
 - **CA-12 (ensaio do tester, fora da suíte)** — Com o painel real em Chrome headless, a 1500 px de largura, API local e uma inspeção como a do CA-11, abrir `Histórico` com a origem `Simulado` e tirar uma captura de tela: a célula mostra `partqc-mnv3-provisional-v1` inteira, sem `…`, sem alargar a coluna. O test-report registra o resultado e o mesmo roteiro com o código anterior, que mostra o corte. A captura não entra no Git.
+- **CA-19 (OBS-01)** — *Dado* as páginas Visão geral e Histórico no `AppTest`, com um transporte falso que levanta `httpx.ReadTimeout`, levanta `httpx.ConnectError` ou responde 503 (um caso de cada), *quando* renderizam, *então* `at.warning` contém exatamente o texto da §4.8, o botão `Tentar novamente` aparece, e `at.exception` é vazio. *Quando* o botão é clicado com a API já respondendo, *então* os dados aparecem, e o aviso some. *Dado* um transporte que responde 401, *então* aparece a mensagem de chave inválida, sem o aviso da §4.8. *Dado* `dashboard/src/qc_dashboard/filters.py` e `dashboard/README.md`, *então* nenhum contém `acordando` nem `free tier`.
 
 ### Console da borda (Parte A)
 
@@ -284,8 +303,8 @@ Com `httpx.ASGITransport` a partir de `127.0.0.1` (como nos aceites da SPEC-025)
 
 | Tipo | O que | Onde |
 |---|---|---|
-| Unitário (autor) | Timeout e mensagem do simulador; tabela de `is_safe_conninfo`; validator do `Settings`; recusas do `migrate.py` e do `register_device.py`; `console_ips` e os três casos do console | `scripts/tests/`, `api/tests/`, `infra/tests/`, `edge/tests/`, `dashboard/tests/` |
-| Aceite (tester) | CA-01 a CA-11, CA-13 a CA-17. Mock só de fronteira externa: transporte do `httpx`, `psycopg.connect` nos casos recusados e `detect_lan_ips` | `<comp>/tests/acceptance/test_spec_043.py`, §3.1 |
+| Unitário (autor) | Timeout e mensagem do simulador; tabela de `is_safe_conninfo`; validator do `Settings`; recusas do `migrate.py` e do `register_device.py`; `console_ips` e os três casos do console; texto novo do aviso em `test_pages.py` e `test_devices.py` | `scripts/tests/`, `api/tests/`, `infra/tests/`, `edge/tests/`, `dashboard/tests/` |
+| Aceite (tester) | CA-01 a CA-11, CA-13 a CA-17 e CA-19. Mock só de fronteira externa: transporte do `httpx`, `psycopg.connect` nos casos recusados e `detect_lan_ips` | `<comp>/tests/acceptance/test_spec_043.py`, §3.1 |
 | Aceite com banco | CA-04, com `TEST_DATABASE_URL` local. CA-07 e CA-10 usam uma porta local fechada, sem banco | idem |
 | Ensaio (tester), fora da suíte | CA-12, com o controle no test-report | descrito no CA |
 | Manual (humano) | CA-18 | VPS e painel |
@@ -305,7 +324,7 @@ Os CAs de texto do plano seguem o padrão dos testes das SPECs 015 e 039. O revi
 
 ## 8. Definição de pronto
 
-- [ ] CA-01 a CA-11 e CA-13 a CA-17 com teste de aceite passando, e CA-12 ensaiado, com o controle (test-report PASS)
+- [ ] CA-01 a CA-11, CA-13 a CA-17 e CA-19 com teste de aceite passando, e CA-12 ensaiado, com o controle (test-report PASS)
 - [ ] review-report APPROVED; security-report PASS: o portão da Parte A é do security-devops, e o da Parte B, do reviewer (autor `security-devops`)
 - [ ] CI verde; `ruff` limpo
 - [ ] `docs/deployment-plan.md`, `.env.example` e `edge/README.md` atualizados
@@ -313,17 +332,20 @@ Os CAs de texto do plano seguem o padrão dos testes das SPECs 015 e 039. O revi
 - [ ] Reviewer confirma: sem diff em `packages/contracts`, `infra/migrations/`, `infra/compose*.yaml` e `infra/Caddyfile`
 - [ ] PR aberto com os relatórios; merge conforme R-09. O CA-18 é feito depois do merge e do deploy pelo botão, fica pendente no quadro e é registrado depois
 
-## 9. Decisões para o humano
+## 9. Decisões do humano
 
-1. **DEP-01, só no cliente?** Recomendado: sim, com 60 s, deixando o `insert_inspections` como está (§3.2 e §7). A alternativa reduz as idas ao banco no servidor, o que também daria margem à borda, mas mexe no caminho crítico de R-05 perto da entrega.
-2. **DEP-02, a API recusa subir com uma URL mal formada?** Recomendado: sim. A alternativa é só documentar, deixando o trecho da senha no log do `psycopg.pool` caso a regra da senha seja esquecida.
-3. **Revoke:** fica o passo manual (§4.6)? Recomendado: sim. Opcional e sem repositório: desligar "Automatically expose new tables" no painel do Supabase, para futuras tabelas não receberem os grants de leitura e escrita.
-4. **DEP-03:** aprova a correção da SPEC-039 e a emenda 2 do ADR-023, com `true 2` como esperado e `true 3` (`dashboard` do PartQC) ainda aceito? Recomendado: sim.
-5. **`www.<subdominio>`:** o plano registra como comportamento do Coolify e a escolha de manter. Confirma manter?
-6. **OBS-01 do ensaio** (`API acordando (free tier), tente em ~1 min`, que na VPS pode esconder uma queda real durante a demonstração): fica fora desta SPEC? Recomendado: fora, por não ter sido pedido, com o texto da SPEC-028 mantido. Se preferir, entra aqui como mais um CA de uma linha.
+Respostas do humano de 2026-11-02, relatadas pelo orquestrador:
+
+1. **DEP-01:** só no cliente, com 60 s, deixando o `insert_inspections` como está (§3.2 e §7).
+2. **DEP-02:** a API recusa subir com uma URL mal formada.
+3. **Revoke:** fica o passo manual (§4.6). Desligar "Automatically expose new tables" no Supabase continua opcional e fora do repositório.
+4. **DEP-03:** correção da SPEC-039 e emenda 2 do ADR-023 aprovadas, com `true 2` como esperado e `true 3` (`dashboard` do PartQC) ainda aceito.
+5. **`www.<subdominio>`:** mantido.
+6. **OBS-01:** entra nesta SPEC (§4.8 e CA-19), contra a recomendação inicial do architect.
 
 ## Histórico
 
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-11-02 | SPEC criada (`Draft`). Decisões do architect: DEP-01 só no cliente; DEP-02 com recusa antes de conectar nas três entradas; `revoke` manual; DEP-03 corrigido também no ADR-023 (emenda 2), porque o gatilho dele dispararia. | Fatos do primeiro deploy e do ensaio local | Orquestrador, a pedido do humano |
+| 2026-11-02 | OBS-01 incluído (§1, §2, §3.1, §3.2, §4.8, CA-19, §6 e §8), e §9 preenchida com as respostas do humano. O texto exato do aviso (§4.8) é proposta do architect. O status continua `Draft`: a aprovação e a mudança para `Ready` são registradas pelo orquestrador. | Respostas do humano de 2026-11-02, relatadas pelo orquestrador | Orquestrador, a pedido do humano |
