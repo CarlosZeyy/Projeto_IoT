@@ -99,6 +99,77 @@ def test_console_without_model_and_without_lan(
     assert "http://127.0.0.1:8000/capture?t=" in page
 
 
+@pytest.fixture
+def detect_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    calls: list[int] = []
+
+    def detect() -> list[str]:
+        calls.append(1)
+        return ["192.168.0.42", "10.0.0.7"]
+
+    monkeypatch.setattr(netinfo, "detect_lan_ips", detect)
+    return calls
+
+
+@pytest.mark.parametrize("edge_host", ["127.0.0.1", "127.8.9.1"])
+@pytest.mark.parametrize("path", ["/", "/?ip=192.168.0.42"])
+def test_console_in_loopback_warns_and_never_offers_the_lan(
+    settings: EdgeSettings, detect_calls: list[int], edge_host: str, path: str
+) -> None:
+    """E2E-02 (SPEC-043 section 4.4)."""
+    app = _app(settings.model_copy(update={"EDGE_HOST": edge_host}))
+    token = app.state.session_token
+    response = TestClient(app, client=LOCAL, base_url=CONSOLE_URL).get(path)
+    assert response.status_code == 200
+    page = response.text
+    assert 'id="loopback-warning"' in page
+    assert "EDGE_HOST=0.0.0.0" in page
+    assert f"http://{edge_host}:8000/capture?t={token}" in page
+    for absent in ("192.168.0.42", "10.0.0.7", "Outros IPs", "no-lan-warning"):
+        assert absent not in page
+    assert detect_calls == []
+
+
+def test_console_with_a_specific_lan_host_offers_only_it(
+    settings: EdgeSettings, detect_calls: list[int]
+) -> None:
+    app = _app(settings.model_copy(update={"EDGE_HOST": "192.168.0.99"}))
+    token = app.state.session_token
+    page = TestClient(app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
+    assert f"http://192.168.0.99:8000/capture?t={token}" in page
+    for absent in (
+        "loopback-warning",
+        "no-lan-warning",
+        "Outros IPs",
+        "192.168.0.42",
+        "10.0.0.7",
+    ):
+        assert absent not in page
+    assert detect_calls == []
+
+
+def test_console_on_all_interfaces_is_as_before(
+    settings: EdgeSettings, detect_calls: list[int]
+) -> None:
+    app = _app(settings)
+    token = app.state.session_token
+    page = TestClient(app, client=LOCAL, base_url=CONSOLE_URL).get("/").text
+    assert f"http://192.168.0.42:8000/capture?t={token}" in page
+    assert 'href="/?ip=10.0.0.7"' in page
+    assert "loopback-warning" not in page
+    assert "no-lan-warning" not in page
+    assert detect_calls == [1]
+
+
+def test_console_on_all_interfaces_without_lan_has_only_the_no_lan_warning(
+    settings: EdgeSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(netinfo, "detect_lan_ips", lambda: ["127.0.0.1"])
+    page = TestClient(_app(settings), client=LOCAL, base_url=CONSOLE_URL).get("/").text
+    assert 'id="no-lan-warning"' in page
+    assert "loopback-warning" not in page
+
+
 def test_console_shows_sink_stats(settings: EdgeSettings, lan_ips: list[str]) -> None:
     class _Sink(InMemorySink):
         def stats(self) -> SinkStats:

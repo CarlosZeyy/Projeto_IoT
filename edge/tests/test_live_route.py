@@ -885,6 +885,27 @@ def test_console_without_tls_is_as_before(make_rig: Callable[..., _Rig], lan_ips
     assert page.count('class="qr"') == 1
 
 
+def test_console_with_tls_in_loopback_keeps_both_urls_off_the_lan(
+    clean_edge_env: None, tmp_path: Path, tls_files: tuple[Path, Path], lan_ips: None
+) -> None:
+    """E2E-02 (SPEC-043 section 4.4): the /live QR uses the chosen address too."""
+    settings = EdgeSettings(
+        EDGE_HOST="127.0.0.1",
+        EDGE_DATA_DIR=tmp_path / "d",
+        DATASET_DIR=tmp_path / "ds",
+        EDGE_TLS_CERT=tls_files[0],
+        EDGE_TLS_KEY=tls_files[1],
+    )
+    rig = _Rig(settings, _Scripted(), InMemorySink())
+    page = rig.client.get("/").text
+    assert _console_urls(page) == [
+        f"https://127.0.0.1:8000/capture?t={rig.token}",
+        f"https://127.0.0.1:8000/live?t={rig.token}",
+    ]
+    assert "192.168.0.42" not in page
+    assert 'id="loopback-warning"' in page
+
+
 def test_console_with_tls_has_two_https_qr_codes(
     clean_edge_env: None, tmp_path: Path, tls_files: tuple[Path, Path], lan_ips: None
 ) -> None:

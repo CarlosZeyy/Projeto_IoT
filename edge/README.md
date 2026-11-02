@@ -30,7 +30,7 @@ MODEL_DIR=ml/models/partqc-mnv3-v1 uv run --package qc-edge qc-edge   # com o mo
 
 | Variável | Padrão | Regra |
 |---|---|---|
-| `EDGE_HOST` | `0.0.0.0` | IPv4 literal (ex.: `0.0.0.0`, `127.0.0.1`); IPv6 e nomes são recusados (código 2) |
+| `EDGE_HOST` | `0.0.0.0` | IPv4 literal (ex.: `0.0.0.0`, `127.0.0.1`); IPv6 e nomes são recusados (código 2). Com um valor diferente de `0.0.0.0`, o console só oferece esse endereço; em loopback, ele avisa que o celular não abre |
 | `EDGE_PORT` | `8000` | 1 a 65535 |
 | `EDGE_SESSION_TOKEN` | gerado a cada subida (`secrets.token_urlsafe(32)`, 43 caracteres) | deixe vazio (recomendado; seção "Segurança na operação"). Se definido, no mínimo 32 caracteres. É segredo: fica fora do Git |
 | `DEVICE_ID` | `edge-01` | `^[a-z0-9-]{3,32}$` (sem quebra de linha final) |
