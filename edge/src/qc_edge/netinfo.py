@@ -15,6 +15,7 @@ logger = logging.getLogger("qc_edge")
 # Private address that is never routed in practice; only used to pick the outgoing interface.
 PROBE_ADDRESS = ("10.254.254.254", 1)
 LOOPBACK_FALLBACK = "127.0.0.1"
+ALL_INTERFACES = "0.0.0.0"
 
 _LOOPBACK = ipaddress.ip_network("127.0.0.0/8")
 _LINK_LOCAL = ipaddress.ip_network("169.254.0.0/16")
@@ -88,3 +89,13 @@ def detect_lan_ips() -> list[str]:
         )
         return [LOOPBACK_FALLBACK]
     return ips
+
+
+def console_ips(edge_host: str) -> list[str]:
+    """Addresses the console may offer: the LAN ones with 0.0.0.0; otherwise only edge_host."""
+    return detect_lan_ips() if edge_host == ALL_INTERFACES else [edge_host]
+
+
+def is_loopback(edge_host: str) -> bool:
+    """``True`` when ``edge_host`` (an IPv4 literal, ``EDGE_HOST``) is in ``127.0.0.0/8``."""
+    return ipaddress.ip_address(edge_host) in _LOOPBACK

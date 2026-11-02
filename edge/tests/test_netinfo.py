@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from qc_edge import netinfo
-from qc_edge.netinfo import detect_lan_ips, is_fallback
+from qc_edge.netinfo import console_ips, detect_lan_ips, is_fallback, is_loopback
 
 
 class _FakeSocket:
@@ -97,3 +97,33 @@ def test_socket_creation_failure_is_tolerated(monkeypatch: pytest.MonkeyPatch) -
 def test_is_fallback() -> None:
     assert not is_fallback(["10.0.0.7"])
     assert not is_fallback(["127.0.0.1", "10.0.0.7"])
+
+
+def test_console_ips_with_all_interfaces_detects_the_lan(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(netinfo, "detect_lan_ips", lambda: ["192.168.0.42", "10.0.0.7"])
+    assert console_ips("0.0.0.0") == ["192.168.0.42", "10.0.0.7"]
+
+
+@pytest.mark.parametrize("edge_host", ["127.0.0.1", "127.8.9.1", "192.168.0.99"])
+def test_console_ips_with_a_specific_host_never_detects(
+    edge_host: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail() -> list[str]:
+        raise AssertionError("detect_lan_ips must not be called")
+
+    monkeypatch.setattr(netinfo, "detect_lan_ips", fail)
+    assert console_ips(edge_host) == [edge_host]
+
+
+@pytest.mark.parametrize(
+    ("edge_host", "expected"),
+    [
+        ("127.0.0.1", True),
+        ("127.255.255.254", True),
+        ("0.0.0.0", False),
+        ("128.0.0.1", False),
+        ("192.168.0.99", False),
+    ],
+)
+def test_is_loopback(edge_host: str, expected: bool) -> None:
+    assert is_loopback(edge_host) is expected

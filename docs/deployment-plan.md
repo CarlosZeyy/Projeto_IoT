@@ -13,7 +13,8 @@ Histórico do arquivo:
 - 2026-10-25: comandos conferidos pelo autor (security-devops) contra o `infra/compose.api.yaml` e o `infra/compose.yaml` da correção do SEC-39-01, inclusive com os dois projetos de pé localmente (a rede `partqc-api-link` criada pelo primeiro e usada pelo segundo); nome do botão do 2FA conferido na página oficial;
 - 2026-10-26: junção da SPEC-017 (alertas no Telegram) com o layout do Coolify pelo autor (security-devops): §3, passo 1 (item 4), passo 5, §6, §7 (item 11), §8 (item 5) e o CA manual da SPEC-017 refeitos para as variáveis só no recurso `partqc-api`, com o token colado só no painel e lido do ambiente do contêiner nas conferências, e a conferência de RLS e grants da `alerts_sent` (SEC-17-01);
 - 2026-10-26: SPEC-038, Parte B, pelo autor (security-devops): `handle_errors` no Caddy (§2, linha "Caddy: respostas de erro", e §7, item 9), `0` ou `-1` no `pids_limit` (§2), o diagnóstico no passo 3 da "Atualização" (§4) e o CA manual da SPEC-038 (§9);
-- 2026-10-31: SPEC-040, Parte C, pelo autor (security-devops): nota de CDN no passo 3 da §4 e no item 13 da §7 (SEC-39-05), ordem de migração, API e borda na "Atualização" (SEC-16-01, SEC-04 da SPEC-018), respostas comprimidas no item 12 da §7 (fontes conferidas de novo), envio abandonado na §8, item 5 (SEC-17-03), e o CA manual da SPEC-040 (§9).
+- 2026-10-31: SPEC-040, Parte C, pelo autor (security-devops): nota de CDN no passo 3 da §4 e no item 13 da §7 (SEC-39-05), ordem de migração, API e borda na "Atualização" (SEC-16-01, SEC-04 da SPEC-018), respostas comprimidas no item 12 da §7 (fontes conferidas de novo), envio abandonado na §8, item 5 (SEC-17-03), e o CA manual da SPEC-040 (§9);
+- 2026-11-02: SPEC-043, Parte B, pelo autor (security-devops): o que a primeira publicação mostrou: senha só com letras e números (passo 1, item 3), grants depois das migrações (passo 1, item 4), comportamento do painel do Coolify (passos 5 e 6), URL mal formada (§7, item 2), prazo do simulador (§8, item 4; passo 11, item 3), `statement_timeout` pelo pooler (§8, item 1, passo 5) e o texto da rede `partqc-api-link` (§7, item 10; §9, linha do CA-20). Fontes do Postgres e do Coolify conferidas de novo.
 
 > **Estado em 2026-10-25:** o ADR-023 está `Aceito`, e a SPEC-039, em desenvolvimento. Os passos da §4 descrevem o deploy pelo Coolify e **só podem ser executados depois do merge da SPEC-039**. Até lá, o `infra/compose.yaml` da `main` publica as portas 80 e 443, que o proxy do Coolify já ocupa, e o deploy falharia.
 
@@ -154,7 +155,7 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
    O schema corrente precisa ser `public`. Se não for, parar e registrar `SPEC_ISSUE`.
 3. **Migrações**, na máquina do humano (nunca na VPS, no Coolify nem no GitHub Actions), pelo pooler em **modo session** (porta 5432) ou pela conexão direta, **nunca** pela porta 6543. O executor recusa a porta 6543 antes de conectar (código 2), porque o advisory lock de sessão se perde no modo transaction (SPEC-015 §4.7).
    1. Copiar a connection string do pooler em modo **session** (painel → Connect → "Session pooler").
-   2. Criar o arquivo `.env.migrate` na raiz do checkout local **com um editor** e pôr nele uma única linha `DATABASE_URL=<URL do modo session>`. Se a senha tiver `$`, pôr a URL entre aspas simples.
+   2. Criar o arquivo `.env.migrate` na raiz do checkout local **com um editor** e pôr nele uma única linha `DATABASE_URL=<URL do modo session>`. A senha do banco tem **só letras e números**, gerada ou trocada no painel do Supabase antes de montar a URL, porque `@`, `/` e `:` quebram a URL e fazem as ferramentas recusá-la (SPEC-043). Quem trocar a senha atualiza também a `DATABASE_URL` do `partqc-api`.
    3. `chmod 600 .env.migrate` e conferir com `git status --short` que ele não aparece.
    4. `uv run --env-file .env.migrate --package qc-api python infra/migrate.py --status` → lista as pendentes e sai com 0.
    5. `uv run --env-file .env.migrate --package qc-api python infra/migrate.py` → sai com 0. Se outra execução segurar o lock, o executor desiste em 30 s (`could not acquire the migration lock within 30 s`) sem aplicar nada.
@@ -179,8 +180,10 @@ Nos comandos abaixo, `<contêiner da api>`, `<contêiner do dashboard>` e `<cont
 
    select grantee, table_name, privilege_type from information_schema.role_table_grants
    where table_schema = 'public' and grantee in ('anon','authenticated');
-   -- esperado: nenhuma linha
+   -- esperado: nenhuma linha, depois do revoke explicado abaixo
    ```
+
+   É normal a última consulta devolver linhas logo depois das migrações, porque os privilégios padrão do projeto valem para as tabelas criadas: em 2026-11-02, foram 56 linhas, 4 tabelas × 7 privilégios × 2 papéis. A contagem pode mudar com a configuração do projeto, mas o resultado depois do `revoke` tem de ser nenhuma linha. A migração não faz esse `revoke` (SPEC-043 §4.6), então este passo é obrigatório em todo projeto novo.
 
    Se a última consulta devolver linhas, rodar `revoke all on devices, inspections, schema_migrations, alerts_sent from anon, authenticated;` e repeti-la (SEC-02 da SPEC-003; `alerts_sent` desde a SPEC-017, SEC-17-01). Depois, chamar a API REST do Supabase em `/rest/v1/inspections` com a chave anon (painel → API) e conferir que nenhuma linha volta, mesmo com dados na tabela.
 5. Copiar a connection string do pooler em modo **transaction** (porta 6543) para a variável `DATABASE_URL` do recurso `partqc-api` no Coolify (passo 5), e de nenhum outro. A API conecta com `prepare_threshold=None` (ADR-006).
@@ -236,11 +239,19 @@ Criar **dois** recursos no mesmo projeto do painel, com os itens 1 a 4 abaixo re
 5. Ajustar os limites conforme o `free -h` e o `nproc` do passo 2 (regra na §2).
 6. Não existe `API_BASE_URL` no painel: o compose a monta como `https://${PUBLIC_HOST}`.
 
+**O que o painel faz sozinho** (Coolify 4.5.3, medido na primeira publicação, em 2026-11-02; a documentação não fala do estado inicial das variáveis detectadas no compose, <https://coolify.io/docs/knowledge-base/environment-variables>, conferida em 2026-11-02):
+
+- o Coolify cria as variáveis do compose com **Build time** ligado e **Literal** desligado. Desligar o Build time em **todas**, inclusive nas opcionais, e não só nos segredos, que também ficam Locked e Literal (item 4). O log do deploy tem de dizer `No build-time variables`;
+- o Coolify também cria uma cópia em **Preview deployments**. O PartQC não usa preview: a cópia fica como está, e nenhum segredo é colado nela;
+- o campo mostra `Loading value...` por alguns segundos. Editar só depois de o valor aparecer;
+- dois formulários abertos se sobrescrevem: editar uma variável por vez, salvar e recarregar a lista para conferir.
+
 ### Passo 6. Domínio
 
 1. Em **Domains** do recurso `partqc-web`, escolher o serviço `caddy` e informar `https://<subdominio>:80`. O `:80` é a porta **interna** do contêiner, não uma porta pública.
 2. O `dashboard` fica **sem** domínio, e o recurso `partqc-api` não tem nenhum.
 3. Se o recurso tiver a opção "Force HTTPS", deixá-la ligada (o CA-13, passo 2, confere o redirecionamento).
+4. O Coolify 4.5.3 acrescenta sozinho `www.<subdominio>` ao domínio do `caddy` ao salvar. Conferir o campo depois de salvar. Na primeira publicação, o humano o manteve; o certificado desse nome depende de haver um registro DNS para ele. O CA-42 cobre esse nome, porque o subdomínio está contido nele.
 
 ### Passo 7. Deploy e conferências
 
@@ -299,7 +310,7 @@ No `.env` do notebook: `CLOUD_API_URL=https://<subdominio>`.
 
 1. Num shell local, criar com um editor um arquivo de ambiente ignorado pelo Git (por exemplo, `.env.prod`, coberto pelo padrão `.env.*`) com `CLOUD_API_URL=https://<subdominio>`, `DASHBOARD_URL=https://<subdominio>/`, `READ_API_KEY`, `SIM_DEVICE_ID=sim-01` e `SIM_DEVICE_API_KEY`.
 2. `uv run --env-file .env.prod --package qc-api python scripts/smoke_test.py`: as 8 checagens dão `PASS` (CA-15). A saída não tem chaves nem o host e pode ser colada no dev-report.
-3. `uv run --env-file .env.prod --package qc-api python scripts/simulate.py --lots 3`, contra a API de produção, sempre dentro dos limites da §8, item 4.
+3. `uv run --env-file .env.prod --package qc-api python scripts/simulate.py --lots 3`, contra a API de produção, sempre dentro dos limites da §8, item 4. O esperado é código 0 e `sent=75`.
 4. Ver os dados no dashboard com o selo "Contém dados simulados" (origem `Todos`).
 5. Os dados simulados ficam (filtráveis por `source`; o dashboard mostra o selo). Se for preciso apagá-los: `delete from inspections where source = 'simulated';` no SQL Editor, pelo humano.
 
@@ -430,7 +441,7 @@ Cada linha tem a fonte e a data da verificação. Os riscos são do MVP (projeto
    - **Na VPS:** não há proteção de provedor contra DDoS, e nem o Caddy padrão nem o proxy do Coolify, como configurado, limitam a taxa: no Caddy, `rate_limit` não está na lista de diretivas padrão e exigiria um build próprio com plugin (<https://caddyserver.com/docs/caddyfile/directives>, conferido em 2026-10-19). O impacto nos outros projetos da VPS fica limitado pelo `mem_limit` e pelos `cpus` de cada serviço (`infra/compose.yaml` e `infra/compose.api.yaml`).
    - **Na reserva (Render):** vale a proteção automática do Render (<https://render.com/docs/ddos-protection>, conferido em 2026-10-19).
    - **Decisão:** risco aceito no MVP. Uma limitação de taxa só entra por SPEC nova.
-2. **Log do `psycopg.pool` (SEC-04-05).** Com o banco fora do ar, o logger `psycopg.pool` registra em `WARNING` o host, a porta e, numa falha de autenticação, o usuário do pooler do Supabase, sem a senha. Esse log fica na aba de logs da API no painel do Coolify (e em `docker logs`), que só o humano acessa, e no painel do Render quando a reserva está ativa. Não são segredos (R-03 cumprida). No portão `deploy`, esse log não conta como vazamento: é a exceção da regra "Erros de banco no log" de `docs/architecture.md` §4 (SPEC-004, r2-security-report, 2026-10-13).
+2. **Log do `psycopg.pool` (SEC-04-05).** Com o banco fora do ar, o logger `psycopg.pool` registra em `WARNING` o host, a porta e, numa falha de autenticação, o usuário do pooler do Supabase, sem a senha. O "sem a senha" vale para uma URL bem formada: com `@` ou `/` na senha, um trecho dela cairia no host dessa mensagem, e por isso a API não sobe com uma `DATABASE_URL` mal formada, recusada antes de conectar e sem mostrar o valor (SPEC-043 §4.2). Esse log fica na aba de logs da API no painel do Coolify (e em `docker logs`), que só o humano acessa, e no painel do Render quando a reserva está ativa. Não são segredos (R-03 cumprida). No portão `deploy`, esse log não conta como vazamento: é a exceção da regra "Erros de banco no log" de `docs/architecture.md` §4 (SPEC-004, r2-security-report, 2026-10-13).
 3. **Consulta cancelada pelo `statement_timeout`:** uma consulta que passa do limite é cancelada com o código `57014` (`QueryCanceled`) e responde 503 `{"detail": "Database unavailable"}`, igual a um banco fora do ar, sem a mensagem do Postgres nem stack trace (SEC-26-02, SPEC-026 r1-security-report; <https://supabase.com/docs/guides/database/postgres/timeouts>, conferido em 2026-10-19).
    - O `QueryCanceled` é subclasse de `psycopg.OperationalError`, que o `db_connection` (`api/src/qc_api/db.py`) converte em `DatabaseUnavailableError`.
    - O dashboard mostra o aviso de API indisponível e não repete a chamada em laço (SPEC-013).
@@ -443,7 +454,7 @@ Cada linha tem a fonte e a data da verificação. Os riscos são do MVP (projeto
 9. **Respostas que não passam pelo bloco de headers do Caddy (SPEC-032 §4.3, SPEC-038 §4.9).** O bloco `header` do site é adiado (`defer`) e só age nas respostas que passam pelo `reverse_proxy`. Até a SPEC-038, o `502` que o Caddy devolve quando a API ou o dashboard estão fora do ar saía com `Server: Caddy` e sem os 4 headers do bloco (conferido com a imagem `caddy:2.11.7` em 2026-10-24). Desde a SPEC-038, as respostas de erro geradas pelo próprio Caddy (o `502` com a origem fora do ar, o `504` por timeout) saem com os 4 headers, sem `Server` e sem `Via` e com corpo vazio, pelo `handle_errors` do `infra/Caddyfile`: um `respond` sem status, dentro da rota de erro, usa o status do erro original (comentário de `ServeHTTP` em <https://github.com/caddyserver/caddy/blob/master/modules/caddyhttp/staticresp.go>, consultado em 2026-10-26; conferido em 2026-10-26 com a imagem fixada, que devolveu `502` sem a API e o dashboard), e nenhum placeholder do erro vai para o cliente. Com o Coolify (ADR-023), o redirecionamento HTTP → HTTPS e os erros gerados pelo próprio proxy do Coolify (por exemplo, o `404`/`No available server` com o contêiner do Caddy parado) continuam sem eles (o navegador ignora HSTS em HTTP). As respostas da API e do Streamlit por HTTPS saem sem `server` e sem `via`. Nenhuma dessas respostas tem conteúdo que possa ser emoldurado. **Decisão:** risco aceito no MVP. Uma política CSP completa também ficou fora (SPEC-032 §3.2).
 10. **O que cada contêiner recebe no Coolify (SEC-39-01, ADR-023, emenda 1).** O Coolify entrega a todos os serviços de um recurso o `.env` com todas as variáveis de runtime do recurso. Com os dois recursos, a `DATABASE_URL` e o `TELEGRAM_BOT_TOKEN` ficam só na `api`, conferido pelo CA-20 da SPEC-039 (depois do primeiro deploy e de cada atualização do Coolify). Ficam aceitos:
     - a `READ_API_KEY` e o `PUBLIC_HOST` no ambiente do Caddy, pelo `.env` do `partqc-web`. O Caddy já recebe a chave de leitura no header de cada requisição do dashboard;
-    - o `dashboard` na rede `partqc-api-link`, porque o Coolify liga as redes do topo do arquivo a todos os serviços do recurso. Ele alcança a `api` direto, inclusive o `/docs` interno, como já alcançava no recurso único, e a API exige as chaves de sempre;
+    - o `dashboard` na rede `partqc-api-link`, se ele entrar nela. No Coolify 4.5.3 (medido em 2026-11-02), ele não está na rede, que só tem a `api` e o `caddy`, e chega à API por `https://`, pelo proxy. O código lido em 2026-10-25 indicava que o Coolify liga as redes do topo do arquivo a todos os serviços do recurso: se ele entrar depois de uma atualização, é este risco aceito. Nesse caso, ele alcança a `api` direto, inclusive o `/docs` interno, como já alcançava no recurso único, e a API exige as chaves de sempre;
     - o isolamento depende de um comportamento do Coolify que a documentação não descreve, conferido no código-fonte (`v4.x` e `v4.5.0`, 2026-10-25). Se o CA-20 falhar, vale o "Quando revisitar" do ADR-023.
 
 11. **Alertas no Telegram na reserva (SPEC-017 §7).** O laço de alertas roda dentro do processo da API. O serviço `free` do Render dorme depois de 15 min sem tráfego (linha do Render na §2), e, enquanto dorme, nenhum lote é verificado. Com a reserva ativa, um alerta só sai quando a API está acordada (o keep-alive e o uso do painel a acordam) e o lote ainda está na janela de `ALERTS_LOOKBACK_HOURS`. Na VPS, a API fica sempre ligada. **Decisão:** risco aceito; a reserva é só para incidentes.
@@ -518,16 +529,20 @@ O `statement_timeout` do papel da API é o **teto do custo de banco** da carta p
 3. **Aplicar** no papel da API (o usuário da `DATABASE_URL` sem o sufixo do projeto; no Supabase, `postgres`), no SQL Editor: `alter role postgres set statement_timeout = '15s';`. É `alter role`, e não o parâmetro `options` da conexão, porque uma configuração de sessão não funciona pelo pooler em modo transaction (porta 6543).
 4. **Conferir no papel:** `select rolname, rolconfig from pg_roles where rolname = 'postgres';` → `rolconfig` contém `statement_timeout=15s` (`show statement_timeout` no SQL Editor não reflete a configuração do papel).
 5. **Conferir pelo caminho da API** (pooler em modo transaction, porta 6543), com a URL lida de um arquivo local ignorado pelo Git, nunca na linha de comando. Use um arquivo **próprio e temporário**, só para esta conferência, e não o `.env.prod` do passo 11: o smoke e o simulador não precisam da senha do banco, e ela não deve ficar num arquivo de uso geral nem no ambiente desses processos.
-   1. Criar com um editor o arquivo `.env.dbcheck` (coberto pelo padrão `.env.*` do `.gitignore`) com uma única linha `DATABASE_URL=<URL do modo transaction>` (entre aspas simples se tiver `$`) e rodar `chmod 600 .env.dbcheck`.
+   1. Criar com um editor o arquivo `.env.dbcheck` (coberto pelo padrão `.env.*` do `.gitignore`) com uma única linha `DATABASE_URL=<URL do modo transaction>` e rodar `chmod 600 .env.dbcheck`.
    2. Rodar:
 
       ```bash
       uv run --env-file .env.dbcheck --package qc-api python -c "import os, psycopg; c = psycopg.connect(os.environ['DATABASE_URL'], prepare_threshold=None); print(c.execute('show statement_timeout').fetchone()[0])"
       ```
 
-   3. Apagar o arquivo logo depois: `rm .env.dbcheck`.
+   3. Apagar o arquivo só no fim da conferência: `rm .env.dbcheck`.
 
-   Saída esperada: `15s`. Se a conexão falhar, não cole a mensagem de erro sem editá-la: ela pode trazer o host do pooler. Se não for, parar e registrar `SPEC_ISSUE` para o architect (a alternativa é um `set local statement_timeout` na transação de leitura da API, numa SPEC do developer).
+   Saída esperada: `15s`. Se a conexão falhar, não cole a mensagem de erro sem editá-la: ela pode trazer o host do pooler e, com uma URL mal formada, um trecho da senha.
+
+   `2min` logo depois do `alter role` não é falha: o `alter role` só vale para conexões novas ("Whenever the role subsequently starts a new session, the specified value becomes the session default", <https://www.postgresql.org/docs/current/sql-alterrole.html>, conferido em 2026-11-02), e o pooler reaproveita as que já estão abertas. Repetir o comando do subitem 2 a cada 5 min, por até 30 min, e registrar o tempo observado. Os 30 min são uma folga do procedimento, e não uma medição: em 2026-11-02, foram "alguns minutos". O mesmo vale para o passo 5 do CA-26 da SPEC-015.
+
+   Se, depois disso, a saída ainda não for `15s`, parar e registrar `SPEC_ISSUE` para o architect (a alternativa é um `set local statement_timeout` na transação de leitura da API, numa SPEC do developer).
 6. Registrar na §9 e no dev-report as saídas dos itens 1, 4 e 5 e a data.
 
 ### 2. `READ_API_KEY` (INFO-02 da SPEC-005)
@@ -546,6 +561,7 @@ O `statement_timeout` do papel da API é o **teto do custo de banco** da carta p
 ### 4. Simulador em produção (SEC-07 e SEC-01 da SPEC-014)
 
 - Contra produção, só execuções pequenas: `--lots` até 10 e `--lot-size` até 50 (no máximo 500 itens por execução), por exemplo `uv run --env-file .env.prod --package qc-api python scripts/simulate.py --lots 3`.
+- O lote agora espera até 60 s (SPEC-043). Referência, sem ser limite: um lote cheio leva cerca de 17 s, e 500 itens, cerca de 90 s, estimados a partir dos 10 a 13 s medidos com 75 itens. Se sair com código 5, repetir com a mesma seed, que é impressa no erro, e as mesmas opções: o que já foi gravado volta como `duplicate` (R-05).
 - A chave vai sempre pelo arquivo de ambiente (`SIM_DEVICE_API_KEY`). Nunca use `--api-key` em demo gravada, terminal projetado, CI ou workflow. Se for inevitável, use a forma `--api-key=<valor>` com um espaço no início do comando, para que ele não entre no histórico do shell.
 - Se uma chave aparecer numa gravação, num log compartilhado ou num print, rotacioná-la com `uv run --env-file .env.migrate --package qc-api python scripts/register_device.py --device-id sim-01 --rotate` e atualizar o `.env` local.
 
@@ -627,7 +643,7 @@ Esperado: nenhuma linha nos quatro `git grep` (código de saída 1) e nenhum avi
 | SPEC-039 CA-16 | `docker inspect`: limites, `read_only`, `tmpfs`, capacidades, `no-new-privileges`, sem `PortBindings`, `unless-stopped` | PASS: limites, `read_only`, `tmpfs`, `cap_drop: ALL`, `NET_BIND_SERVICE` só no Caddy, `no-new-privileges`, `PortBindings` vazio, `unless-stopped` | 2026-11-02 |
 | SPEC-039 CA-17 | Segredos só em runtime, Locked e Literal; `docker history` sem os nomes; `.env*` fora das imagens; modo do `.env` do Coolify (§7, item 7) | PASS: segredos só em runtime, Locked e Literal, com o log de deploy dizendo `No build-time variables`; `docker history` sem os nomes; só `/app/.env.example` nas imagens; `.env` do Coolify `0644`, `root` (§7, item 7) | 2026-11-02 |
 | SPEC-039 CA-18 | Webhook: o merge de teste dispara os dois deploys (entrega `push` 2xx no GitHub), a branch do PR não dispara, os deploys terminam com sucesso e o smoke passa, e os logs não mostram segredos (registrar o SHA curto, sem a URL do webhook); ou "não aplicável: deploy pelo botão", se o painel não for público | Não aplicável por enquanto: deploy pelo botão. O painel é público, mas o 2FA da conta está desligado, e o passo 7A exige o 2FA antes do webhook | 2026-11-02 |
-| SPEC-039 CA-20 | `Config.Env` de cada contêiner, só os nomes (`DATABASE_URL` e `TELEGRAM_BOT_TOKEN` só na `api`), `supabase` fora do `caddy` e do `dashboard`, rede `partqc-api-link` `internal` com 3 contêineres; repetir depois de cada atualização do Coolify | PASS nos segredos: `DATABASE_URL` e `TELEGRAM_BOT_TOKEN` só na `api`, `supabase` só na `api`, rede `internal`. Desvio: a rede tem 2 contêineres (`api` e `caddy`), não 3. O `dashboard` ficou fora, mais restrito que o previsto na SPEC-039, e chega à API por `https://` pelo proxy | 2026-11-02 |
+| SPEC-039 CA-20 | `Config.Env` de cada contêiner, só os nomes (`DATABASE_URL` e `TELEGRAM_BOT_TOKEN` só na `api`), `supabase` fora do `caddy` e do `dashboard`, rede `partqc-api-link` `internal`, com `true 2` (`api` e `caddy`); repetir depois de cada atualização do Coolify | PASS nos segredos: `DATABASE_URL` e `TELEGRAM_BOT_TOKEN` só na `api`, `supabase` só na `api`, rede `internal`. Texto corrigido pela SPEC-043: a rede tem 2 contêineres (`api` e `caddy`). O `dashboard` ficou fora, mais restrito que o previsto na SPEC-039, e chega à API por `https://` pelo proxy | 2026-11-02 |
 | CA-13 | API na VPS: health, redirecionamento HTTP → HTTPS, 401 sem chave, HSTS sem `includeSubDomains`, emissor do certificado, `/docs` e `/openapi.json` não publicados | PASS: health `ok` com contrato 0.6.0; `307` de HTTP para HTTPS; `401` sem chave; HSTS `max-age=31536000`, sem `includeSubDomains`; emissor Let's Encrypt, válido até 31/01/2027. `/api/docs`, `/api/redoc` e `/api/openapi.json` dão `404`; `/docs` e `/openapi.json` caem na página do painel, sem conteúdo da API | 2026-11-02 |
 | CA-14 | RLS e grants em produção (passo 1, item 4) | PASS: RLS ligado nas 4 tabelas, 0 políticas. A migração deixou 56 grants a `anon` e `authenticated`, e o `revoke` do passo 1, item 4, os levou a 0. REST com a chave pública: `401` nas 4 tabelas, nenhuma linha | 2026-11-02 |
 | CA-15 | Smoke em produção: 8 × `PASS` (passo 11) | PASS: 8 × `PASS` | 2026-11-02 |

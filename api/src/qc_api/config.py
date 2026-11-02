@@ -9,14 +9,19 @@ value must never stop the API (section 4.6). ``qc_api.services.alerts.load_alert
 applies the rules and names the invalid variables, never their values. Each one accepts its
 final type (a strict ``bool`` or ``int``, so ``True`` is never read as ``1``) or the raw ``str``
 of the environment.
+
+SPEC-043 section 4.2: a malformed ``DATABASE_URL`` stops the API before any connection, because
+libpq would put a piece of the password in the host, which the pool logs and DNS receives.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, PositiveInt, SecretStr, StrictBool, StrictInt
+from pydantic import Field, PositiveInt, SecretStr, StrictBool, StrictInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from qc_api.conninfo import MALFORMED_CONNINFO_HINT, is_safe_conninfo
 
 DEFAULT_MAX_BODY_BYTES = 262_144
 MIN_READ_API_KEY_LENGTH = 32
@@ -48,3 +53,10 @@ class Settings(BaseSettings):
     ALERTS_CHECK_INTERVAL_S: StrictInt | str = 60
     ALERTS_MAX_PER_HOUR: StrictInt | str = 10
     ALERTS_INCLUDE_SIMULATED: StrictBool | str = False
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _well_formed_database_url(cls, value: SecretStr) -> SecretStr:
+        if not is_safe_conninfo(value.get_secret_value()):
+            raise ValueError(f"malformed connection URL: {MALFORMED_CONNINFO_HINT}")
+        return value

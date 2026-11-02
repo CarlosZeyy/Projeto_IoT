@@ -32,6 +32,7 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 from qc_api.auth import hash_api_key
+from qc_api.conninfo import MALFORMED_CONNINFO_HINT, is_safe_conninfo
 from qc_contracts import DEVICE_ID_PATTERN
 
 logger = logging.getLogger("partqc.register_device")
@@ -119,6 +120,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception:
         # The parser's message may echo the string (and a password): never show it.
         logger.error("invalid database URL (not shown)")
+        return EXIT_USAGE
+    # SPEC-043: libpq would try to resolve a piece of the password as the host.
+    if not is_safe_conninfo(conninfo):
+        logger.error("invalid database URL (not shown): %s", MALFORMED_CONNINFO_HINT)
         return EXIT_USAGE
 
     key = generate_api_key()

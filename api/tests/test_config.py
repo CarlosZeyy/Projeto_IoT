@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,8 @@ from pydantic import ValidationError
 
 from qc_api.config import Settings
 
+# Split so that the repository secret scanner sees no credential in a URL (R-03).
+SCHEME = "postgresql" + "://"
 ENV_NAMES = ("DATABASE_URL", "READ_API_KEY", "MAX_BODY_BYTES", "LOG_LEVEL")
 DB_URL = "postgresql://localhost/partqc_test"
 
@@ -94,3 +97,31 @@ def test_database_url_value_not_in_error(monkeypatch: pytest.MonkeyPatch) -> Non
         Settings(READ_API_KEY="tiny-read-key-value")
     assert secret_url not in str(info.value)
     assert "tiny-read-key-value" not in str(info.value)
+
+
+def _malformed_urls(left: str, right: str) -> list[str]:
+    """Passwords with the separators that break a URL (SPEC-043); built at run time (R-03)."""
+    return [
+        f"{SCHEME}u:{left}@{right}@db.example.org:6543/postgres",
+        f"{SCHEME}u:{left}/{right}@db.example.org:5432/postgres",
+        f"{SCHEME}u:12/{right}@db.example.org:5432/postgres",
+        f"{SCHEME}u:{left}@{right}:x@db.example.org:5432/postgres",
+    ]
+
+
+@pytest.mark.parametrize("index", range(4))
+def test_malformed_database_url_is_refused_without_its_pieces(index: int) -> None:
+    left, right = secrets.token_hex(8), secrets.token_hex(8)
+    with pytest.raises(ValidationError) as info:
+        Settings(DATABASE_URL=_malformed_urls(left, right)[index], READ_API_KEY="r" * 32)
+    message = str(info.value)
+    assert "DATABASE_URL" in message
+    assert "malformed connection URL" in message
+    assert "percent-encode" in message
+    assert left not in message
+    assert right not in message
+
+
+def test_percent_encoded_password_is_accepted() -> None:
+    url = f"{SCHEME}u:a%40b%2Fc@db.example.org:5432/x"
+    assert Settings(DATABASE_URL=url, READ_API_KEY="r" * 32).DATABASE_URL.get_secret_value() == url

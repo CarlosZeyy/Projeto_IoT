@@ -30,6 +30,9 @@ the video, token in the header). A frame only becomes an inspection when the cla
 stable (``qc_edge.live``), through the same recording path as the capture. With HTTPS on, the
 console QR codes use ``https://`` and there is a second one for ``/live``; the console always shows
 the latency per frame. Frames stay in memory and only an emitted one is written to ``captures/``.
+
+SPEC-043: with an ``EDGE_HOST`` other than ``0.0.0.0``, the console only offers that address, and
+in loopback it warns that the phone cannot open it.
 """
 
 # No ``from __future__ import annotations`` here: FastAPI resolves the ``Depends`` annotations of
@@ -189,6 +192,11 @@ NO_LAN_WARNING_HTML = (
     '<p class="warning" id="no-lan-warning">Nenhum IP de rede local foi detectado: o QR code '
     "aponta para 127.0.0.1 e o celular não vai conseguir abrir. Conecte o notebook ao Wi-Fi ou "
     "ao hotspot do celular e espere o console recarregar.</p>"
+)
+LOOPBACK_ONLY_WARNING_HTML = (
+    '<p class="warning" id="loopback-warning">A borda escuta só neste notebook (EDGE_HOST em '
+    "loopback): o celular não vai conseguir abrir. Para parear, use EDGE_HOST=0.0.0.0 e reinicie "
+    "o qc-edge.</p>"
 )
 
 # Console labels of the decision thresholds (SPEC-008 section 4.4).
@@ -866,7 +874,7 @@ def create_app(
             return HTMLResponse(
                 forbidden_page, status_code=status.HTTP_403_FORBIDDEN, headers=PAGE_HEADERS
             )
-        ips = netinfo.detect_lan_ips()  # recomputed on every render (hotspot switch)
+        ips = netinfo.console_ips(settings.EDGE_HOST)  # recomputed per render (hotspot switch)
         requested_ip = request.query_params.get("ip")
         ip = requested_ip if requested_ip in ips else ips[0]
         capture_url = _page_url(scheme, ip, settings.EDGE_PORT, "/capture", session_token)
@@ -874,7 +882,7 @@ def create_app(
             rows = list(recent)
         page = console_template.substitute(
             device_id=html.escape(settings.DEVICE_ID),
-            ip_warning=NO_LAN_WARNING_HTML if netinfo.is_fallback(ips) else "",
+            ip_warning=_ip_warning_html(settings.EDGE_HOST, ips),
             qr_svg=_qr_svg(capture_url),
             capture_url=html.escape(capture_url),
             other_ips=_other_ips_html(ips, ip),
@@ -1089,6 +1097,13 @@ def _sink_fields(sink: InspectionSink) -> dict[str, str]:
             last.astimezone().strftime("%d/%m %H:%M:%S") if last is not None else "—"
         ),
     }
+
+
+def _ip_warning_html(edge_host: str, ips: list[str]) -> str:
+    """Why the phone cannot open the QR code, if so (SPEC-043 section 4.4)."""
+    if netinfo.is_loopback(edge_host):
+        return LOOPBACK_ONLY_WARNING_HTML
+    return NO_LAN_WARNING_HTML if netinfo.is_fallback(ips) else ""
 
 
 def _other_ips_html(ips: list[str], current: str) -> str:

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import psycopg
 import pytest
@@ -14,6 +17,8 @@ from fastapi.testclient import TestClient
 
 from qc_api.main import create_app
 
+# Split so that the repository secret scanner sees no credential in a URL (R-03).
+SCHEME = "postgresql" + "://"
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "register_device.py"
 KEY_PREFIX = "DEVICE_API_KEY="
 
@@ -30,6 +35,14 @@ def _run(*args: str, database_url: str | None = None) -> subprocess.CompletedPro
         timeout=60,
         check=False,
     )
+
+
+def _load_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("partqc_register_device_author", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _key(result: subprocess.CompletedProcess[str]) -> str:
@@ -60,6 +73,37 @@ def test_invalid_url_exits_2_without_echo(fake_password: str) -> None:
     result = _run("--device-id", "lab-02", "--database-url", f"host=x pass {fake_password} =")
     assert result.returncode == 2
     assert fake_password not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        SCHEME + "u:{a}@{b}@db.example.org:6543/postgres",
+        SCHEME + "u:{a}/{b}@db.example.org:5432/postgres",
+        SCHEME + "u:12/{b}@db.example.org:5432/postgres",
+        SCHEME + "u:{a}@{b}:x@db.example.org:5432/postgres",
+    ],
+)
+def test_malformed_url_exits_2_before_generating_a_key(
+    template: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """DEP-02 (SPEC-043 section 4.2): in process, so psycopg.connect can be replaced."""
+    script = _load_script()
+    left, right = secrets.token_hex(8), secrets.token_hex(8)
+
+    def no_call(*args: object, **kwargs: object) -> str:
+        raise AssertionError("must not be called")
+
+    monkeypatch.setattr(psycopg, "connect", no_call)
+    monkeypatch.setattr(script, "generate_api_key", no_call)
+    monkeypatch.setenv("DATABASE_URL", template.format(a=left, b=right))
+    assert script.main(["--device-id", "edge-01"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "invalid database URL (not shown)" in captured.err
+    assert "percent-encode" in captured.err
+    assert left not in captured.err
+    assert right not in captured.err
 
 
 def test_unreachable_database_exits_1_without_leaking(no_db_url: str, fake_password: str) -> None:

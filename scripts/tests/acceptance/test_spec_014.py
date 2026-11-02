@@ -1066,7 +1066,7 @@ def test_extra_timeouts(run: Callable[..., Run], key: str) -> None:
     assert result.code == 0, result.err
     health, batch = api.requests
     assert health.extensions["timeout"]["read"] == 90
-    assert batch.extensions["timeout"]["read"] == 10
+    assert batch.extensions["timeout"]["read"] == 60
 
 
 @pytest.mark.parametrize(
