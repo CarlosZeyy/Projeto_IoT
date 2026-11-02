@@ -89,7 +89,10 @@ HISTORY_COLUMNS = [
 SPC_COLUMNS = ["Lote", "Início", "Fim", "n", "Defeituosas", "p", "LC", "LSC", "LIC"]
 SPC_COLUMNS = [*SPC_COLUMNS, "Fora de controle"]
 BADGE = "Contém dados simulados"
-WAKING = "API acordando (free tier), tente em ~1 min"
+WAKING = (
+    "API indisponível: pode ser uma queda da API ou do banco. "
+    "Tente de novo em ~1 min; se continuar, confira o servidor."
+)
 RETRY = "Tentar novamente"
 PERIOD_NOTE = (
     "A carta p usa todo o histórico da origem escolhida; o período da barra lateral não se aplica."

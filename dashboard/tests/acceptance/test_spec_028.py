@@ -47,7 +47,10 @@ PREFIX = "/api/v1"
 GRADES = ("perfect", "good", "fair", "poor", "unusable")
 GRADE_LABELS = ["perfeito", "bom", "mediano", "ruim", "inutilizável"]
 BADGE = "Contém dados simulados"
-WAKING = "API acordando (free tier), tente em ~1 min"
+WAKING = (
+    "API indisponível: pode ser uma queda da API ou do banco. "
+    "Tente de novo em ~1 min; se continuar, confira o servidor."
+)
 RETRY = "Tentar novamente"
 INSECURE = "Configuração inválida: API_BASE_URL precisa usar https://"
 INSECURE_FULL = (
