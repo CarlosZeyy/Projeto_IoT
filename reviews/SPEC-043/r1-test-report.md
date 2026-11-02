@@ -5,8 +5,10 @@
 | SPEC | [SPEC-043](../../docs/specs/SPEC-043-manutencao-pos-deploy.md) |
 | Rodada | r1 |
 | Tester | tester |
-| Commit testado | `f3e9846` |
-| **Veredicto** | **FAIL**, só por causa do `SPEC_ISSUE-01` (CA-12). Nenhum bug de implementação. Todos os testes automatizados passam |
+| Commit testado | `f3e9846` (suíte) e `4cc311e` (ensaio do CA-12, no texto novo); entre os dois, só a SPEC e o plano mudaram no que não é teste nem relatório |
+| **Veredicto** | **PASS** (CA-18 manual pendente, como a §8 da SPEC permite). A primeira passagem deu FAIL pelo `SPEC_ISSUE-02`, corrigido e reaprovado pelo humano |
+
+Este relatório numerava o achado do CA-12 como `SPEC_ISSUE-01`. A SPEC o registra como `SPEC_ISSUE-02`, numeração usada aqui, porque `SPEC_ISSUE-01` é o do dev-report.
 
 Testes escritos a partir da SPEC, antes de ler a implementação. Li o código de produção só depois, para procurar casos de borda.
 
@@ -25,7 +27,7 @@ Testes escritos a partir da SPEC, antes de ler a implementação. Li o código d
 | CA-09 | `infra/…::test_ca09_functions_raise_before_connecting` (6), `::test_ca09_port_6543_raises_unsupported_before_connecting` (2), `::test_ca09_host_port_is_unknown` (4), `::test_ca09_closed_port_keeps_host_port_and_class` (2), `::test_ca09_literal_port_1_of_the_ca` (2) | ✅ |
 | CA-10 | `scripts/…::test_ca10_register_device_refuses_malformed_url` (4), `::test_ca10_register_device_closed_port_exits_1_without_the_password` | ✅ |
 | CA-11 | `dashboard/tests/acceptance/test_spec_043.py::test_ca11_model_column_is_240_px_with_everything_else_intact` | ✅ |
-| CA-12 | Ensaio fora da suíte, abaixo | ❌ `SPEC_ISSUE-01` |
+| CA-12 | Ensaio fora da suíte, repetido no texto novo, abaixo | ✅ (ver o limite do controle) |
 | CA-13 | `edge/tests/acceptance/test_spec_043.py::test_ca13_loopback_warns_and_offers_only_loopback` (2), `::test_ca13_exact_warning_of_section_4_4`, `::test_ca13_with_tls_the_live_url_stays_on_loopback` | ✅ |
 | CA-14 | `edge/…::test_ca14_specific_host_offers_only_itself` | ✅ (ver OBS-01) |
 | CA-15 | `edge/…::test_ca15_all_interfaces_is_as_before`, `::test_ca15_default_host_is_all_interfaces`, `::test_ca15_fallback_keeps_only_the_no_lan_warning`, `::test_ca15_readme_line_of_edge_host` | ✅ |
@@ -38,9 +40,33 @@ Testes escritos a partir da SPEC, antes de ler a implementação. Li o código d
 
 **Controle dos testes:** rodei os arquivos novos de `scripts/`, `infra/`, `dashboard/` e `edge/` contra uma cópia do código anterior à implementação (`37b6f3b`). CA-01, 02, 03, 08, 09, 10, 11, 13, 14, 15, 16, 17 e 19 falham lá. CA-05 a CA-07 (`api/`) não coletam, porque `qc_api.conninfo` não existe nessa versão. O controle rodou sem banco, então o CA-04 ficou de fora. Ele é regressão: a SPEC não pede código novo para esse caso.
 
-## CA-12: ensaio e controle
+## CA-12: ensaio no texto novo (vale para o veredicto)
 
-**Montagem:** banco próprio `partqc_ca12_test` no `partqc-pg` (apagado no fim), `qc-api` real em `uvicorn`, painel real em `streamlit` e Chrome headless a 1500 × 1000, conduzido por CDP, sem acesso à rede externa. Código novo: `f3e9846`. Código anterior: `37b6f3b`. Origem `Simulado`. As capturas ficaram só no scratchpad.
+**Montagem:** banco próprio `partqc_ca12_test` no `partqc-pg` (apagado no fim), `qc-api` real em `uvicorn`, painel real em `streamlit` e Chrome headless a 1500 × 1000, conduzido por CDP, sem acesso à rede externa. Código: `4cc311e` (HEAD) e `37b6f3b` (controle indicado no CA-12). Barra lateral aberta (`aria-expanded=true`, 300 px), origem `Simulado`. As capturas ficaram só no scratchpad.
+
+**Dados:** 20 inspeções `simulated` gravadas pela API. Lidas na tabela, as linhas 1 a 15 são `sim-v0`, e as 16 a 20, `partqc-mnv3-provisional-v1`, o que confirma a ordem que o Histórico da SPEC deixou para conferir. Nas duas versões, a rolagem vertical parou em `scrollTop=337`, com as 5 linhas provisórias na tela.
+
+| Passo | HEAD `4cc311e` | Controle `37b6f3b` |
+|---|---|---|
+| Captura 1, depois da rolagem vertical: trecho visível | `partqc-mnv3-provision`, mais parte de um `a` sob a barra vertical (corte pela borda da tabela, aceito no CA-12) | `partqc-mn` |
+| Largura da coluna `Modelo` | 240 px (CA-11) | Cerca de 72 px, medidos na captura, mais estreita que o valor |
+| Rolagem horizontal (`scrollWidth` / `clientWidth`) | 1110 / 1018: existe | 1018 / 1018: não existe |
+| Captura 2, depois de rolar até o fim à direita | `scrollLeft=92`, fim da tabela: `partqc-mnv3-provisional-v1` **inteira**, sem `…`, sem alargar a coluna | `scrollLeft=0`, a tela não muda: continua `partqc-mn` |
+| Selo e coluna `Origem` (R-06) | `Contém dados simulados` e `simulado` | Iguais |
+
+**Resultado:** o HEAD cumpre o CA-12, e o controle reproduz o previsto: coluna mais estreita que o valor e sem rolagem horizontal.
+
+**Limite do controle:** o CA-12 conclui que, no código anterior, o valor "só aparece inteiro alargando a coluna". O roteiro não tem esse passo, e não consegui demonstrar a parte positiva dessa frase neste ensaio:
+
+- rolar não mostra o valor inteiro, como na tabela acima;
+- o item `Autosize` do menu da coluna também não: o trecho visível diminui, para `partqc-`, com a linha provisória fora da amostra usada no ajuste;
+- arrastar a borda do cabeçalho de `Modelo` por CDP, em 10 posições a até 20 px da borda da tabela, não mudou a largura. Isso pode ser limite da automação, porque a última coluna termina junto da barra vertical. Não é evidência contra a frase, e o E2E-01 do ensaio da SPEC-041 relata o valor inteiro depois de alargar.
+
+Não registrei `SPEC_ISSUE` por isso: o que o CA pede para verificar no roteiro foi reproduzido, e nenhuma medição contradiz a frase. Quem quiser fechar esse ponto precisa arrastar a coluna à mão, num navegador real.
+
+## CA-12: primeira passagem (texto antigo, só registro)
+
+Medição em `f3e9846` e `37b6f3b` que originou o `SPEC_ISSUE-02`.
 
 | Cenário | Código | Coluna `Modelo` | Sem rolagem horizontal | Depois de rolar para a direita |
 |---|---|---|---|---|
@@ -61,7 +87,7 @@ Testes escritos a partir da SPEC, antes de ler a implementação. Li o código d
 
 - O requisito da §4.3 está implementado como escrito, e o CA-11 passa.
 - A largura fixa traz um ganho real no caso misto, o único em que o código anterior não mostra o valor nem rolando.
-- Mas o resultado previsto no CA-12 não se confirma como está escrito (`SPEC_ISSUE-01`).
+- Mas o resultado previsto no texto antigo do CA-12 não se confirmava (`SPEC_ISSUE-02`, resolvido).
 
 ## Suíte completa
 
@@ -122,7 +148,11 @@ Nenhum bug de implementação.
 
 ## SPEC_ISSUE (se houver)
 
-**SPEC_ISSUE-01 (CA-12, §2, §4.3 e §7): a largura de 240 px não faz a coluna aparecer inteira a 1500 px, e o controle previsto não mostra o corte.**
+Nenhum aberto.
+
+**SPEC_ISSUE-02, resolvido** (numerado SPEC_ISSUE-01 na primeira versão deste relatório): correção do architect no commit `6a1c203`, com a saída (a) abaixo, registrada no Histórico da SPEC como reaprovada pelo humano, que aceitou a rolagem horizontal. O registro original continua abaixo. Ele descreve o texto antigo da SPEC.
+
+**Registro original (CA-12, §2, §4.3 e §7): a largura de 240 px não faz a coluna aparecer inteira a 1500 px, e o controle previsto não mostra o corte.**
 
 - **Texto:**
   - a §2 pede que "a coluna `Modelo` aparece inteira no Histórico a 1500 px";
@@ -139,7 +169,12 @@ Nenhum bug de implementação.
 ## Pendências
 
 - CA-18: manual, do humano, depois do merge e do deploy.
-- CA-12: depende da decisão sobre o `SPEC_ISSUE-01`.
+- **Consequência aceita no `SPEC_ISSUE-02`:** a 1500 px, com a barra lateral aberta, é preciso rolar a tabela para a direita para confirmar o nome do modelo provisório, inclusive no passo 4 do CA-22 da SPEC-041 (§7 da SPEC).
+
+## Conferência da repetição
+
+- `git diff --name-only 551f51c 4cc311e`: só `docs/plan.md` e `docs/specs/SPEC-043-manutencao-pos-deploy.md`. A suíte não foi repetida, como a §6 da SPEC prevê.
+- OBS-01 a OBS-04 continuam como estão, sem bloquear.
 
 ## Declaração
 
