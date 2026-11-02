@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Test |
+| Status | In Review |
 | Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: `scripts/`, `infra/migrate.py`, `api/`, `dashboard/`, `edge/`), depois security-devops (Parte B: `docs/deployment-plan.md` e `.env.example`), na mesma rodada |
 | Tags | security, deploy |
