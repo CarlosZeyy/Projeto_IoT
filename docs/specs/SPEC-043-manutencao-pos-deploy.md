@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Blocked |
+| Status | In Dev |
 | Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: `scripts/`, `infra/migrate.py`, `api/`, `dashboard/`, `edge/`), depois security-devops (Parte B: `docs/deployment-plan.md` e `.env.example`), na mesma rodada |
 | Tags | security, deploy |
@@ -11,7 +11,7 @@
 | Requisitos cobertos | RF-01, RF-06, RF-11, RF-13, RF-14, RNF-06, RNF-10; R-03, R-05, R-06, R-13 |
 | ADRs relevantes | ADR-023 (emenda 2 proposta, só de texto, §4.7), ADR-019, ADR-006, ADR-013 |
 
-> **Aguardando reaprovação humana**: correção do SPEC_ISSUE-01 de `reviews/SPEC-043/r1-dev-report.md` (CA-08 e CA-09). Classificação ADR-019: exige humano (X-7). Ver o Histórico.
+> **Reaprovada pelo humano em 2026-11-02**: correção do SPEC_ISSUE-01 de `reviews/SPEC-043/r1-dev-report.md` (CA-08 e CA-09). Classificação ADR-019: exige humano (X-7). Ver o Histórico.
 
 ## 1. Contexto
 
@@ -353,3 +353,4 @@ Respostas do humano de 2026-11-02, relatadas pelo orquestrador:
 | 2026-11-02 | OBS-01 incluído (§1, §2, §3.1, §3.2, §4.8, CA-19, §6 e §8), e §9 preenchida com as respostas do humano. O texto exato do aviso (§4.8) é proposta do architect. O status continua `Draft`: a aprovação e a mudança para `Ready` são registradas pelo orquestrador. | Respostas do humano de 2026-11-02, relatadas pelo orquestrador | Orquestrador, a pedido do humano |
 | 2026-11-02 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas da §9, e iniciada a r1. O humano aprovou incluir o OBS-01 como ajuste de uma linha e um critério de aceite; o texto exato da §4.8 foi informado a ele na sessão. | Decisão do humano na sessão | Humano |
 | 2026-11-02 | Correção do SPEC_ISSUE-01 (CA-08 e CA-09), com a saída (a) do relatório; §4.2 e §7 sem mudança. **CA-08, antes:** "*Dado* cada **M** em `DATABASE_URL`, [...] a saída contém `invalid database URL (not shown)`". **Depois:** "*Dado* cada uma das três **M** sem a porta 6543 em `DATABASE_URL`, [...]", e a frase da URL com 6543 ganha "*quando* o `main` roda da mesma forma". **CA-09, antes:** "*Dado* cada **M**, [...] levantam `DatabaseConnectionError` [...], e `_host_port(<M>) == "unknown host"`". **Depois:** as três **M** sem a porta 6543 levantam `DatabaseConnectionError`; a URL com 6543 levanta `UnsupportedConnectionError`, sem chamar `psycopg.connect`, com `__cause__` nulo e sem sentinela; e `_host_port` vale `unknown host` para as quatro. **Evidência:** medição do relatório (`host='<B>@db.example.org'`, `port='6543'`, `UnsupportedConnectionError`) e leitura de `infra/migrate.py` (`ensure_supported_connection` vem antes de `_connect` nas duas funções, e a mensagem é uma constante, sem a URL). A recusa continua sem conectar e sem mostrar a senha; só a classe do erro muda nessa URL, a mesma ordem que o §4.2 e o §7 pedem. Classificação ADR-019: exige humano (X-7: o CA-08 e o CA-09 verificam a R-03). E-1 a E-5 cumpridos; X-6 não se aplica, porque nenhum caso de erro sai. | `reviews/SPEC-043/r1-dev-report.md`, SPEC_ISSUE-01: o CA-09 e a primeira frase do CA-08 contradiziam a §4.2 e a §7 para a URL com a porta 6543 | Orquestrador |
+| 2026-11-02 | Correção do SPEC_ISSUE-01 (CA-08 e CA-09) reaprovada pelo humano (commit do architect 4944e15). | `reviews/SPEC-043/r1-dev-report.md` | Humano |
