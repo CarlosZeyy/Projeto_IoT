@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: `scripts/`, `infra/migrate.py`, `api/`, `dashboard/`, `edge/`), depois security-devops (Parte B: `docs/deployment-plan.md` e `.env.example`), na mesma rodada |
 | Tags | security, deploy |
 | Depende de | Nada a esperar: SPECs 014, 015, 025, 028, 039 e 041 estão `Done` |
@@ -349,3 +349,4 @@ Respostas do humano de 2026-11-02, relatadas pelo orquestrador:
 |---|---|---|---|
 | 2026-11-02 | SPEC criada (`Draft`). Decisões do architect: DEP-01 só no cliente; DEP-02 com recusa antes de conectar nas três entradas; `revoke` manual; DEP-03 corrigido também no ADR-023 (emenda 2), porque o gatilho dele dispararia. | Fatos do primeiro deploy e do ensaio local | Orquestrador, a pedido do humano |
 | 2026-11-02 | OBS-01 incluído (§1, §2, §3.1, §3.2, §4.8, CA-19, §6 e §8), e §9 preenchida com as respostas do humano. O texto exato do aviso (§4.8) é proposta do architect. O status continua `Draft`: a aprovação e a mudança para `Ready` são registradas pelo orquestrador. | Respostas do humano de 2026-11-02, relatadas pelo orquestrador | Orquestrador, a pedido do humano |
+| 2026-11-02 | Aprovada pelo humano (`Draft` → `Ready`), com as respostas da §9, e iniciada a r1. O humano aprovou incluir o OBS-01 como ajuste de uma linha e um critério de aceite; o texto exato da §4.8 foi informado a ele na sessão. | Decisão do humano na sessão | Humano |
