@@ -47,6 +47,8 @@ HISTORY_COLUMNS: tuple[str, ...] = (
     "Origem",
     "Modelo",
 )
+# Room for the 26 characters of ``partqc-mnv3-provisional-v1`` (SPEC-043 section 4.3).
+MODEL_COLUMN_WIDTH_PX = 240
 
 CSV_ENCODING = "utf-8-sig"
 CSV_DELIMITER = ";"

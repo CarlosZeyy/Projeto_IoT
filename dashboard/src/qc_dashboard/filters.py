@@ -84,7 +84,10 @@ DEFAULT_PERIOD_DAYS = 7
 
 BADGE_TEXT = "Contém dados simulados"
 INVALID_LOT_TEXT = "Lote inválido"
-API_WAKING_TEXT = "API acordando (free tier), tente em ~1 min"
+API_UNAVAILABLE_TEXT = (
+    "API indisponível: pode ser uma queda da API ou do banco. "
+    "Tente de novo em ~1 min; se continuar, confira o servidor."
+)
 RETRY_LABEL = "Tentar novamente"
 AUTH_ERROR_TEXT = "Chave de leitura inválida ou ausente (READ_API_KEY)."
 
@@ -288,7 +291,7 @@ def _retry() -> None:
 def show_api_error(exc: Exception) -> None:
     """PT-BR message for an API error, without stack trace (the page goes on)."""
     if isinstance(exc, ApiUnavailable):
-        st.warning(API_WAKING_TEXT)
+        st.warning(API_UNAVAILABLE_TEXT)
         if st.button(RETRY_LABEL, key=KEY_RETRY):
             _retry()
     elif isinstance(exc, ApiAuthError):

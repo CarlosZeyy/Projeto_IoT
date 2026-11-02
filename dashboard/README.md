@@ -55,7 +55,7 @@ Não carregue o `.env` único do projeto no dashboard: ele traz também a connec
 
 - Todas as leituras passam pelas funções de `qc_dashboard.data`, com cache de 30 s (`st.cache_data`). Erros não são cacheados.
 - Todas as leituras guardam no máximo 256 entradas por função (`max_entries`); com o cache cheio, a entrada mais antiga sai.
-- Timeout (10 s), erro de conexão ou HTTP 502/503/504: aviso `API acordando (free tier), tente em ~1 min` e o botão `Tentar novamente`, que só recarrega a página (`st.rerun()`): como os erros não são cacheados, a nova tentativa já vai à API, e as leituras que deram certo continuam no cache, inclusive as das outras sessões. Nada é repetido automaticamente.
+- Timeout (10 s), erro de conexão ou HTTP 502/503/504: aviso `API indisponível: pode ser uma queda da API ou do banco. Tente de novo em ~1 min; se continuar, confira o servidor.` e o botão `Tentar novamente`, que só recarrega a página (`st.rerun()`): como os erros não são cacheados, a nova tentativa já vai à API, e as leituras que deram certo continuam no cache, inclusive as das outras sessões. Nada é repetido automaticamente.
 - HTTP 401/403: `Chave de leitura inválida ou ausente (READ_API_KEY).` Outros erros: `Erro da API (HTTP <status>).` Nenhum stack trace na tela, e a chave nunca aparece em log ou mensagem.
 
 ## Estrutura

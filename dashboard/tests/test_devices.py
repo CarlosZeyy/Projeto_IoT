@@ -203,7 +203,7 @@ def test_page_api_unavailable(mock_api, factory) -> None:
     mock_api.failure = lambda request: httpx.Response(503, json={"detail": "Database unavailable"})
     at = run(page(factory))
     assert len(at.exception) == 0
-    assert any("API acordando" in text for text in texts(at.warning))
+    assert any("API indisponível" in text for text in texts(at.warning))
     assert len(at.dataframe) == 0
 
 

@@ -110,6 +110,7 @@ st.caption(f"Página {page_number} de {page_count} — {formatting.fmt_int(page.
 st.dataframe(
     pd.DataFrame(formatting.history_rows(page.items), columns=list(formatting.HISTORY_COLUMNS)),
     hide_index=True,
+    column_config={"Modelo": st.column_config.TextColumn(width=formatting.MODEL_COLUMN_WIDTH_PX)},
 )
 
 navigation = st.columns([1, 1, 4])

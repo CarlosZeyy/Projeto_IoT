@@ -12,10 +12,14 @@ import httpx
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from qc_dashboard import config, filters
+from qc_dashboard import config, filters, formatting
 
 TIMEOUT = 30
 BADGE = "Contém dados simulados"
+UNAVAILABLE = (
+    "API indisponível: pode ser uma queda da API ou do banco. "
+    "Tente de novo em ~1 min; se continuar, confira o servidor."
+)
 
 
 def run(path: Path, **session: object) -> AppTest:
@@ -155,20 +159,27 @@ def test_timeout_then_retry(factory, mock_api, name: str) -> None:
     mock_api.failure = _timeout
     at = run(page(factory, name))
     assert_clean(at)
-    assert "API acordando (free tier), tente em ~1 min" in texts(at.warning)
+    assert UNAVAILABLE in texts(at.warning)
     assert [b.label for b in at.button] == ["Tentar novamente"]
     mock_api.failure = None
     at.button(key=filters.KEY_RETRY).click().run()
     assert_clean(at)
-    assert "API acordando (free tier), tente em ~1 min" not in texts(at.warning)
+    assert UNAVAILABLE not in texts(at.warning)
     assert at.get("plotly_chart") or at.dataframe
+
+
+def test_unavailable_text_does_not_suggest_a_cold_start() -> None:
+    """OBS-01 (SPEC-043 section 4.8): on the VPS the API does not sleep."""
+    assert filters.API_UNAVAILABLE_TEXT == UNAVAILABLE
+    assert "acordando" not in UNAVAILABLE
+    assert "free tier" not in UNAVAILABLE
 
 
 def test_badge_check_timeout_on_model_page(factory, mock_api) -> None:
     mock_api.failure = _timeout
     at = run(page(factory, "sobre_o_modelo"), **{filters.KEY_SOURCE: "Todos"})
     assert_clean(at)
-    assert "API acordando (free tier), tente em ~1 min" in texts(at.warning)
+    assert UNAVAILABLE in texts(at.warning)
 
 
 @pytest.mark.parametrize(
@@ -380,6 +391,15 @@ def test_history_table_pagination_and_csv(factory, mock_api) -> None:
     assert download.proto.label == "Baixar CSV (página atual)"
 
 
+def test_history_model_column_has_a_fixed_width(factory, mock_api) -> None:
+    """E2E-01 (SPEC-043 section 4.3): only the width changes, never the columns or the CSV."""
+    at = run(page(factory, "historico"))
+    assert_clean(at)
+    assert json.loads(at.dataframe[0].proto.columns)["Modelo"]["width"] == 240
+    assert list(at.dataframe[0].value.columns) == list(formatting.HISTORY_COLUMNS)
+    assert formatting.HISTORY_COLUMNS[-1] == "Modelo"
+
+
 def test_history_filter_change_resets_offset(factory, mock_api) -> None:
     mock_api.inspections_total = 120
     at = run(page(factory, "historico"))
@@ -471,7 +491,6 @@ def test_model_page_simulated_badge(factory, mock_api, monkeypatch, tmp_path) ->
 # SPEC-028
 # =============================================================================================
 
-WAKING = "API acordando (free tier), tente em ~1 min"
 INSECURE = (
     "Configuração inválida: API_BASE_URL precisa usar https:// (http:// só em localhost ou "
     "127.0.0.1)."
@@ -555,7 +574,7 @@ def test_retry_keeps_the_cache(factory, mock_api, monkeypatch) -> None:
     mock_api.timing_out = {"/metrics/timeseries"}
     at = run(page(factory, "visao_geral"))
     assert_clean(at)
-    assert WAKING in texts(at.warning)
+    assert UNAVAILABLE in texts(at.warning)
     assert len(charts(at)) == 2  # the two summary figures; the series failed
     mock_api.timing_out = set()
     mock_api.requests.clear()
@@ -564,7 +583,7 @@ def test_retry_keeps_the_cache(factory, mock_api, monkeypatch) -> None:
     assert clears == []
     assert mock_api.to("/metrics/summary") == []
     assert len(mock_api.to("/metrics/timeseries")) == 1
-    assert WAKING not in texts(at.warning)
+    assert UNAVAILABLE not in texts(at.warning)
     assert len(charts(at)) == 3
 
 
@@ -618,7 +637,7 @@ def test_spc_origin_caption_stays_when_the_api_fails(factory, mock_api) -> None:
     mock_api.failure = _timeout
     at = run(page(factory, "controle_estatistico"), **{filters.KEY_SOURCE: "Simulado"})
     assert_clean(at)
-    assert WAKING in texts(at.warning)
+    assert UNAVAILABLE in texts(at.warning)
     assert BADGE in texts(at.warning)
     assert "Origem da carta: simulado" in texts(at.caption)
 
@@ -657,7 +676,7 @@ def test_model_page_without_api_timeout(factory, mock_api, metrics_path) -> None
     mock_api.failure = _timeout
     at = run(page(factory, "sobre_o_modelo"), **{filters.KEY_SOURCE: "Todos"})
     assert_clean(at)
-    assert WAKING in texts(at.warning)
+    assert UNAVAILABLE in texts(at.warning)
     assert [b.label for b in at.button] == ["Tentar novamente"]
     assert BADGE in texts(at.warning)
     assert BADGE in texts(at.sidebar.caption)
@@ -668,7 +687,7 @@ def test_model_page_without_api_timeout(factory, mock_api, metrics_path) -> None
     mock_api.failure = None
     at.button(key=filters.KEY_RETRY).click().run()
     assert_clean(at)
-    assert WAKING not in texts(at.warning)
+    assert UNAVAILABLE not in texts(at.warning)
     assert BADGE not in texts(at.warning)
     _assert_model_tables(at)
 
