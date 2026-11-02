@@ -9,6 +9,7 @@ import logging
 import secrets
 import time
 from collections.abc import Iterator
+from urllib.parse import urlunsplit
 
 import psycopg
 import pytest
@@ -134,6 +135,24 @@ def test_startup_fails_without_settings(monkeypatch: pytest.MonkeyPatch) -> None
     app = create_app()
     with pytest.raises(Exception, match="DATABASE_URL"), TestClient(app):
         pass
+
+
+def test_startup_fails_with_a_malformed_url_before_the_pool(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """DEP-02 (SPEC-043 section 4.2): libpq would resolve a piece of the password as the host."""
+    left, right = secrets.token_hex(8), secrets.token_hex(8)
+    netloc = f"u:{left}@{right}@db.example.org:6543"
+    monkeypatch.setenv("DATABASE_URL", urlunsplit(("postgresql", netloc, "/x", "", "")))
+    monkeypatch.setenv("READ_API_KEY", "e" * 32)
+    pool_calls: list[str] = []
+    monkeypatch.setattr("qc_api.main.create_pool", pool_calls.append)
+    with pytest.raises(Exception, match="DATABASE_URL") as info, TestClient(create_app()):
+        pass
+    assert pool_calls == []
+    output = caplog.text + str(info.value)
+    assert left not in output
+    assert right not in output
 
 
 def test_database_error_in_a_route_of_the_real_app_is_sanitized(

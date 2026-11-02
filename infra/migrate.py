@@ -19,7 +19,8 @@ Usage::
 
 The default URL comes from ``DATABASE_URL``. Exit codes: ``0`` success; ``1`` database,
 migration or checksum failure; ``2`` invalid usage. The URL and its password are never logged
-(R-03): connection errors show only the exception type and host/port.
+(R-03): connection errors show only the exception type and host/port, and a malformed URL, which
+would put a piece of the password in the host or the port, never even connects (SPEC-043).
 """
 
 from __future__ import annotations
@@ -39,6 +40,8 @@ from pathlib import Path
 import psycopg
 from psycopg import pq
 from psycopg.conninfo import conninfo_to_dict
+
+from qc_api.conninfo import MALFORMED_CONNINFO_HINT, is_safe_conninfo
 
 __all__ = [
     "DEFAULT_DIR",
@@ -166,11 +169,13 @@ def load_migrations(migrations_dir: Path = DEFAULT_DIR) -> list[Migration]:
 
 
 def _host_port(conninfo: str) -> str:
-    """Return ``host:port`` of a conninfo for error messages, never the rest of it."""
-    try:
-        params = conninfo_to_dict(conninfo)
-    except Exception:
+    """Return ``host:port`` of a conninfo for error messages, never the rest of it.
+
+    A malformed conninfo gives ``unknown host``: its host and port may hold part of the password.
+    """
+    if not is_safe_conninfo(conninfo):
         return "unknown host"
+    params = conninfo_to_dict(conninfo)
     host = params.get("host") or params.get("hostaddr") or "default host"
     port = params.get("port") or "default port"
     return f"{host}:{port}"
@@ -213,6 +218,10 @@ def ensure_supported_connection(conninfo: str) -> None:
 
 @contextmanager
 def _connect(conninfo: str) -> Iterator[psycopg.Connection]:
+    if not is_safe_conninfo(conninfo):
+        raise DatabaseConnectionError(
+            "could not connect to the database: malformed URL (not shown)"
+        )
     try:
         conn = psycopg.connect(
             conninfo,
@@ -447,6 +456,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         ensure_supported_connection(conninfo)
     except UnsupportedConnectionError as exc:
         logger.error("%s", exc)
+        return EXIT_USAGE
+    if not is_safe_conninfo(conninfo):
+        logger.error("invalid database URL (not shown): %s", MALFORMED_CONNINFO_HINT)
         return EXIT_USAGE
     if not Path(args.migrations_dir).is_dir():
         logger.error("migrations directory not found: %s", args.migrations_dir)
