@@ -65,21 +65,21 @@ Os agentes não têm acesso à VPS, ao painel do Coolify, ao Supabase, ao DNS ne
 | Fly.io / Cloud Run / Oracle Cloud | **Não usar** | Exigem cartão ou conta de faturamento (violam R-01) | <https://docs.fly.io/about/pricing>, <https://docs.cloud.google.com/free/docs/free-cloud-features>, <https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier.htm> | 2026-10-12 |
 | HiveMQ Cloud | **Não usar no MVP** | A página oficial não lista mais plano gratuito Serverless | <https://www.hivemq.com/pricing/> | 2026-10-12 |
 
-**Região da reserva no Render.** As regiões do blueprint são `oregon` (padrão), `ohio`, `virginia`, `frankfurt` e `singapore`, e a região não muda depois de criado o serviço (<https://render.com/docs/blueprint-spec>, 2026-10-19). O `infra/render.yaml` usa `virginia`, a mais próxima de um projeto Supabase em `sa-east-1` (São Paulo) ou em `us-east-1`. **Pendente do humano:** anotar a região do projeto Supabase no passo 1 da §4. Se for outra (por exemplo, `eu-central-1`), trocar a região do `infra/render.yaml` por PR antes de ativar a reserva (`frankfurt` para a Europa, `singapore` para a Ásia).
+**Região da reserva no Render.** As regiões do blueprint são `oregon` (padrão), `ohio`, `virginia`, `frankfurt` e `singapore`, e a região não muda depois de criado o serviço (<https://render.com/docs/blueprint-spec>, 2026-10-19). O `infra/render.yaml` usa `virginia`, a mais próxima de um projeto Supabase em `sa-east-1` (São Paulo) ou em `us-east-1`. O projeto Supabase está em `sa-east-1` (conferido em 2026-11-02), então `virginia` vale. Regra para outra região: Se for outra (por exemplo, `eu-central-1`), trocar a região do `infra/render.yaml` por PR antes de ativar a reserva (`frankfurt` para a Europa, `singapore` para a Ásia).
 
 **Conferência da VPS** (passo 2 da §4; sem IP nem nome de host):
 
 | Item | Comando | Valor | Data |
 |---|---|---|---|
-| Coolify | rodapé do painel ou Settings | a preencher | a preencher |
-| Proxy do Coolify | `docker ps --filter name=coolify-proxy --format '{{.Image}} {{.Ports}}'` | a preencher (esperado: imagem `traefik`, portas 80 e 443) | a preencher |
-| Docker Engine | `docker version --format '{{.Server.Version}}'` | a preencher | a preencher |
-| Compose v2 | `docker compose version` | a preencher | a preencher |
-| Buildx | `docker buildx version` | a preencher | a preencher |
-| RAM (total e disponível) | `free -h` | a preencher | a preencher |
-| CPUs | `nproc` | a preencher | a preencher |
-| Disco livre | `df -h /` | a preencher | a preencher |
-| Limites escolhidos nas variáveis dos recursos | — | a preencher (padrões: API `512m`/`1.0`, dashboard `1g`/`1.0`, Caddy `256m`/`0.5`; `pids_limit` `256` nos três) | a preencher |
+| Coolify | rodapé do painel ou Settings | 4.5.3 | 2026-11-02 |
+| Proxy do Coolify | `docker ps --filter name=coolify-proxy --format '{{.Image}} {{.Ports}}'` | `traefik:v3.6`, portas 80 e 443 | 2026-11-02 |
+| Docker Engine | `docker version --format '{{.Server.Version}}'` | 29.9.2 | 2026-11-02 |
+| Compose v2 | `docker compose version` | 5.6.1 | 2026-11-02 |
+| Buildx | `docker buildx version` | v0.38.1 | 2026-11-02 |
+| RAM (total e disponível) | `free -h` | 3,8 GiB; de 1,0 a 1,2 GiB disponíveis antes do deploy; sem swap | 2026-11-02 |
+| CPUs | `nproc` | 1 | 2026-11-02 |
+| Disco livre | `df -h /` | 34 GB de 48 GB | 2026-11-02 |
+| Limites escolhidos nas variáveis dos recursos | — | API `512m`/`1.0`, dashboard `512m`/`1.0`, Caddy `64m`/`0.5`; `pids_limit` `256` nos três (soma de 1.088 MB, abaixo da RAM disponível). Em uso, depois do deploy: API 50 a 60 MiB, dashboard 70 a 180 MiB, Caddy 32 a 42 MiB | 2026-11-02 |
 
 Regra dos limites (SPEC-015 §4.12): a soma dos três `mem_limit` fica abaixo da RAM disponível (descontados o Coolify, o proxy e o portfólio), cada `cpus` fica ≤ `nproc`, e a API não fica abaixo de `512m` sem uma decisão registrada aqui. A imagem do dashboard tem cerca de 670 MB e a da API cerca de 205 MB (medido no build local de 2026-10-19, depois da correção do RV-01 da r1, que tirou das camadas o cache do `uv`; antes eram 1,1 GB e 240 MB). O build roda na própria VPS pelo Coolify, e o disco precisa de folga para duas gerações de cada imagem durante uma atualização.
 
@@ -438,7 +438,7 @@ Cada linha tem a fonte e a data da verificação. Os riscos são do MVP (projeto
 4. **Subdomínio nos logs de Certificate Transparency.** O Let's Encrypt envia todo certificado emitido (agora pelo proxy do Coolify) aos logs de CT (<https://letsencrypt.org/docs/ct-logs/>, conferido em 2026-10-19), e o nome do subdomínio fica descobrível. A R-13 exige manter o nome fora do repositório, e não escondê-lo do mundo.
 5. **VPS e proxy do Coolify como ponto único de falha, compartilhados com outros projetos.** Mitigação: outbox na borda (RNF-10), limites de memória e CPU por serviço e a reserva fria no Render (§6). O Caddy sobe mesmo com o Supabase pausado (sem `condition: service_healthy`), e um contêiner `unhealthy` não é reiniciado. Uma atualização do Coolify pode mudar o comportamento dos recursos: depois de atualizar o Coolify, repetir o smoke (passo 11), o CA-16 e o CA-20 da SPEC-039.
 6. **Limite de emissão de certificados.** "Up to 5 certificates can be issued per exact same set of identifiers every 7 days" (<https://letsencrypt.org/docs/rate-limits/>, conferido em 2026-10-19). O certificado agora fica no proxy do Coolify. Trocar o domínio do recurso várias vezes, ou apagar e recriar o recurso repetidamente, força emissões novas. Nunca usar `docker compose down -v` nos contêineres do PartQC.
-7. **Segredos no disco da VPS, gravados pelo Coolify (ADR-023).** No deploy, o Coolify grava as variáveis de runtime num `.env` no diretório de cada recurso (um do `partqc-api`, com a `DATABASE_URL`, e um do `partqc-web`, sem ela), além de guardá-las no banco dele. Modo e dono dos arquivos, conferidos no CA-17 da SPEC-039: a preencher. A VPS é de um único usuário (o humano). O arquivo fica fora das imagens pelo `.dockerignore` de cada Dockerfile (CA-13 da SPEC-039). Não altere a permissão à mão: o Coolify reescreve o arquivo a cada deploy. (Até a SPEC-039, este item tratava do aviso do HTTP/3 sem `NET_ADMIN`, que deixou de existir, porque o Caddy não publica mais 443/udp.)
+7. **Segredos no disco da VPS, gravados pelo Coolify (ADR-023).** No deploy, o Coolify grava as variáveis de runtime num `.env` no diretório de cada recurso (um do `partqc-api`, com a `DATABASE_URL`, e um do `partqc-web`, sem ela), além de guardá-las no banco dele. Modo e dono dos arquivos, conferidos no CA-17 da SPEC-039 em 2026-11-02: `0644`, `root`. A VPS é de um único usuário (o humano). O arquivo fica fora das imagens pelo `.dockerignore` de cada Dockerfile (CA-13 da SPEC-039). Não altere a permissão à mão: o Coolify reescreve o arquivo a cada deploy. (Até a SPEC-039, este item tratava do aviso do HTTP/3 sem `NET_ADMIN`, que deixou de existir, porque o Caddy não publica mais 443/udp.)
 8. **Contêiner só de leitura e com limite de processos (SPEC-032 §4.4).** Uma atualização de dependência que passe a escrever em disco fora de `/tmp`, ou que crie muito mais threads, pode derrubar o serviço depois do deploy. Mitigação: as medições da §2 (pico de 15, 51 e 11 PIDs para um limite de 256), o smoke da atualização (§4, "Atualização", item 4), o diagnóstico pelo log (`Read-only file system`, `can't start new thread`) e o rollback da §6.
 9. **Respostas que não passam pelo bloco de headers do Caddy (SPEC-032 §4.3, SPEC-038 §4.9).** O bloco `header` do site é adiado (`defer`) e só age nas respostas que passam pelo `reverse_proxy`. Até a SPEC-038, o `502` que o Caddy devolve quando a API ou o dashboard estão fora do ar saía com `Server: Caddy` e sem os 4 headers do bloco (conferido com a imagem `caddy:2.11.7` em 2026-10-24). Desde a SPEC-038, as respostas de erro geradas pelo próprio Caddy (o `502` com a origem fora do ar, o `504` por timeout) saem com os 4 headers, sem `Server` e sem `Via` e com corpo vazio, pelo `handle_errors` do `infra/Caddyfile`: um `respond` sem status, dentro da rota de erro, usa o status do erro original (comentário de `ServeHTTP` em <https://github.com/caddyserver/caddy/blob/master/modules/caddyhttp/staticresp.go>, consultado em 2026-10-26; conferido em 2026-10-26 com a imagem fixada, que devolveu `502` sem a API e o dashboard), e nenhum placeholder do erro vai para o cliente. Com o Coolify (ADR-023), o redirecionamento HTTP → HTTPS e os erros gerados pelo próprio proxy do Coolify (por exemplo, o `404`/`No available server` com o contêiner do Caddy parado) continuam sem eles (o navegador ignora HSTS em HTTP). As respostas da API e do Streamlit por HTTPS saem sem `server` e sem `via`. Nenhuma dessas respostas tem conteúdo que possa ser emoldurado. **Decisão:** risco aceito no MVP. Uma política CSP completa também ficou fora (SPEC-032 §3.2).
 10. **O que cada contêiner recebe no Coolify (SEC-39-01, ADR-023, emenda 1).** O Coolify entrega a todos os serviços de um recurso o `.env` com todas as variáveis de runtime do recurso. Com os dois recursos, a `DATABASE_URL` e o `TELEGRAM_BOT_TOKEN` ficam só na `api`, conferido pelo CA-20 da SPEC-039 (depois do primeiro deploy e de cada atualização do Coolify). Ficam aceitos:
@@ -622,23 +622,23 @@ Esperado: nenhuma linha nos quatro `git grep` (código de saída 1) e nenhum avi
 
 | CA | O que | Resultado | Data |
 |---|---|---|---|
-| SPEC-039 CA-14 | Antes do primeiro deploy: versão do Coolify, `coolify-proxy` com imagem `traefik` nas portas 80/443, `StartedAt` anotado fora do repositório | pendente | — |
-| SPEC-039 CA-15 | Dois recursos (Public Repository, Docker Compose, `/infra`; `partqc-api` com `/compose.api.yaml` e `partqc-web` com `/compose.yaml`; modo de deploy não Raw, sem rede predefinida, sem Preserve repository, primeiro deploy pelo botão, `partqc-api` antes), domínio só no `caddy`, deploys com sucesso, 3 contêineres sem portas | pendente | — |
-| SPEC-039 CA-16 | `docker inspect`: limites, `read_only`, `tmpfs`, capacidades, `no-new-privileges`, sem `PortBindings`, `unless-stopped` | pendente | — |
-| SPEC-039 CA-17 | Segredos só em runtime, Locked e Literal; `docker history` sem os nomes; `.env*` fora das imagens; modo do `.env` do Coolify (§7, item 7) | pendente | — |
-| SPEC-039 CA-18 | Webhook: o merge de teste dispara os dois deploys (entrega `push` 2xx no GitHub), a branch do PR não dispara, os deploys terminam com sucesso e o smoke passa, e os logs não mostram segredos (registrar o SHA curto, sem a URL do webhook); ou "não aplicável: deploy pelo botão", se o painel não for público | pendente | — |
-| SPEC-039 CA-20 | `Config.Env` de cada contêiner, só os nomes (`DATABASE_URL` e `TELEGRAM_BOT_TOKEN` só na `api`), `supabase` fora do `caddy` e do `dashboard`, rede `partqc-api-link` `internal` com 3 contêineres; repetir depois de cada atualização do Coolify | pendente | — |
-| CA-13 | API na VPS: health, redirecionamento HTTP → HTTPS, 401 sem chave, HSTS sem `includeSubDomains`, emissor do certificado, `/docs` e `/openapi.json` não publicados | pendente | — |
-| CA-14 | RLS e grants em produção (passo 1, item 4) | pendente | — |
-| CA-15 | Smoke em produção: 8 × `PASS` (passo 11) | pendente | — |
-| CA-16 | Keep-alive por `workflow_dispatch` verde em ≤ 10 min (passo 10) | pendente | — |
-| CA-17 | Dashboard na VPS: desktop e celular, WebSocket `wss://<subdominio>/_stcore/stream` com 101 por 5 min, filtros, selo de simulado, "Sobre o modelo" (mensagem com `ml/models/partqc-mnv3-v1/metrics.json` enquanto não houver `metrics.json`; repetir depois do merge do primeiro `metrics.json` da SPEC-012 e da atualização da §4), `printenv API_BASE_URL` começa com `https://` | pendente | — |
-| CA-18 | R-01: Supabase e GitHub Actions sem cartão; VPS preexistente e sem mudança de plano (confirmação escrita do humano); Coolify auto-hospedado, sem plano pago; domínio já existente; Render sem cartão e serviço `free` se ativado | pendente | — |
-| CA-19 | `search_path`, migração pelo modo session e restrições da `002` (passo 1, itens 2 e 3) | pendente | — |
-| CA-26 | `statement_timeout` (§8, item 1) | pendente | — |
-| CA-40 | Rede e coexistência na VPS (§4, "Firewall"), com o proxy do Coolify sem reinício | pendente | — |
-| CA-42 | Na máquina do humano, o comando do CA-42 acima: nenhuma linha com o subdomínio, o IPv4 público ou os UUIDs dos dois recursos | pendente | — |
-| CA-43 | `.env*` fora das imagens (passo 7, item 4); ciclo de atualização, rollback por branch e volta à `main` com health 200; certificado sem nova emissão no ciclo | pendente | — |
+| SPEC-039 CA-14 | Antes do primeiro deploy: versão do Coolify, `coolify-proxy` com imagem `traefik` nas portas 80/443, `StartedAt` anotado fora do repositório | PASS: Coolify 4.5.3, `traefik:v3.6` em 80/443, `StartedAt` anotado fora do repositório | 2026-11-02 |
+| SPEC-039 CA-15 | Dois recursos (Public Repository, Docker Compose, `/infra`; `partqc-api` com `/compose.api.yaml` e `partqc-web` com `/compose.yaml`; modo de deploy não Raw, sem rede predefinida, sem Preserve repository, primeiro deploy pelo botão, `partqc-api` antes), domínio só no `caddy`, deploys com sucesso, 3 contêineres sem portas | PASS, com um desvio: o Coolify acrescentou sozinho o `www.` do subdomínio ao `caddy`, e o humano o manteve. Os dois recursos e os deploys estão como no passo a passo, 3 contêineres sem portas | 2026-11-02 |
+| SPEC-039 CA-16 | `docker inspect`: limites, `read_only`, `tmpfs`, capacidades, `no-new-privileges`, sem `PortBindings`, `unless-stopped` | PASS: limites, `read_only`, `tmpfs`, `cap_drop: ALL`, `NET_BIND_SERVICE` só no Caddy, `no-new-privileges`, `PortBindings` vazio, `unless-stopped` | 2026-11-02 |
+| SPEC-039 CA-17 | Segredos só em runtime, Locked e Literal; `docker history` sem os nomes; `.env*` fora das imagens; modo do `.env` do Coolify (§7, item 7) | PASS: segredos só em runtime, Locked e Literal, com o log de deploy dizendo `No build-time variables`; `docker history` sem os nomes; só `/app/.env.example` nas imagens; `.env` do Coolify `0644`, `root` (§7, item 7) | 2026-11-02 |
+| SPEC-039 CA-18 | Webhook: o merge de teste dispara os dois deploys (entrega `push` 2xx no GitHub), a branch do PR não dispara, os deploys terminam com sucesso e o smoke passa, e os logs não mostram segredos (registrar o SHA curto, sem a URL do webhook); ou "não aplicável: deploy pelo botão", se o painel não for público | Não aplicável por enquanto: deploy pelo botão. O painel é público, mas o 2FA da conta está desligado, e o passo 7A exige o 2FA antes do webhook | 2026-11-02 |
+| SPEC-039 CA-20 | `Config.Env` de cada contêiner, só os nomes (`DATABASE_URL` e `TELEGRAM_BOT_TOKEN` só na `api`), `supabase` fora do `caddy` e do `dashboard`, rede `partqc-api-link` `internal` com 3 contêineres; repetir depois de cada atualização do Coolify | PASS nos segredos: `DATABASE_URL` e `TELEGRAM_BOT_TOKEN` só na `api`, `supabase` só na `api`, rede `internal`. Desvio: a rede tem 2 contêineres (`api` e `caddy`), não 3. O `dashboard` ficou fora, mais restrito que o previsto na SPEC-039, e chega à API por `https://` pelo proxy | 2026-11-02 |
+| CA-13 | API na VPS: health, redirecionamento HTTP → HTTPS, 401 sem chave, HSTS sem `includeSubDomains`, emissor do certificado, `/docs` e `/openapi.json` não publicados | PASS: health `ok` com contrato 0.6.0; `307` de HTTP para HTTPS; `401` sem chave; HSTS `max-age=31536000`, sem `includeSubDomains`; emissor Let's Encrypt, válido até 31/01/2027. `/api/docs`, `/api/redoc` e `/api/openapi.json` dão `404`; `/docs` e `/openapi.json` caem na página do painel, sem conteúdo da API | 2026-11-02 |
+| CA-14 | RLS e grants em produção (passo 1, item 4) | PASS: RLS ligado nas 4 tabelas, 0 políticas. A migração deixou 56 grants a `anon` e `authenticated`, e o `revoke` do passo 1, item 4, os levou a 0. REST com a chave pública: `401` nas 4 tabelas, nenhuma linha | 2026-11-02 |
+| CA-15 | Smoke em produção: 8 × `PASS` (passo 11) | PASS: 8 × `PASS` | 2026-11-02 |
+| CA-16 | Keep-alive por `workflow_dispatch` verde em ≤ 10 min (passo 10) | Pendente do humano: gravar o secret `KEEPALIVE_URL` e disparar o workflow | 2026-11-02 |
+| CA-17 | Dashboard na VPS: desktop e celular, WebSocket `wss://<subdominio>/_stcore/stream` com 101 por 5 min, filtros, selo de simulado, "Sobre o modelo" (mensagem com `ml/models/partqc-mnv3-v1/metrics.json` enquanto não houver `metrics.json`; repetir depois do merge do primeiro `metrics.json` da SPEC-012 e da atualização da §4), `printenv API_BASE_URL` começa com `https://` | Parcial. Desktop: 5 páginas, filtros, selo de simulado e a mensagem de "Sobre o modelo" conferidos. Faltam o celular e os 5 min do WebSocket | 2026-11-02 |
+| CA-18 | R-01: Supabase e GitHub Actions sem cartão; VPS preexistente e sem mudança de plano (confirmação escrita do humano); Coolify auto-hospedado, sem plano pago; domínio já existente; Render sem cartão e serviço `free` se ativado | Pendente: confirmação escrita do humano | 2026-11-02 |
+| CA-19 | `search_path`, migração pelo modo session e restrições da `002` (passo 1, itens 2 e 3) | PASS: schema `public`; migrações 001 a 006 pelo modo session, `0 pending`; 9 restrições da `002` presentes | 2026-11-02 |
+| CA-26 | `statement_timeout` (§8, item 1) | PASS: `alter role postgres set statement_timeout = '15s'`; leituras medidas em 0,3 ms e 0,2 ms, com 76 linhas; `rolconfig` com `15s`; `15s` pela porta 6543, depois de o pooler renovar as conexões (logo após o `alter`, ainda `2min`) | 2026-11-02 |
+| CA-40 | Rede e coexistência na VPS (§4, "Firewall"), com o proxy do Coolify sem reinício | PASS: 3 contêineres sem portas; `:8501` fechada; `:8000` é do painel do Coolify, anterior ao PartQC; `ufw` igual; `StartedAt` do proxy igual; portfólio e painel respondendo | 2026-11-02 |
+| CA-42 | Na máquina do humano, o comando do CA-42 acima: nenhuma linha com o subdomínio, o IPv4 público ou os UUIDs dos dois recursos | PASS: nenhuma linha com subdomínio, IPv4 ou UUIDs, conferido pelo orquestrador | 2026-11-02 |
+| CA-43 | `.env*` fora das imagens (passo 7, item 4); ciclo de atualização, rollback por branch e volta à `main` com health 200; certificado sem nova emissão no ciclo | Parcial. Item do passo 7, item 4: PASS. Faltam o ciclo de atualização, o rollback por branch e a volta à `main` | 2026-11-02 |
 
 ### CA manual da SPEC-032 (headers e endurecimento)
 
@@ -653,7 +653,7 @@ Depois da atualização da §4 ("Atualização") com a SPEC-032 e a SPEC-039 na 
 
 | CA | O que | Resultado | Data |
 |---|---|---|---|
-| SPEC-032 CA-09 | Serviços de pé com `read_only` e `pids_limit`; headers novos e sem `server`/`via`; painel de ponta a ponta (CA-17, passos 1 a 3, da SPEC-015); `PIDS` ≤ metade do limite; nenhum `Read-only file system` no log | pendente | — |
+| SPEC-032 CA-09 | Serviços de pé com `read_only` e `pids_limit`; headers novos e sem `server`/`via`; painel de ponta a ponta (CA-17, passos 1 a 3, da SPEC-015); `PIDS` ≤ metade do limite; nenhum `Read-only file system` no log | Parcial. Headers novos, sem `server` nem `via`; `PIDS` de 6 a 7 com uma aba; nenhum `Read-only file system`. Faltam as 3 abas e o painel no celular | 2026-11-02 |
 
 ### CA manual da SPEC-017 (alertas no Telegram)
 
@@ -689,7 +689,7 @@ Depois da atualização da §4 ("Atualização") com a SPEC-038 na `main`, na VP
 
 | CA | O que | Resultado | Data |
 |---|---|---|---|
-| SPEC-038 CA-18 | Com a `api` parada, `502` com os 4 headers e sem `server`/`via`; `200` em até 60 s depois do `docker start` | pendente | — |
+| SPEC-038 CA-18 | Com a `api` parada, `502` com os 4 headers e sem `server`/`via`; `200` em até 60 s depois do `docker start` | PASS: `502` com os 4 headers, sem `server`/`via`; `200` em 14 s depois do `docker start` | 2026-11-02 |
 
 ### CA manual da SPEC-040 (respostas comprimidas)
 
@@ -714,4 +714,4 @@ Depois da atualização da §4 ("Atualização") com a SPEC-040 na `main`, com a
 
 | CA | O que | Resultado | Data |
 |---|---|---|---|
-| SPEC-040 CA-18 | Com `gzip`, registrar se há `content-encoding: gzip`; com `identity`, nenhum `content-encoding` (ou só `identity`); 3 inspeções da borda no Histórico em até 2 min, sem `unsupported response encoding` no log e com o gateway `online` em "Dispositivos" | pendente | — |
+| SPEC-040 CA-18 | Com `gzip`, registrar se há `content-encoding: gzip`; com `identity`, nenhum `content-encoding` (ou só `identity`); 3 inspeções da borda no Histórico em até 2 min, sem `unsupported response encoding` no log e com o gateway `online` em "Dispositivos" | PASS: com `gzip`, `content-encoding: gzip`; com `identity`, nenhum. 3 inspeções da borda de produção, com o modelo provisório, enviadas em até 25 s, sem `unsupported response encoding`, gateway `online` em "Dispositivos" | 2026-11-02 |
