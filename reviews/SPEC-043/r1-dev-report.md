@@ -93,3 +93,53 @@ Nenhum `SPEC_ISSUE` novo.
 - [x] Testes unitários do autor passando
 - [x] `.env.example` atualizado (se houver variável nova): não há variável nova, e o arquivo é da Parte B
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
+
+## Parte B (security-devops)
+
+Autor: security-devops. Commit: `0bf23bf`. Só `docs/deployment-plan.md` e `.env.example`, mais esta seção. Nenhum arquivo da Parte A foi alterado. Como o autor é o security-devops, o portão de segurança da Parte B é do reviewer (SPEC §8).
+
+### Rastreabilidade
+
+| Requisito | Onde, em `docs/deployment-plan.md` |
+|---|---|
+| §4.5, item 1 | Passo 1, item 3, subitem 2; §8, "### 1", passo 5, subitem 1 |
+| §4.5, item 2 | Passo 1, item 4 |
+| §4.5, item 3 | Passo 5, parágrafo "O que o painel faz sozinho" |
+| §4.5, item 4 | Passo 6, item 4 |
+| §4.5, item 5 | §7, item 2; §8, "### 1", passo 5 |
+| §4.5, item 6 | §8, "### 4"; passo 11, item 3 |
+| §4.5, item 7 | §8, "### 1", passo 5 |
+| §4.5, item 8 | `.env.example`, linha acima de `DATABASE_URL=` |
+| §4.5, item 9 | Histórico do arquivo |
+| §4.7 | §7, item 10; §9, linha `SPEC-039 CA-20` |
+
+### Verificação
+
+- Conferência local de todas as condições de texto do CA-16 e do CA-17, por um script fora do repositório: todas atendidas. O teste de aceite continua sendo do tester.
+- Testes que leem o plano e o `.env.example` (`infra/tests/test_coolify_deploy.py`, `test_deploy_maintenance.py`, `test_maintenance_040.py`, `test_deploy_files.py`; aceites das SPECs 015, 032, 038, 039 e 040 em `infra/`; aceites das SPECs 017 e 040 em `api/`; `tests/acceptance/test_spec_001.py`; `tests/test_guard_paths.py`), com `CI=true` e o Postgres local: **859 passed, 84 skipped**. Os skips que apareceram no resumo pedem `PARTQC_DOCKER_TESTS=1`, e esta parte não mudou `infra/compose*.yaml` nem os Dockerfiles. A suíte completa não foi rodada de novo: a mudança é só de texto.
+- `ruff check` e `ruff format --check` limpos.
+- Fontes abertas de novo em 2026-11-02: a página do `ALTER ROLE` do Postgres e a de variáveis do Coolify, com as frases citadas na §1 da SPEC, e a de segurança da API do Supabase, que confirma os privilégios padrão de tabelas novas em `public` e a opção "Automatically expose new tables". Nenhum limite de free tier foi fixado ou alterado.
+- O diff não traz subdomínio, IP nem UUID reais (R-13), e nenhum `.env` local foi lido.
+
+### Decisões dentro do escopo
+
+- **Comentário SQL do passo 1, item 4:** passou a `-- esperado: nenhuma linha, depois do revoke explicado abaixo`, para não contradizer a explicação nova.
+- **`rm .env.dbcheck`:** o subitem 3 dizia "logo depois". Passou a "só no fim da conferência", para o arquivo sobreviver às repetições do §4.5, item 7.
+- **`SPEC_ISSUE` do passo 5:** o "Se não for" antigo ficaria sem referente depois do texto novo. A frase virou "Se, depois disso, a saída ainda não for `15s`", com a mesma alternativa do `set local`.
+- **Simulador:** o texto pede a mesma seed "e as mesmas opções", um pouco mais que os "mesmos tamanhos" da §4.1, porque é a forma simples e segura de reenviar os mesmos ids. O código 5 também sai numa falha da saúde (CA-03), em que repetir é inofensivo.
+- **§9, regra de colagem, "a mensagem de erro de uma conexão que falhe no item 5 da §8 (host do pooler)":** fica como está, fora da lista do §4.5. O aviso novo está no próprio passo 5.
+
+### Notas para o tester e o reviewer
+
+- **Rótulo "§8, item 5":** na SPEC (§4.5, itens 1, 5 e 7, e CA-16), ele indica o passo 5 de `### 1. statement_timeout`, e não a seção `### 5. Alertas no Telegram`, que é o que o próprio plano chama de "§8, item 5" em outros lugares. O texto da §4.5, item 7, torna o alvo inequívoco, por isso não é `SPEC_ISSUE`. Porém, um teste do CA-16 que recorte `### 5.` falharia: o recorte certo vai de `5. **Conferir pelo caminho` a `6. Registrar na §9`, dentro de `### 1.`. Já o "§8, item 4" do CA-16 é a seção `### 4.`.
+- **Linha do CA-20 na §9:** a medição não mudou. "Desvio" deu lugar a "Texto corrigido pela SPEC-043", como pede a §4.7, e o resultado continua "PASS nos segredos".
+
+### SPEC_ISSUE
+
+Nenhum.
+
+### Pendências humanas
+
+- §3.3, item 1, antes do merge: conferir que a senha atual do banco tem só letras e números.
+- §3.3, item 2, depois do merge: **Deploy** no `partqc-api` e depois no `partqc-web`, e `git pull` na borda.
+- CA-18, depois do deploy, com o registro no `deployment-plan.md` §9 e num dev-report.
