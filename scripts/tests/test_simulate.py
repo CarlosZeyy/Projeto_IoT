@@ -675,7 +675,61 @@ def test_timeouts(online_env: str, run: Callable[..., Run]) -> None:
     health_timeout = api.requests[0].extensions["timeout"]
     batch_timeout = api.batch_requests[0].extensions["timeout"]
     assert set(health_timeout.values()) == {90.0}
-    assert set(batch_timeout.values()) == {10.0}
+    assert set(batch_timeout.values()) == {60.0}
+
+
+def test_batch_that_needs_more_than_the_old_timeout_succeeds(
+    online_env: str, run: Callable[..., Run]
+) -> None:
+    """A 100-item batch takes up to about 17 s in production (SPEC-043 section 1)."""
+
+    def slow_batch(request: httpx.Request) -> httpx.Response:
+        if request.extensions["timeout"]["read"] < 18:
+            raise httpx.ReadTimeout("slow batch", request=request)
+        return api._ingest(request)
+
+    api = FakeApi(batch_script=[slow_batch] * 5)
+    result = run(
+        ["--lots", "10", "--lot-size", "50", "--seed", "42", "--start", START],
+        api,
+    )
+    assert result.code == 0
+    assert "sent=500 created=500 duplicate=0" in result.out
+    assert [len(json.loads(r.content)["items"]) for r in api.batch_requests] == [100] * 5
+    assert result.sleeps == []
+
+
+def test_exhausted_batch_tells_to_repeat_with_the_same_seed(
+    online_env: str, run: Callable[..., Run]
+) -> None:
+    api = FakeApi(batch_script=[httpx.ReadTimeout("slow")] * 4)
+    result = run(SEND_ARGS, api)
+    assert result.code == 5
+    assert (
+        "batch failed after 4 attempts (last: ReadTimeout); the API may have stored it: "
+        "run again with the same seed, stored items come back as duplicate (R-05)"
+    ) in result.err
+    assert "seed=42" in result.err
+    assert online_env not in result.out + result.err
+
+
+@pytest.mark.parametrize(
+    ("health", "batch", "code"),
+    [
+        (503, 200, 5),
+        (httpx.ConnectError("down"), 200, 5),
+        (200, 401, 3),
+        (200, 403, 3),
+        (200, 422, 4),
+        (200, 404, 5),
+    ],
+)
+def test_other_failures_do_not_suggest_repeating(
+    health: Script, batch: Script, code: int, online_env: str, run: Callable[..., Run]
+) -> None:
+    result = run(SEND_ARGS, FakeApi(health=health, batch_script=[batch]))
+    assert result.code == code
+    assert "same seed" not in result.err
 
 
 @pytest.mark.parametrize("health", [503, 500, 404, httpx.ConnectError("down")])

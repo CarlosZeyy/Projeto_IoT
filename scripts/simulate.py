@@ -66,7 +66,7 @@ EXIT_UNAVAILABLE = 5
 HEALTH_PATH = "/api/v1/health"
 BATCH_PATH = "/api/v1/inspections/batch"
 HEALTH_TIMEOUT_S = 90.0
-BATCH_TIMEOUT_S = 10.0
+BATCH_TIMEOUT_S = 60.0
 RETRY_DELAYS_S: tuple[int, ...] = (2, 4, 8)
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
@@ -626,7 +626,9 @@ def _post_batch(
             raise _BatchError(EXIT_UNAVAILABLE, f"unexpected response: HTTP {status}")
         return _batch_result(response, expected)
     raise _BatchError(
-        EXIT_UNAVAILABLE, f"batch failed after {attempts} attempts (last: {last_error})"
+        EXIT_UNAVAILABLE,
+        f"batch failed after {attempts} attempts (last: {last_error}); the API may have stored it: "
+        "run again with the same seed, stored items come back as duplicate (R-05)",
     )
 
 
