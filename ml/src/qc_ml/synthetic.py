@@ -16,6 +16,10 @@ SPEC-021 section 3.1: optional power tools (``T-NNN`` after the hand tools and e
 ``XT-NNNN`` after the external hand tools), drawn as plastic silhouettes (angle grinder, circular
 saw, drill and cordless screwdriver), always without grade (no rust).
 
+SPEC-044 section 3.1: optional identification-only tools (``T-NNN`` after the power tools and
+external ``XT-NNNN`` after the external power tools), drawn as metal silhouettes (hammer,
+combination wrench and spirit level), always without grade (no rust).
+
 No torch here.
 """
 
@@ -36,6 +40,7 @@ from qc_ml.data import (
     EXTERNAL_SOURCES_FILE,
     GRADED_OBJECT_TYPES,
     GRADES,
+    IDENTIFIED_TOOL_OBJECT_TYPES,
     KNOWN_OBJECT_TYPES,
     MANIFEST_COLUMNS,
     MANIFEST_FILE,
@@ -55,7 +60,9 @@ BASE_TIME = datetime(2026, 10, 22, 14, 0, 0, tzinfo=UTC)
 LABELER = "a"
 CAPTURE_DEVICE = "synthetic"
 ITEM_PREFIXES: dict[str, str] = {"screw": "S", "nut": "N", "other": "O"}
-TOOL_PREFIX = "T"  # every hand tool (SPEC-016 section 4.6) and power tool (SPEC-021)
+# every hand tool (SPEC-016 section 4.6), power tool (SPEC-021) and identification-only tool
+# (SPEC-044)
+TOOL_PREFIX = "T"
 MAX_ITEMS_PER_TYPE = 999
 CONTRIBUTOR_FIRST_NUMBER = 501  # docs/dataset-protocol.md section 10.3 (recommendation)
 MAX_EXTERNAL_ITEMS_PER_TYPE = 9999
@@ -165,6 +172,29 @@ TOOL_POLYGONS.update(
             (255, ((-3, -80), (3, -80), (3, -35), (-3, -35))),  # hex bit
             (255, ((-2, 20), (22, 20), (30, 88), (6, 88))),  # handle
             (255, ((-4, 85), (36, 85), (36, 100), (-4, 100))),  # battery
+        ),
+    }
+)
+
+# Identification-only tools (SPEC-044), in the same local frame, drawn in metal (never rust).
+TOOL_POLYGONS.update(
+    {
+        "hammer": (
+            (255, ((-8, -55), (8, -55), (8, 100), (-8, 100))),  # handle
+            (255, ((-45, -85), (40, -85), (40, -55), (-45, -55))),  # head
+            (255, ((40, -85), (72, -100), (76, -92), (40, -64))),  # claw
+        ),
+        "wrench": (
+            (255, ((-9, -70), (9, -70), (9, 72), (-9, 72))),  # shaft
+            (255, _circle(0, -80, 24)),  # open end
+            (0, ((-9, -108), (9, -108), (9, -80), (-9, -80))),  # opening of the open end
+            (255, _circle(0, 84, 20)),  # ring end
+            (0, _circle(0, 84, 10)),  # hole of the ring end
+        ),
+        "spirit_level": (
+            (255, ((-18, -105), (18, -105), (18, 105), (-18, 105))),  # bar
+            (0, ((-10, -12), (10, -12), (10, 12), (-10, 12))),  # central vial
+            (0, ((-10, -85), (10, -85), (10, -70), (-10, -70))),  # end vial
         ),
     }
 )
@@ -322,6 +352,8 @@ def make_synthetic_dataset(
     power_tool_items_per_type: int = 0,
     external_power_tool_items_per_type: int = 0,
     labeler: str = LABELER,
+    identified_tool_items_per_type: int = 0,
+    external_identified_tool_items_per_type: int = 0,
 ) -> Path:
     """Create a synthetic dataset in ``root`` and return ``root``.
 
@@ -363,22 +395,33 @@ def make_synthetic_dataset(
       that continue the ``XT-`` sequence after the external hand tools, each with 1 image
       (angle 0) and one ``external`` line with the source ``synthetic`` (and the registry).
 
+    SPEC-044 section 3.1 (identification-only tools, in the order of
+    ``IDENTIFIED_TOOL_OBJECT_TYPES``, always without grade, under ``raw/<type>/_/``):
+
+    - ``identified_tool_items_per_type = i``: for each of them, ``i`` items ``T-NNN`` that
+      continue the ``T-`` sequence after the power tools, each with ``images_per_item`` images
+      (origin ``capture``, no ``sources.csv`` line);
+    - ``external_identified_tool_items_per_type = j``: for each of them, ``j`` items ``XT-NNNN``
+      that continue the ``XT-`` sequence after the external power tools, each with 1 image
+      (angle 0) and one ``external`` line with the source ``synthetic`` (and the registry).
+
     SPEC-041 section 3.1: ``items_per_stratum = 0`` is accepted when
     ``external_items_per_stratum > 0`` (a dataset only with external images), and ``labeler`` goes
     to every manifest row. Without these values the files are byte for byte the same.
 
-    ``input_sha256`` is the SHA-256 of the file written. With ``c = k = t = e = p = q = 0`` (the
-    default) the files are byte for byte the ones of SPEC-011, and neither ``sources.csv`` nor
-    ``external_sources.csv`` is created. The own items come first, then the contributor and
-    external items, then the hand tools and then the power tools, so the images of each group do
-    not depend on the groups after it.
+    ``input_sha256`` is the SHA-256 of the file written. With ``c = k = t = e = p = q = i = j = 0``
+    (the default) the files are byte for byte the ones of SPEC-011, and neither ``sources.csv``
+    nor ``external_sources.csv`` is created. The own items come first, then the contributor and
+    external items, then the hand tools, the power tools and the identification-only tools, so
+    the images of each group do not depend on the groups after it.
 
     Raises:
         FileExistsError: ``root/manifest.csv`` already exists.
         ValueError: non-positive counts (``items_per_stratum = 0`` needs ``k > 0``), negative
-            ``c``/``k``/``t``/``e``/``p``/``q``, too many
+            ``c``/``k``/``t``/``e``/``p``/``q``/``i``/``j``, too many
             items of a type (``T-`` items share one sequence: at most 999 over the 25 hand tool
-            strata and the power tools; ``XT-`` items at most 9999), or ``c > 0`` with an own
+            strata, the power tools and the identification-only tools; ``XT-`` items at most
+            9999), or ``c > 0`` with an own
             item numbered 501 or more (it would collide with a contributor item, SPEC-037
             section 4.5).
     """
@@ -395,14 +438,23 @@ def make_synthetic_dataset(
         raise ValueError(
             "power_tool_items_per_type and external_power_tool_items_per_type must be >= 0"
         )
-    n_tool_items = tool_items_per_stratum * len(TOOL_OBJECT_TYPES) * len(
-        GRADES
-    ) + power_tool_items_per_type * len(POWER_TOOL_OBJECT_TYPES)
+    if identified_tool_items_per_type < 0 or external_identified_tool_items_per_type < 0:
+        raise ValueError(
+            "identified_tool_items_per_type and external_identified_tool_items_per_type must be"
+            " >= 0"
+        )
+    n_tool_items = (
+        tool_items_per_stratum * len(TOOL_OBJECT_TYPES) * len(GRADES)
+        + power_tool_items_per_type * len(POWER_TOOL_OBJECT_TYPES)
+        + identified_tool_items_per_type * len(IDENTIFIED_TOOL_OBJECT_TYPES)
+    )
     if n_tool_items > MAX_ITEMS_PER_TYPE:
         raise ValueError(f"at most {MAX_ITEMS_PER_TYPE} T- items over every tool stratum")
-    n_external_tool_items = external_tool_items_per_type * len(
-        TOOL_OBJECT_TYPES
-    ) + external_power_tool_items_per_type * len(POWER_TOOL_OBJECT_TYPES)
+    n_external_tool_items = (
+        external_tool_items_per_type * len(TOOL_OBJECT_TYPES)
+        + external_power_tool_items_per_type * len(POWER_TOOL_OBJECT_TYPES)
+        + external_identified_tool_items_per_type * len(IDENTIFIED_TOOL_OBJECT_TYPES)
+    )
     if n_external_tool_items > MAX_EXTERNAL_ITEMS_PER_TYPE:
         raise ValueError(f"at most {MAX_EXTERNAL_ITEMS_PER_TYPE} XT- items over every tool")
     if items_per_stratum * len(GRADES) > MAX_ITEMS_PER_TYPE:
@@ -481,6 +533,16 @@ def make_synthetic_dataset(
             external_tool_number += 1
             item_id = f"{EXTERNAL_PREFIX}{TOOL_PREFIX}-{external_tool_number:04d}"
             plan.append((item_id, tool, None, 1, "external"))
+    for tool in IDENTIFIED_TOOL_OBJECT_TYPES:  # SPEC-044: after the power tools, never a grade
+        for _ in range(identified_tool_items_per_type):
+            tool_number += 1
+            item_id = f"{TOOL_PREFIX}-{tool_number:03d}"
+            plan.append((item_id, tool, None, images_per_item, "tool"))
+    for tool in IDENTIFIED_TOOL_OBJECT_TYPES:
+        for _ in range(external_identified_tool_items_per_type):
+            external_tool_number += 1
+            item_id = f"{EXTERNAL_PREFIX}{TOOL_PREFIX}-{external_tool_number:04d}"
+            plan.append((item_id, tool, None, 1, "external"))
 
     rows: list[list[str]] = []
     source_rows: list[list[str]] = []
@@ -509,6 +571,7 @@ def make_synthetic_dataset(
         external_items_per_stratum
         or external_tool_items_per_type
         or external_power_tool_items_per_type
+        or external_identified_tool_items_per_type
     ):
         _write_csv(root / EXTERNAL_SOURCES_FILE, EXTERNAL_SOURCE_COLUMNS, [list(SYNTHETIC_SOURCE)])
     return root
