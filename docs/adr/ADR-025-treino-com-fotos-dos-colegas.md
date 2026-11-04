@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Proposto |
+| Status | Aceito (aprovado pelo humano em 2026-11-04, na sessão do orquestrador; respostas na última seção) |
 | Data | 2026-11-04 |
 | Decisores | Dupla (decisão do humano, Carlos, em 2026-11-04, na sessão do orquestrador; redigido pelo agente architect) |
 | Relacionados | ADR-024 (decisões 3 e 6 alteradas em parte), ADR-014, ADR-020, ADR-021 e ADR-022 (complementados, não substituídos), ADR-001, SPEC-044, SPEC-045, SPEC-041, SPEC-036, SPEC-021, SPEC-016, SPEC-012 (CA-28), SPEC-008 (CA-16), PRD §4.1 e §7, R-02, R-04, R-11, R-14, N-11 |
@@ -159,3 +159,9 @@ Opção recomendada em cada item, sujeita às respostas do humano no fim:
 4. Aceita as correções de tipo e as fusões do agente sem conferir uma a uma? **Recomendação:** sim; se quiser conferir, a lista está no Anexo A da SPEC-045 (cerca de 10 min na tela local).
 5. Quem é o segundo rotulador, e a rotulagem dupla acontece antes do split? **Recomendação:** o segundo membro da dupla, antes do split. Se não der até o dia seguinte ao merge da SPEC-045, o humano decide dispensar (opção 6B), e o relatório declara isso.
 6. Antecipa o `split_v1` para logo depois desses passos? **Recomendação:** sim.
+
+### Respostas do humano (2026-11-04, na sessão do orquestrador)
+
+- **Aceite do ADR-025 e das SPECs 044 e 045** (perguntas 1, 2, 4 e 6 e as da §9 das duas SPECs). A pergunta resumia: os três tipos sem grau, contrato 0.7.0, migração `007` em produção logo após o merge; o piso parafuso × 5 graus + `other`; tipos com 1 ou 2 peças só no treino; as correções por reimportação (180 → 114 peças); o `split_v1` já; a exceção única à decisão 6 do ADR-024. Resposta: **"Aprovar tudo"**.
+- **Pergunta 5, rotulagem dupla.** Resposta: **"Dispensar e declarar"** (opção 6B). O split não espera. O relatório, o CHANGELOG e os slides declaram que não houve concordância entre rotuladores neste modelo.
+- **Pergunta 3, aviso aos colegas.** Resposta: **"Sim, eu aviso"**. O aviso a `c01`, `c02` e `c03`, com a opção de retirada, e a conferência de `O-534` e `O-535` no tamanho real ficam pendentes com o humano e não bloqueiam a implementação.

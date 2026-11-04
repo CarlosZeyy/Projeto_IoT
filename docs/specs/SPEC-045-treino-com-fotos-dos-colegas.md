@@ -2,14 +2,14 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | ml-engineer (código do §3.1 e a operação do §4.7, depois do merge) |
 | Tags | security |
 | Depende de | ADR-025 `Aceito`; SPEC-044 mergeada (contrato 0.7.0 e constantes do `qc-ml`); SPEC-041, SPEC-036 e SPEC-037 `Done` (já estão). Para o modelo chegar à borda de produção: CA-15 da SPEC-044 |
 | Semana alvo | S5 (logo depois da SPEC-044) |
 | Requisitos cobertos | PRD §7 (só o que o teste pequeno permite, ADR-025 decisão 7); RNF-07; R-02, R-06, R-11, R-14 |
-| ADRs relevantes | ADR-025 (`Proposto`; decisões 2 a 8), ADR-024 (piso e data de corte, alterados em parte), ADR-014, ADR-020, ADR-021, ADR-022 |
+| ADRs relevantes | ADR-025 (`Aceito`; decisões 2 a 8), ADR-024 (piso e data de corte, alterados em parte), ADR-014, ADR-020, ADR-021, ADR-022 |
 
 ## 1. Contexto
 
@@ -242,3 +242,4 @@ Fonte: a curadoria de 2026-11-04 (fora do repositório), aplicada ao `plano.csv`
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-11-04 | SPEC criada como `Draft`: piso fixo sem porcas, `split_stratum` único, `--defer-types` no `split_v1`, gerador sem porca, fixture `tiny_model_no_nut`, operação de reimportação com o Anexo A, concordância, `split_v1` e treino; CAs 01 a 12 automatizados, CA-13 de operação e CAs 14 a 16 manuais | Decisão do humano de 2026-11-04 (ADR-025, `Proposto`) | Orquestrador, a pedido do humano |
+| 2026-11-04 | Aprovada pelo humano (`Ready`): "Aprovar tudo", com as recomendações da §9; rotulagem dupla dispensada e declarada (ADR-025, resposta 5) | Aceite do ADR-025 | Humano |

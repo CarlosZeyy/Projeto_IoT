@@ -46,7 +46,7 @@ O projeto usa **SDD (Spec-Driven Development)** com agentes de IA, com autoriza�
 
 ### 4.1 MVP (até a S4 — 08/11)
 
-- Tipos de objeto: **parafuso** e **porca** de aço, mais o resultado `unknown` para o que não for reconhecido.
+- Tipos de objeto: **parafuso** e **porca** de aço, mais o resultado `unknown` para o que não for reconhecido (a partir do ADR-025, o modelo oficial é treinado sem porcas, por falta de fotos; a porca continua no contrato).
 - Cinco graus de estado com rubrica objetiva (`docs/dataset-protocol.md`).
 - Fluxo completo: celular → borda → nuvem → dashboard, com SPC por lote.
 - Modo coleta para montar o dataset com o próprio celular.
@@ -117,7 +117,7 @@ As metas são **iniciais** e serão revisadas depois do primeiro treino (S3). N�
 
 | Métrica | Meta MVP | Onde medir |
 |---|---|---|
-| Acurácia de tipo (parafuso/porca/outro) no teste | ≥ 95% | `metrics.json` |
+| Acurácia de tipo (todos os tipos do modelo) no teste | ≥ 95% | `metrics.json` |
 | Kappa ponderado quadrático (QWK) do grau | ≥ 0,75 | `metrics.json` |
 | Acerto do grau com tolerância de ±1 | ≥ 90% | `metrics.json` |
 | Recall de `unusable` | ≥ 90% | `metrics.json` |

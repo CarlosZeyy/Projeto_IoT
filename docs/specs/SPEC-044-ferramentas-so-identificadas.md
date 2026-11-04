@@ -2,14 +2,14 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer (Parte A: contrato, banco, API, borda e dashboard) e depois ml-engineer (Parte B: constantes do `qc-ml`), na mesma rodada, como nas SPECs 016 e 021 |
 | Tags | contrato, security, deploy |
 | Depende de | ADR-025 `Aceito`; SPEC-021, SPEC-034 e SPEC-043 `Done` (já estão) |
 | Semana alvo | S5 (logo depois da aprovação; antes da SPEC-045) |
 | Requisitos cobertos | PRD §4.2 (identificação de ferramentas, ampliada pelo ADR-025); RF-08, RF-09, RF-16; R-04, R-06, R-11, R-12, R-14 |
-| ADRs relevantes | ADR-025 (`Proposto`; decisão 1), ADR-021 (grupo "sem grau"), ADR-022 (extensão do teste), ADR-020, ADR-012 |
+| ADRs relevantes | ADR-025 (`Aceito`; decisão 1), ADR-021 (grupo "sem grau"), ADR-022 (extensão do teste), ADR-020, ADR-012 |
 
 ## 1. Contexto
 
@@ -165,3 +165,4 @@ Mock só nas fronteiras externas: nenhum teste acessa o Supabase de produção n
 | Data | Mudança | Motivo | Quem pediu |
 |---|---|---|---|
 | 2026-11-04 | SPEC criada como `Draft`: contrato 0.7.0 com `hammer`, `wrench` e `spirit_level` no grupo sem grau, migração `007`, borda, dashboard e constantes do `qc-ml`; CAs 01 a 14 automatizados e CA-15 manual em produção | Decisão do humano de 2026-11-04 (ADR-025, `Proposto`) | Orquestrador, a pedido do humano |
+| 2026-11-04 | Aprovada pelo humano (`Ready`): "Aprovar tudo", com as recomendações da §9; rotulagem dupla dispensada e declarada (ADR-025, resposta 5) | Aceite do ADR-025 | Humano |

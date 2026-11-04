@@ -56,3 +56,5 @@ O domínio do MVP é **parafuso e porca de aço**, cada um classificado em `perf
 - Se, ao fim da S2, houver menos de 500 imagens ou algum grau tiver menos de 4 peças físicas.
 - Se o QWK entre os rotuladores ficar abaixo de 0,6 depois de duas rodadas de calibração da rubrica.
 - Se o professor recusar o dataset próprio ou o escopo em camadas (`docs/professor-questions.md`, perguntas 3 e 6).
+
+> **Nota (2026-11-04):** o dataset do modelo oficial não tem porcas; ver o ADR-025. A porca continua no contrato.
