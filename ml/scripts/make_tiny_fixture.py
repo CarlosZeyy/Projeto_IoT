@@ -32,7 +32,6 @@ from torch import nn
 from qc_ml.artifacts import DECISION_FILE
 from qc_ml.data import (
     DEFAULT_LABELS,
-    KNOWN_OBJECT_TYPES,
     MVP_OBJECT_TYPES,
     POWER_TOOL_OBJECT_TYPES,
     TOOL_OBJECT_TYPES,
@@ -50,8 +49,10 @@ TOOLS_LABELS = ModelLabels(
     ungraded_object_types=("allen_key",),
 )
 POWER_TOOLS_OUT = Path("ml/tests/fixtures/tiny_model_power_tools")
+# The 12 types of SPEC-021 (not KNOWN_OBJECT_TYPES, which gained the identification-only tools in
+# SPEC-044).
 POWER_TOOLS_LABELS = ModelLabels(
-    object_types=KNOWN_OBJECT_TYPES,
+    object_types=(*MVP_OBJECT_TYPES, *TOOL_OBJECT_TYPES, *POWER_TOOL_OBJECT_TYPES),
     grades=DEFAULT_LABELS.grades,
     ungraded_object_types=POWER_TOOL_OBJECT_TYPES,
 )

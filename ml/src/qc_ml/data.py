@@ -15,6 +15,9 @@ Power tools (SPEC-021, ADR-021): four more object types, identification only. Th
 item prefix ``T``/``XT`` with the hand tools, their grade must be empty (like ``other``), they
 never enter ``tool_grade_coverage`` and a model always lists them in ``ungraded_object_types``.
 
+Identification-only tools (SPEC-044, ADR-025): hammer, wrench and spirit level, with the same
+rules as the power tools (prefix ``T``/``XT``, empty grade, always ungraded), after them.
+
 Suggested grades (SPEC-041 section 4.9, ADR-024): the ``labeler`` ``agent-suggestion`` only exists
 in the provisional set. ``load_manifest`` refuses it by default, in any ``DATASET_DIR``, with the
 problem ``agent_suggestion_label``; only ``qc_ml.provisional`` passes
@@ -58,7 +61,6 @@ import pandas as pd
 
 import qc_ml
 from qc_contracts import (
-    GRADE_FORBIDDEN_OBJECT_TYPES,
     GRADE_OPTIONAL_OBJECT_TYPES,
     GRADE_ORDER,
     ObjectType,
@@ -155,29 +157,36 @@ FORBIDDEN_CATEGORIES: frozenset[str] = frozenset({"Cc", "Cs", "Cf", "Zl", "Zp"})
 TOOL_OBJECT_TYPES: tuple[str, ...] = tuple(
     member.value for member in ObjectType if member in GRADE_OPTIONAL_OBJECT_TYPES
 )
-# SPEC-021 section 3.1: the power tools (grade forbidden in the contract, except ``unknown``), in
-# the order of ``ObjectType``. Identification only: never graded (PRD section 4.4).
-POWER_TOOL_OBJECT_TYPES: tuple[str, ...] = tuple(
-    member.value
-    for member in ObjectType
-    if member in GRADE_FORBIDDEN_OBJECT_TYPES and member is not ObjectType.UNKNOWN
+# SPEC-021 section 3.1: the 4 power tools, in the order of ``ObjectType``. Identification only:
+# never graded (PRD section 4.4). An explicit tuple since SPEC-044 section 3.1: the grade
+# forbidden group of the contract also has the identification-only tools below.
+POWER_TOOL_OBJECT_TYPES: tuple[str, ...] = ("angle_grinder", "saw", "drill", "cordless_screwdriver")
+# SPEC-044 section 3.1 (ADR-025): hammer, wrench and spirit level, identification only like the
+# power tools (never graded), in the order of ``ObjectType``.
+IDENTIFIED_TOOL_OBJECT_TYPES: tuple[str, ...] = ("hammer", "wrench", "spirit_level")
+# Every tool that is never graded (power and identification-only tools), in the order of
+# ``ObjectType``.
+UNGRADED_TOOL_OBJECT_TYPES: tuple[str, ...] = (
+    *POWER_TOOL_OBJECT_TYPES,
+    *IDENTIFIED_TOOL_OBJECT_TYPES,
 )
-# Types of the dataset (and order of the type head): screw, nut, other, the hand tools and then
-# the power tools.
+# Types of the dataset (and order of the type head): screw, nut, other, the hand tools, the power
+# tools and then the identification-only tools (the order of ``ObjectType``).
 KNOWN_OBJECT_TYPES: tuple[str, ...] = (
     "screw",
     "nut",
     "other",
     *TOOL_OBJECT_TYPES,
-    *POWER_TOOL_OBJECT_TYPES,
+    *UNGRADED_TOOL_OBJECT_TYPES,
 )
 # The MVP types whose grade metrics, targets and grade thresholds are measured (ADR-022, 6).
 GRADED_OBJECT_TYPES: tuple[str, ...] = ("screw", "nut")
 # Types whose manifest rows must have a grade (SPEC-016 section 4.6); ``other`` never has one.
 GRADE_REQUIRED_DATASET_TYPES: tuple[str, ...] = (*GRADED_OBJECT_TYPES, *TOOL_OBJECT_TYPES)
-# Types whose manifest rows must not have a grade: ``other`` and the power tools (SPEC-021). A
-# grade on any of them is the problem ``grade_on_other`` (the code of SPEC-011 section 4.1).
-GRADE_FORBIDDEN_DATASET_TYPES: tuple[str, ...] = ("other", *POWER_TOOL_OBJECT_TYPES)
+# Types whose manifest rows must not have a grade: ``other``, the power tools (SPEC-021) and the
+# identification-only tools (SPEC-044). A grade on any of them is the problem ``grade_on_other``
+# (the code of SPEC-011 section 4.1).
+GRADE_FORBIDDEN_DATASET_TYPES: tuple[str, ...] = ("other", *UNGRADED_TOOL_OBJECT_TYPES)
 GRADES: tuple[str, ...] = tuple(g.value for g in GRADE_ORDER)
 NO_GRADE = "none"
 SPLIT_NAMES: tuple[str, ...] = ("train", "val", "test")
@@ -186,13 +195,13 @@ SPLIT_NAMES: tuple[str, ...] = ("train", "val", "test")
 # qc_ml (SPEC-031 section 4.6): own items ``S-012`` and external images ``XS-0001`` (SPEC-035).
 ITEM_ID_PATTERN = re.compile(r"[SNOT]-[0-9]{3}|X[SNOT]-[0-9]{4}")
 ANGLE_PATTERN = re.compile(r"[0-4]")
-# Type letter of the item_id -> the object types it allows (``T``: any hand tool, SPEC-016, or
-# power tool, SPEC-021).
+# Type letter of the item_id -> the object types it allows (``T``: any hand tool, SPEC-016, power
+# tool, SPEC-021, or identification-only tool, SPEC-044).
 ITEM_PREFIX_TYPES: dict[str, frozenset[str]] = {
     "S": frozenset({"screw"}),
     "N": frozenset({"nut"}),
     "O": frozenset({"other"}),
-    "T": frozenset({*TOOL_OBJECT_TYPES, *POWER_TOOL_OBJECT_TYPES}),
+    "T": frozenset({*TOOL_OBJECT_TYPES, *UNGRADED_TOOL_OBJECT_TYPES}),
 }
 EXTERNAL_PREFIX = "X"
 
@@ -1193,12 +1202,12 @@ def derive_model_labels(df: pd.DataFrame, train_rows: pd.DataFrame) -> ModelLabe
     """Types and ungraded types of the model to train (SPEC-016 section 4.8); a pure function.
 
     ``object_types``: the ``KNOWN_OBJECT_TYPES`` with at least one image in ``train_rows``, in
-    the order ``screw``, ``nut``, ``other``, the hand tools and then the power tools (the order
-    of ``ObjectType``). ``ungraded_object_types``: the hand tools of the model that are not
-    graded by the criterion of ``tool_grade_coverage(df)`` (``df`` = the whole ``load_manifest``
-    result) and **every** power tool of the model, which never goes through the criterion
-    (SPEC-021 section 3.1), in the same order. For the MVP data the result equals
-    ``DEFAULT_LABELS``.
+    the order ``screw``, ``nut``, ``other``, the hand tools, the power tools and then the
+    identification-only tools (the order of ``ObjectType``). ``ungraded_object_types``: the hand
+    tools of the model that are not graded by the criterion of ``tool_grade_coverage(df)``
+    (``df`` = the whole ``load_manifest`` result) and **every** power tool (SPEC-021 section 3.1)
+    and identification-only tool (SPEC-044 section 3.1) of the model, which never go through the
+    criterion, in the same order. For the MVP data the result equals ``DEFAULT_LABELS``.
     """
     present = {str(t) for t in train_rows["object_type"]}
     object_types = tuple(t for t in KNOWN_OBJECT_TYPES if t in present)
@@ -1206,7 +1215,7 @@ def derive_model_labels(df: pd.DataFrame, train_rows: pd.DataFrame) -> ModelLabe
     ungraded = tuple(
         t
         for t in object_types
-        if t in POWER_TOOL_OBJECT_TYPES or (t in TOOL_OBJECT_TYPES and not coverage[t]["graded"])
+        if t in UNGRADED_TOOL_OBJECT_TYPES or (t in TOOL_OBJECT_TYPES and not coverage[t]["graded"])
     )
     return ModelLabels(object_types=object_types, grades=GRADES, ungraded_object_types=ungraded)
 
@@ -1214,9 +1223,9 @@ def derive_model_labels(df: pd.DataFrame, train_rows: pd.DataFrame) -> ModelLabe
 def grade_target(object_type: str, grade: Any, labels: ModelLabels) -> int | None:
     """Index of ``grade`` in ``labels.grades``, or ``None`` when the grade loss ignores the row.
 
-    ``None`` for ``other``, for the types of ``labels.ungraded_object_types`` (the power tools
-    among them, SPEC-021) and for a row without grade (SPEC-016 section 4.8; skill ml-pipeline
-    section 4).
+    ``None`` for ``other``, for the types of ``labels.ungraded_object_types`` (the power tools,
+    SPEC-021, and the identification-only tools, SPEC-044, among them) and for a row without
+    grade (SPEC-016 section 4.8; skill ml-pipeline section 4).
     """
     if object_type == "other" or object_type in labels.ungraded_object_types:
         return None
