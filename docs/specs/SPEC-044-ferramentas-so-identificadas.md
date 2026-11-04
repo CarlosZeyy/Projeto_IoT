@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: contrato, banco, API, borda e dashboard) e depois ml-engineer (Parte B: constantes do `qc-ml`), na mesma rodada, como nas SPECs 016 e 021 |
 | Tags | contrato, security, deploy |
 | Depende de | ADR-025 `Aceito`; SPEC-021, SPEC-034 e SPEC-043 `Done` (já estão) |
