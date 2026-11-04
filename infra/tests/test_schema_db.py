@@ -3,8 +3,9 @@
 001_init.sql: SPEC-003 §4.1. 002_contract_checks.sql (checks that mirror the contract): SPEC-027
 §4.1. 003_tool_object_types.sql (hand tools and the grade groups of ADR-021): SPEC-016 §4.2.
 004_device_heartbeat.sql (last heartbeat of each device): SPEC-018 §4.2.
-006_power_tool_object_types.sql (power tools, never graded): SPEC-021 §3.1. These at the end of
-this file.
+006_power_tool_object_types.sql (power tools, never graded): SPEC-021 §3.1.
+007_identified_tool_object_types.sql (hammer, wrench and spirit level, never graded): SPEC-044
+§4.2. These at the end of this file.
 """
 
 from __future__ import annotations
@@ -526,6 +527,7 @@ def test_model_version_check_mirrors_contract(conn: psycopg.Connection, value: s
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 TOOLS_SQL = MIGRATIONS_DIR / "003_tool_object_types.sql"
 POWER_TOOLS_SQL = MIGRATIONS_DIR / "006_power_tool_object_types.sql"
+IDENTIFIED_TOOLS_SQL = MIGRATIONS_DIR / "007_identified_tool_object_types.sql"
 HAND_TOOLS = (
     "pliers",
     "adjustable_wrench",
@@ -534,19 +536,24 @@ HAND_TOOLS = (
     "phillips_screwdriver",
 )
 POWER_TOOLS = ("angle_grinder", "saw", "drill", "cordless_screwdriver")
+IDENTIFIED_TOOLS = ("hammer", "wrench", "spirit_level")
+# The last migration that replaces the object_type and grade checks
+# (``test_identified_tool_migration_is_the_latest_grade_check_migration``).
+LATEST_GRADE_CHECK_SQL = IDENTIFIED_TOOLS_SQL
 
 
 @pytest.fixture
 def rerun_003(conn: psycopg.Connection) -> Iterator[psycopg.Connection]:
-    """Connection for tests that run 003 again on the shared database.
+    """Connection for tests that run an older grade-check migration again on the shared database.
 
-    003 replaces both checks with its 8-value version, so the latest migration that replaces
-    them (006) runs again at the end: the session keeps the checks of the contract 0.6.0.
+    003 and 006 replace both checks with their 8- and 12-value versions, so the latest migration
+    that replaces them (007) runs again at the end: the session keeps the checks of the contract
+    0.7.0.
     """
     try:
         yield conn
     finally:
-        conn.execute(POWER_TOOLS_SQL.read_text(encoding="utf-8"))
+        conn.execute(LATEST_GRADE_CHECK_SQL.read_text(encoding="utf-8"))
 
 
 def _contract_accepts(object_type: str, grade: str | None) -> bool:
@@ -592,7 +599,8 @@ def test_every_tool_is_accepted_with_and_without_grade(conn: psycopg.Connection)
 
 
 @pytest.mark.parametrize(
-    "object_type", ["hammer", "Pliers", "pliers ", "Drill", "drill ", "grinder", "other"]
+    "object_type",
+    ["lathe", "Pliers", "pliers ", "Drill", "drill ", "grinder", "other", "Hammer", "level"],
 )
 def test_values_outside_the_contract_are_refused(
     conn: psycopg.Connection, object_type: str
@@ -608,7 +616,7 @@ def test_values_outside_the_contract_are_refused(
 def test_value_outside_the_enum_is_refused_only_by_the_enum_check(
     conn: psycopg.Connection, grade: str | None
 ) -> None:
-    overrides: dict[str, Any] = {"object_type": "hammer", "grade": grade}
+    overrides: dict[str, Any] = {"object_type": "lathe", "grade": grade}
     if grade is None:
         overrides |= {"grade_score": None, "grade_confidence": None}
     with pytest.raises(errors.CheckViolation) as info:
@@ -619,7 +627,10 @@ def test_value_outside_the_enum_is_refused_only_by_the_enum_check(
 SPEC_EXPRESSION = """
     (object_type in ('screw', 'nut') and grade is not null)
     or (
-        object_type in ('unknown', 'angle_grinder', 'saw', 'drill', 'cordless_screwdriver')
+        object_type in (
+            'unknown', 'angle_grinder', 'saw', 'drill', 'cordless_screwdriver',
+            'hammer', 'wrench', 'spirit_level'
+        )
         and grade is null
     )
     or object_type in (
@@ -629,8 +640,9 @@ SPEC_EXPRESSION = """
 
 
 def test_grade_check_equals_the_spec_expression_on_the_enum(conn: psycopg.Connection) -> None:
-    """For the 12 x 6 pairs the enum check admits, the stored check is the expression of the
-    SPEC-016 section 4.2 with the power tools in the grade-forbidden branch (SPEC-021)."""
+    """For the 15 x 6 pairs the enum check admits, the stored check is the expression of the
+    SPEC-016 section 4.2 with the power tools (SPEC-021) and the identification-only tools
+    (SPEC-044) in the grade-forbidden branch."""
     (definition,) = conn.execute(
         "select pg_get_constraintdef(oid) from pg_constraint "
         "where conname = 'inspections_grade_null_iff_unknown'"
@@ -644,7 +656,7 @@ def test_grade_check_equals_the_spec_expression_on_the_enum(conn: psycopg.Connec
         + ") as pairs (object_type, grade)",
         [value for pair in pairs for value in pair],
     ).fetchall()
-    assert len(rows) == 72
+    assert len(rows) == 90
     for object_type, grade, stored_value, spec_value in rows:
         assert stored_value is spec_value, (object_type, grade)
 
@@ -666,7 +678,7 @@ def test_tool_migration_runs_again_without_error(rerun_003: psycopg.Connection) 
     conn.execute(sql_text)
     assert _constraint_values(conn, "inspections_object_type_check") == {
         member.value for member in ObjectType
-    } - set(POWER_TOOLS)
+    } - set(POWER_TOOLS) - set(IDENTIFIED_TOOLS)
     names = [
         row[0]
         for row in conn.execute(
@@ -819,14 +831,14 @@ def test_heartbeat_migration_runs_again_without_error(conn: psycopg.Connection) 
 # ---------- 006_power_tool_object_types (SPEC-021 §3.1) ----------
 
 
-def test_power_tool_migration_is_the_latest_grade_check_migration() -> None:
-    """006 is the last file that replaces the object_type and grade checks (``rerun_003``)."""
+def test_power_tool_migration_is_superseded_only_by_007() -> None:
+    """006 replaces the checks of 003; only 007 (SPEC-044) replaces them after it."""
     replacing = [
         path.name
         for path in sorted(MIGRATIONS_DIR.glob("[0-9]*.sql"))
         if "inspections_grade_null_iff_unknown" in path.read_text(encoding="utf-8")
     ]
-    assert replacing[-1] == POWER_TOOLS_SQL.name
+    assert replacing[-2:] == [POWER_TOOLS_SQL.name, IDENTIFIED_TOOLS_SQL.name]
     assert POWER_TOOLS_SQL.is_file()
 
 
@@ -848,12 +860,14 @@ def test_power_tool_is_accepted_only_without_grade(
 def test_power_tool_check_values(conn: psycopg.Connection) -> None:
     values = _constraint_values(conn, "inspections_object_type_check")
     assert values == {member.value for member in ObjectType}
-    assert len(values) == 12
+    assert len(values) == 15
     assert set(POWER_TOOLS) <= _constraint_values(conn, "inspections_grade_null_iff_unknown")
     assert not set(HAND_TOOLS) & _constraint_values(conn, "inspections_grade_null_iff_unknown")
 
 
-def test_power_tool_migration_runs_again_without_error(conn: psycopg.Connection) -> None:
+def test_power_tool_migration_runs_again_without_error(rerun_003: psycopg.Connection) -> None:
+    """006 runs again without error; followed by 007, the checks are the current ones again."""
+    conn = rerun_003
     _insert(conn, object_type="drill", grade=None, grade_score=None, grade_confidence=None)
     _insert(conn, object_type="pliers", grade="poor")
     query = (
@@ -864,14 +878,17 @@ def test_power_tool_migration_runs_again_without_error(conn: psycopg.Connection)
     sql_text = POWER_TOOLS_SQL.read_text(encoding="utf-8")
     conn.execute(sql_text)
     conn.execute(sql_text)
+    assert not _database_accepts(conn, "hammer", None)
+    conn.execute(IDENTIFIED_TOOLS_SQL.read_text(encoding="utf-8"))
     assert conn.execute(query).fetchall() == before
     assert _count(conn) == 2
     assert not _database_accepts(conn, "drill", "good")
     assert not _database_accepts(conn, "screw", None)
 
 
-def test_power_tool_migration_keeps_older_rows_valid(conn: psycopg.Connection) -> None:
+def test_power_tool_migration_keeps_older_rows_valid(rerun_003: psycopg.Connection) -> None:
     """Every row valid under 001 to 005 (MVP types and hand tools) survives the migration."""
+    conn = rerun_003
     _insert(conn)
     _insert(conn, object_type="nut", grade="unusable")
     _insert(conn, object_type="unknown", grade=None, grade_score=None, grade_confidence=None)
@@ -880,3 +897,126 @@ def test_power_tool_migration_keeps_older_rows_valid(conn: psycopg.Connection) -
         _insert(conn, object_type=tool, grade="fair")
     conn.execute(POWER_TOOLS_SQL.read_text(encoding="utf-8"))
     assert _count(conn) == 3 + 2 * len(HAND_TOOLS)
+
+
+# ---------- 007_identified_tool_object_types (SPEC-044 §4.2) ----------
+
+GRADE_CHECKS_QUERY = (
+    "select conname, pg_get_constraintdef(oid) from pg_constraint "
+    "where conname in ('inspections_object_type_check', 'inspections_grade_null_iff_unknown') "
+    "order by 1"
+)
+
+
+def test_identified_tool_migration_is_the_latest_grade_check_migration() -> None:
+    """007 is the last file that replaces the object_type and grade checks (``rerun_003``)."""
+    replacing = [
+        path.name
+        for path in sorted(MIGRATIONS_DIR.glob("[0-9]*.sql"))
+        if "inspections_grade_null_iff_unknown" in path.read_text(encoding="utf-8")
+    ]
+    assert replacing[-1] == IDENTIFIED_TOOLS_SQL.name == LATEST_GRADE_CHECK_SQL.name
+    assert IDENTIFIED_TOOLS_SQL.is_file()
+
+
+def test_identified_tool_migration_has_the_shape_of_006() -> None:
+    """One DO block, no BEGIN/COMMIT and the two checks with their old names (SPEC-044 §4.2)."""
+    text = IDENTIFIED_TOOLS_SQL.read_text(encoding="utf-8")
+    code = "\n".join(line.split("--", 1)[0] for line in text.splitlines()).lower()
+    assert code.count("do $$") == 1
+    assert re.search(r"\b(begin\s*;|commit|rollback)\b", code) is None
+    assert code.count("drop constraint if exists inspections_object_type_check") == 1
+    assert code.count("drop constraint if exists inspections_grade_null_iff_unknown") == 1
+    assert "password" not in code and "postgresql://" not in code
+
+
+@pytest.mark.parametrize("object_type", IDENTIFIED_TOOLS)
+def test_identified_tool_is_accepted_only_without_grade(
+    conn: psycopg.Connection, object_type: str
+) -> None:
+    assert _database_accepts(conn, object_type, None)
+    for grade in Grade:
+        with pytest.raises(errors.CheckViolation) as info:
+            _insert(conn, object_type=object_type, grade=grade.value)
+        assert info.value.sqlstate == "23514"
+        assert info.value.diag.constraint_name == "inspections_grade_null_iff_unknown"
+    assert _count(conn) == 1
+    row = conn.execute("select grade, is_defective from inspections").fetchone()
+    assert row == (None, False)
+
+
+def test_identified_tool_check_values(conn: psycopg.Connection) -> None:
+    values = _constraint_values(conn, "inspections_object_type_check")
+    assert values == {member.value for member in ObjectType}
+    assert set(IDENTIFIED_TOOLS) <= values
+    forbidden = _constraint_values(conn, "inspections_grade_null_iff_unknown")
+    assert set(IDENTIFIED_TOOLS) | set(POWER_TOOLS) | {"unknown"} <= forbidden
+    assert not set(HAND_TOOLS) & forbidden
+
+
+def test_identified_tool_grade_check_is_the_spec_expression(conn: psycopg.Connection) -> None:
+    """The stored grade check is the expression of SPEC-044 section 4.2 (on every text pair)."""
+    spec = (
+        "(object_type not in ('screw','nut') or grade is not null) and (object_type not in "
+        "('unknown','angle_grinder','saw','drill','cordless_screwdriver','hammer','wrench',"
+        "'spirit_level') or grade is null)"
+    )
+    (definition,) = conn.execute(
+        "select pg_get_constraintdef(oid) from pg_constraint "
+        "where conname = 'inspections_grade_null_iff_unknown'"
+    ).fetchone()
+    stored = definition.removeprefix("CHECK ")
+    types = [t.value for t in ObjectType] + ["lathe"]
+    pairs = [(t, g) for t in types for g in [None, *(m.value for m in Grade)]]
+    rows = conn.execute(
+        f"select object_type, grade, ({stored}) as stored, ({spec}) as spec "
+        "from (values "
+        + ", ".join("(%s::text, %s::text)" for _ in pairs)
+        + ") as pairs (object_type, grade)",
+        [value for pair in pairs for value in pair],
+    ).fetchall()
+    assert len(rows) == 16 * 6
+    for object_type, grade, stored_value, spec_value in rows:
+        assert stored_value is spec_value, (object_type, grade)
+
+
+def test_identified_tool_migration_runs_again_without_error(conn: psycopg.Connection) -> None:
+    _insert(conn, object_type="hammer", grade=None, grade_score=None, grade_confidence=None)
+    _insert(conn, object_type="drill", grade=None, grade_score=None, grade_confidence=None)
+    _insert(conn, object_type="pliers", grade="poor")
+    query = (
+        "select conname, pg_get_constraintdef(oid) from pg_constraint "
+        "where conrelid = 'inspections'::regclass order by 1"
+    )
+    before = conn.execute(query).fetchall()
+    checks_before = conn.execute(GRADE_CHECKS_QUERY).fetchall()
+    sql_text = IDENTIFIED_TOOLS_SQL.read_text(encoding="utf-8")
+    conn.execute(sql_text)
+    conn.execute(sql_text)
+    assert conn.execute(query).fetchall() == before
+    assert conn.execute(GRADE_CHECKS_QUERY).fetchall() == checks_before
+    assert len(checks_before) == 2
+    assert _count(conn) == 3
+    assert not _database_accepts(conn, "wrench", "good")
+    assert not _database_accepts(conn, "screw", None)
+
+
+def test_identified_tool_migration_keeps_older_rows_valid(conn: psycopg.Connection) -> None:
+    """Every row valid under 001 to 006 survives the migration, with the same is_defective."""
+    _insert(conn)
+    _insert(conn, object_type="nut", grade="unusable")
+    _insert(conn, object_type="unknown", grade=None, grade_score=None, grade_confidence=None)
+    for tool in HAND_TOOLS:
+        _insert(conn, object_type=tool, grade=None, grade_score=None, grade_confidence=None)
+        _insert(conn, object_type=tool, grade="poor")
+    for tool in POWER_TOOLS:
+        _insert(conn, object_type=tool, grade=None, grade_score=None, grade_confidence=None)
+    before = conn.execute(
+        "select inspection_id, is_defective from inspections order by 1"
+    ).fetchall()
+    conn.execute(IDENTIFIED_TOOLS_SQL.read_text(encoding="utf-8"))
+    after = conn.execute(
+        "select inspection_id, is_defective from inspections order by 1"
+    ).fetchall()
+    assert after == before
+    assert len(after) == 3 + 2 * len(HAND_TOOLS) + len(POWER_TOOLS)
