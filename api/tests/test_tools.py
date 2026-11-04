@@ -167,7 +167,7 @@ def test_batch_with_tools(client: TestClient, device_keys: dict[str, str], make_
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"object_type": "hammer"},
+        {"object_type": "lathe"},
         {"object_type": "screw"},  # screw without a grade
         {"object_type": "unknown", "grade": "good", "grade_score": 1.0, "grade_confidence": 0.8},
         {"grade": "fair", "grade_score": None, "grade_confidence": 0.7},
@@ -186,7 +186,7 @@ def test_post_invalid_tool_combinations_are_422(
 @pytest.mark.db
 def test_unknown_object_type_filter_is_422(client: TestClient) -> None:
     for url in ("/api/v1/inspections", "/api/v1/metrics/summary", "/api/v1/lots"):
-        response = client.get(url, params={"object_type": "hammer"}, headers=R)
+        response = client.get(url, params={"object_type": "lathe"}, headers=R)
         assert response.status_code == 422, url
 
 
