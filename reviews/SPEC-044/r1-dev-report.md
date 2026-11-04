@@ -116,3 +116,68 @@ A SPEC prevê exatamente isso (§1): a Parte B, com `POWER_TOOL_OBJECT_TYPES` ex
 - [x] `.env.example` atualizado (se houver variável nova): nenhuma variável nova
 - [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
 - [x] Nada em `ml/` alterado (Parte B do ml-engineer)
+
+## Parte B (ml-engineer)
+
+| Campo | Valor |
+|---|---|
+| Autor | ml-engineer |
+| Commits | `a4fa3a1` (constantes, split, report e fixture), `7d1c760` (gerador sintético), `311b9ba` (testes), `f4c5772` (README) e o commit deste relatório |
+| Treino | nenhum (sem `metrics.json` novo; nenhuma foto de `ml/data/` aberta) |
+
+### Resumo
+
+- `qc_ml.data`: `POWER_TOOL_OBJECT_TYPES` passa a ser a tupla explícita `("angle_grinder", "saw", "drill", "cordless_screwdriver")`; nova `IDENTIFIED_TOOL_OBJECT_TYPES = ("hammer", "wrench", "spirit_level")`; nova `UNGRADED_TOOL_OBJECT_TYPES` (as 4 elétricas e as 3 novas, na ordem do `ObjectType`), usada onde antes valia "elétrica". `KNOWN_OBJECT_TYPES` tem os 15 tipos do dataset (`screw`, `nut`, `other`, as manuais, as elétricas e as 3 novas); prefixo `T` e `GRADE_FORBIDDEN_DATASET_TYPES` com as 3 (grau preenchido → `grade_on_other`); `derive_model_labels` as põe **sempre** em `ungraded_object_types`; `grade_target` devolve `None` para elas; `tool_grade_coverage` continua só com as 5 manuais. O import de `GRADE_FORBIDDEN_OBJECT_TYPES` saiu do módulo (não é mais usado).
+- `qc_ml.split`: `extension_strata` usa o tipo inteiro para `UNGRADED_TOOL_OBJECT_TYPES` (elétricas e as 3 novas). O estrato do `split_v1` não mudou (SPEC-045).
+- `qc_ml.synthetic.make_synthetic_dataset(…, identified_tool_items_per_type=0, external_identified_tool_items_per_type=0)`: peças `T-NNN` depois das elétricas e `XT-NNNN` depois das externas elétricas, grau vazio, em `raw/<tipo>/_/`, desenhadas como silhuetas de metal (martelo, chave combinada e nível com visores), sem ferrugem. Com os padrões, a saída é igual byte a byte; o teto de 999 peças `T-` e de 9999 `XT-` passa a contar as 3 novas.
+- `qc_ml.plots`: sem mudança de código; os rótulos `martelo`, `chave de aperto` e `nível` já vêm do contrato (conferido em teste).
+- `ml/README.md`: seção "Ferramentas só identificadas (SPEC-044)", assinatura do gerador e a linha do prefixo `T-`/`XT-`.
+
+### Rastreabilidade (critério de aceite → implementação)
+
+| Critério | Arquivo(s) | Teste unitário do autor |
+|---|---|---|
+| CA-10 | `ml/src/qc_ml/data.py` (`POWER_TOOL_OBJECT_TYPES`, `IDENTIFIED_TOOL_OBJECT_TYPES`, `UNGRADED_TOOL_OBJECT_TYPES`, `KNOWN_OBJECT_TYPES`, `GRADE_FORBIDDEN_DATASET_TYPES`, `ITEM_PREFIX_TYPES`) | `ml/tests/test_identified_tools.py::test_ca10_constants`, `::test_known_types_follow_the_object_type_of_the_contract`, `::test_ungraded_tools_are_the_grade_forbidden_group_of_the_contract_but_unknown`, `::test_identified_tools_mirror_the_edge_lists` (iguais às de `qc_edge.collect`), `::test_ca10_grade_coverage_keeps_the_hand_tools_only` (também o `data report`), `::test_item_prefix_matches_identified_tools` |
+| CA-11 | `ml/src/qc_ml/data.py`, `ml/src/qc_ml/synthetic.py` | `::test_ca11_identified_tools_load_without_error` (9 peças `T-`, `raw/<tipo>/_/`), `::test_ca11_identified_tool_with_grade_is_grade_on_other` (os 3 tipos), `::test_override_with_a_grade_on_an_identified_tool_is_refused`, `::test_identified_tool_with_o_prefix_is_a_prefix_mismatch`, `::test_ca11_power_tools_alone_are_still_12_items` |
+| CA-12 | `ml/src/qc_ml/data.py` (`derive_model_labels`, `grade_target`) | `::test_ca12_identified_tools_are_always_ungraded`, `::test_all_15_types_next_to_a_graded_hand_tool`, `::test_identified_tool_without_train_images_is_not_a_model_type`, `::test_labels_with_the_identified_tools_round_trip` |
+| CA-13 | `ml/src/qc_ml/split.py` (`extension_strata`) | `::test_ca13_identified_tools_need_a_decision`, `::test_ca13_extension_of_the_identified_tools` (CLI com `--extend-test-types hammer,wrench,spirit_level`: saída 0, 4/1/1 por tipo, linhas do `split_v1` mantidas, nenhum aviso com estrato `<tipo>/…`), `::test_identified_tool_extension_stratum_is_the_whole_type`, `::test_identified_tool_with_two_items_is_refused`, `::test_identified_tools_can_be_deferred` |
+| CA-14 | `ml/src/qc_ml/synthetic.py` | `::test_ca14_defaults_are_byte_for_byte_the_same`, `::test_identified_tools_come_after_the_power_tools`, `::test_external_identified_tools_alone_write_the_registry`, `::test_generator_checks_the_identified_tool_counts`, `::test_add_synthetic_item_draws_an_identified_tool`, `::test_identified_tool_silhouettes_differ` |
+| (plots e CHANGELOG) | `ml/src/qc_ml/report.py` (`model_types_lines`) | `::test_confusion_labels_of_the_identified_tools`, `::test_confusion_labels_in_pt_br`, `::test_changelog_lists_a_model_with_identified_tools_only` |
+
+### Como rodar e verificar
+
+```bash
+uv run ruff check . && uv run ruff format --check .
+uv run pytest ml -q
+uv run pytest ml/tests/test_identified_tools.py -q   # só os testes novos do autor
+```
+
+Resultado (2026-11-04, sem o extra `train`, no commit `f4c5772`): `ruff check` e `ruff format --check` limpos; `uv run pytest ml -q`: **1 failed, 1359 passed, 51 skipped** (7 min 54 s). Os skips são os testes que precisam de torch e o de paridade do modelo real (ausente no Git). Os testes do `qc_edge` que importam `qc_ml` (`edge/tests/test_importer.py`, `edge/tests/acceptance/test_spec_036.py` e `test_spec_041.py`) passam: 414 passed.
+
+As 13 falhas e os 3 erros de `ml/` listados em "Para a Parte B" deixaram de acontecer, salvo o aceite abaixo, que a SPEC muda de propósito.
+
+### Testes de aceite antigos de `ml/` que precisam de ajuste (quem ajusta é o tester)
+
+| Arquivo | Teste | O que falha | Requisito da SPEC-044 | Na §3.1? |
+|---|---|---|---|---|
+| `ml/tests/acceptance/test_spec_021.py` | `test_extra_known_types_and_hand_tool_group` | igualdade exata de `KNOWN_OBJECT_TYPES` com os 12 tipos; agora são 15 (as 3 novas no fim) | §3.1 Parte B (`KNOWN_OBJECT_TYPES` com as 3 novas), CA-10 | sim (lista completa de tipos) |
+
+### Decisões tomadas dentro do escopo da SPEC
+
+1. **`UNGRADED_TOOL_OBJECT_TYPES`** (elétricas + só identificadas): uma constante auxiliar, para não repetir a união em `data`, `split` e `report`. `POWER_TOOL_OBJECT_TYPES` e `IDENTIFIED_TOOL_OBJECT_TYPES` são exatamente as tuplas da §3.1; um teste confere que a união é o grupo sem grau do contrato menos `unknown`, para acusar um tipo novo do contrato que o `qc-ml` não conheça.
+2. **`qc_ml.report.model_types_lines`**: a linha "Tipos do modelo" do CHANGELOG passa a valer também para um modelo só com as 3 novas. Sem isso, com `POWER_TOOL_OBJECT_TYPES` explícito, um modelo `screw, nut, other, hammer…` perderia a linha que tinha com a derivação do contrato (§1: "Esta SPEC acrescenta os três tipos a cada lista").
+3. **`ml/scripts/make_tiny_fixture.py`**: `POWER_TOOLS_LABELS` usava `KNOWN_OBJECT_TYPES`; passa a fixar os 12 tipos da SPEC-021 (`MVP_OBJECT_TYPES`, manuais e elétricas), para que a fixture `tiny_model_power_tools` regenerada continue byte a byte igual. Nenhuma fixture nova foi criada (a SPEC não pede `tiny_model` com as 3 novas).
+4. **Desenho sintético**: as 3 novas em metal (`METAL`), sem ferrugem, distintas por forma (martelo com cabeça e unha; chave combinada com boca aberta e anel; nível com dois visores vazados). Os parâmetros novos vêm no fim da assinatura, depois de `labeler`, como na §3.1.
+5. **Testes do autor da SPEC-021 ajustados** (meus, não de aceite): `test_power_tools.py::test_power_tools_are_the_grade_forbidden_types_of_the_contract_but_unknown` virou `test_power_tools_are_grade_forbidden_types_of_the_contract` (as elétricas estão **contidas** no grupo sem grau; `KNOWN_OBJECT_TYPES` começa pelos 12; `GRADE_FORBIDDEN_DATASET_TYPES` começa por `other` e as elétricas); `test_tools_split.py::test_invalid_type_lists_exit_2` usa `lathe` em vez de `hammer` como tipo desconhecido.
+6. Nada fora de `ml/` alterado (além deste relatório); nada em `tests/acceptance/` criado ou alterado; nenhuma dependência nova.
+
+### SPEC_ISSUE (se houver)
+
+Nenhum.
+
+### Checagens do autor (Parte B)
+
+- [x] `uv run ruff check .` e `uv run ruff format --check .` limpos
+- [x] Testes unitários do autor de `ml/` passando (os novos e os ajustados)
+- [x] Nenhum arquivo em `tests/acceptance/` criado ou alterado por mim
+- [x] Nenhuma imagem de `ml/data/` aberta; nenhum `.onnx` ou imagem versionado
