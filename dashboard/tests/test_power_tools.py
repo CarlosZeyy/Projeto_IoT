@@ -58,14 +58,17 @@ def test_history_csv_writes_sem_grau_for_a_power_tool(factory) -> None:
 
 
 def test_chart_order_puts_the_power_tools_before_unknown() -> None:
+    """After the hand tools; SPEC-044 puts the identification-only tools between them and
+    ``unknown``."""
     order = charts.OBJECT_TYPE_ORDER
-    assert order[-5:] == (
+    start = order.index(ObjectType.ANGLE_GRINDER)
+    assert order[start : start + 4] == (
         ObjectType.ANGLE_GRINDER,
         ObjectType.SAW,
         ObjectType.DRILL,
         ObjectType.CORDLESS_SCREWDRIVER,
-        ObjectType.UNKNOWN,
     )
+    assert order[-1] is ObjectType.UNKNOWN
     assert order.index(ObjectType.PHILLIPS_SCREWDRIVER) < order.index(ObjectType.ANGLE_GRINDER)
     for tool in POWER_TOOL_LABELS:
         assert ObjectType(tool) in charts.OBJECT_TYPE_COLORS
