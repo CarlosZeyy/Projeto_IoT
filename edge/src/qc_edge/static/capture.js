@@ -8,10 +8,10 @@
   var COLLECT = ["item_id", "object_type", "grade", "labeler", "angle", "notes"];
   var SAVED = ["lot_id", "mode"].concat(COLLECT);
   var ITEM_ID_RE = /^[SNOT]-[0-9]{3}$/;  // same rule as the server (re.fullmatch)
-  var POWER = ["angle_grinder", "saw", "drill", "cordless_screwdriver"];  // SPEC-021, no grade
-  var NO_GRADE = ["other"].concat(POWER);  // types whose grade stays empty (server rule)
+  var NO_GRADE = ["other", "angle_grinder", "saw", "drill", "cordless_screwdriver", "hammer",
+    "wrench", "spirit_level"];  // grade stays empty (server rule): SPEC-021 and SPEC-044 tools
   var PREFIX_TYPES = { S: ["screw"], N: ["nut"], O: ["other"], T: ["pliers", "adjustable_wrench",
-    "allen_key", "flat_screwdriver", "phillips_screwdriver"].concat(POWER) };  // T: all tools
+    "allen_key", "flat_screwdriver", "phillips_screwdriver"].concat(NO_GRADE.slice(1)) };  // T: all
 
   function el(id) { return document.getElementById(id); }
   var token = new URLSearchParams(window.location.search).get("t") || "";
@@ -66,7 +66,7 @@
   }
   function collecting() { return fields.mode.value === "collect"; }
 
-  // Shows the collect fields; the grade is disabled and empty for "other" and the power tools.
+  // Shows the collect fields; the grade is disabled and empty for the NO_GRADE types.
   function syncForm() {
     el("collect-fields").hidden = !collecting();
     var noGrade = NO_GRADE.indexOf(fields.object_type.value) >= 0;

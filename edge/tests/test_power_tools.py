@@ -80,16 +80,15 @@ def _model_dir(
 
 
 def test_power_tools_mirror_the_contract() -> None:
-    """The power tools of the collect mode are the grade-forbidden types of the contract other
-    than ``unknown``, in the order of ``ObjectType``."""
-    assert [t.value for t in POWER_TOOL_OBJECT_TYPES] == [
-        member.value
-        for member in ObjectType
-        if member in GRADE_FORBIDDEN_OBJECT_TYPES and member is not ObjectType.UNKNOWN
-    ]
+    """The power tools of the collect mode are grade-forbidden types of the contract, in the order
+    of ``ObjectType``, right after the hand tools (SPEC-044 adds the identification-only tools
+    after them)."""
+    assert all(ObjectType(tool) in GRADE_FORBIDDEN_OBJECT_TYPES for tool in POWER_TOOLS)
     assert [t.value for t in POWER_TOOL_OBJECT_TYPES] == list(POWER_TOOLS)
-    assert {t.value for t in UNGRADED_DATASET_TYPES} == {"other", *POWER_TOOLS}
-    assert [m.value for m in DatasetObjectType][-4:] == list(POWER_TOOLS)
+    assert {"other", *POWER_TOOLS} <= {t.value for t in UNGRADED_DATASET_TYPES}
+    members = [m.value for m in DatasetObjectType]
+    start = members.index("phillips_screwdriver") + 1
+    assert members[start : start + 4] == list(POWER_TOOLS)
 
 
 @pytest.mark.parametrize(
@@ -344,7 +343,10 @@ def test_capture_script_knows_the_power_tools() -> None:
     assert len(script.splitlines()) <= 200
     for tool in POWER_TOOLS:
         assert f'"{tool}"' in script
-    assert 'NO_GRADE = ["other"].concat(POWER)' in script
+    no_grade = script.split("var NO_GRADE = [", 1)[1].split("]", 1)[0]
+    for tool in POWER_TOOLS:
+        assert f'"{tool}"' in no_grade
+    assert "concat(NO_GRADE.slice(1))" in script
 
 
 # ---------------------------------------------------------------------------------- coverage
