@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Review |
+| Status | In Security |
 | Rodada atual | r1 |
 | Autor da implementação | ml-engineer (código do §3.1 e a operação do §4.7, depois do merge) |
 | Tags | security |
