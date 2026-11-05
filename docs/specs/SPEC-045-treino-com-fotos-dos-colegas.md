@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | ml-engineer (código do §3.1 e a operação do §4.7, depois do merge) |
 | Tags | security |
 | Depende de | ADR-025 `Aceito`; SPEC-044 mergeada (contrato 0.7.0 e constantes do `qc-ml`); SPEC-041, SPEC-036 e SPEC-037 `Done` (já estão). Para o modelo chegar à borda de produção: CA-15 da SPEC-044 |
