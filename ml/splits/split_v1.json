@@ -1,0 +1,59 @@
+{
+  "split_file": "split_v1.csv",
+  "seed": 42,
+  "ratios": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "parent": null,
+  "manifest_sha256": "e31c5c927f8d87c7e17224457c222f1b541933c9352cbccd8a7d78d4733f2289",
+  "max_external_fraction": 0.3,
+  "external_fraction_train": 0.0,
+  "counts": {
+    "images": {
+      "train": 164,
+      "val": 29,
+      "test": 30
+    },
+    "items": {
+      "train": 84,
+      "val": 15,
+      "test": 15
+    },
+    "n_external_images": {
+      "train": 0,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "warnings": [
+    {
+      "code": "small_stratum",
+      "stratum": "allen_key/none",
+      "n_items": 1
+    },
+    {
+      "code": "small_stratum",
+      "stratum": "cordless_screwdriver/none",
+      "n_items": 1
+    },
+    {
+      "code": "small_stratum",
+      "stratum": "drill/none",
+      "n_items": 2
+    },
+    {
+      "code": "small_stratum",
+      "stratum": "saw/none",
+      "n_items": 1
+    },
+    {
+      "code": "small_stratum",
+      "stratum": "spirit_level/none",
+      "n_items": 2
+    }
+  ],
+  "test_extended_types": [],
+  "deferred_types": []
+}
