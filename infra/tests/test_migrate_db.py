@@ -146,10 +146,10 @@ def test_running_sql_file_again_changes_nothing(migrated_db: str, migration) -> 
     """Running a file again (twice) and then every later file again gives the same schema.
 
     A later migration may replace a check of an earlier one (006 replaces the object_type and
-    grade checks of 003, SPEC-021): running only the earlier file again brings its older check
-    back, and the later files, run again in order, restore the current one. For the last file,
-    and for every file that no later file supersedes, this is the plain "runs again and
-    changes nothing".
+    grade checks of 003, SPEC-021, and 007 those of 006, SPEC-044): running only the earlier
+    file again brings its older check back, and the later files, run again in order, restore
+    the current one. For the last file, and for every file that no later file supersedes, this
+    is the plain "runs again and changes nothing".
     """
     before = _schema_snapshot(migrated_db)
     later = [m for m in load_migrations() if m.version > migration.version]
@@ -162,7 +162,7 @@ def test_running_sql_file_again_changes_nothing(migrated_db: str, migration) -> 
 
 
 def test_power_tool_migration_supersedes_the_hand_tool_checks(migrated_db: str) -> None:
-    """Running 003 alone again brings back its 8-value check; 006 restores the 12 values."""
+    """Running 003 alone again brings back its 8-value check; 006 and 007 restore the 15."""
     by_name = {m.filename: m for m in load_migrations()}
     query = (
         "select pg_get_constraintdef(oid) from pg_constraint "
@@ -173,8 +173,29 @@ def test_power_tool_migration_supersedes_the_hand_tool_checks(migrated_db: str) 
         conn.execute(by_name["003_tool_object_types.sql"].read_sql())
         (older,) = conn.execute(query).fetchall()
         conn.execute(by_name["006_power_tool_object_types.sql"].read_sql())
+        conn.execute(by_name["007_identified_tool_object_types.sql"].read_sql())
     assert "drill" not in older[0] and "drill" in current[0]
     assert _query(migrated_db, query) == [current]
+
+
+def test_identified_tool_migration_supersedes_the_power_tool_checks(migrated_db: str) -> None:
+    """Running 006 alone again brings back its 12-value check; 007 restores the 15 values."""
+    by_name = {m.filename: m for m in load_migrations()}
+    query = (
+        "select conname, pg_get_constraintdef(oid) from pg_constraint "
+        "where conname in ('inspections_object_type_check', "
+        "'inspections_grade_null_iff_unknown') order by 1"
+    )
+    current = _query(migrated_db, query)
+    with psycopg.connect(migrated_db, autocommit=True) as conn:
+        conn.execute(by_name["006_power_tool_object_types.sql"].read_sql())
+        older = conn.execute(query).fetchall()
+        conn.execute(by_name["007_identified_tool_object_types.sql"].read_sql())
+    assert len(current) == 2
+    for (_, old_definition), (_, new_definition) in zip(older, current, strict=True):
+        assert "spirit_level" not in old_definition and "spirit_level" in new_definition
+        assert "drill" in old_definition and "drill" in new_definition
+    assert _query(migrated_db, query) == current
 
 
 def test_manual_then_runner_does_not_fail(empty_schema: str) -> None:

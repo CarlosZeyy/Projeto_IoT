@@ -40,8 +40,8 @@ GRADE_COLORS: Mapping[Grade, str] = MappingProxyType(
     }
 )
 
-# Parafuso and porca, then the hand tools (SPEC-016 section 4.5), the power tools (SPEC-021) and
-# desconhecido last.
+# Parafuso and porca, then the hand tools (SPEC-016 section 4.5), the power tools (SPEC-021), the
+# identification-only tools (SPEC-044: martelo, chave de aperto, nível) and desconhecido last.
 OBJECT_TYPE_ORDER: tuple[ObjectType, ...] = (
     ObjectType.SCREW,
     ObjectType.NUT,
@@ -54,6 +54,9 @@ OBJECT_TYPE_ORDER: tuple[ObjectType, ...] = (
     ObjectType.SAW,
     ObjectType.DRILL,
     ObjectType.CORDLESS_SCREWDRIVER,
+    ObjectType.HAMMER,
+    ObjectType.WRENCH,
+    ObjectType.SPIRIT_LEVEL,
     ObjectType.UNKNOWN,
 )
 OBJECT_TYPE_COLORS: Mapping[ObjectType, str] = MappingProxyType(
@@ -69,6 +72,9 @@ OBJECT_TYPE_COLORS: Mapping[ObjectType, str] = MappingProxyType(
         ObjectType.SAW: "#54A24B",
         ObjectType.DRILL: "#EECA3B",
         ObjectType.CORDLESS_SCREWDRIVER: "#17BECF",
+        ObjectType.HAMMER: "#BCBD22",
+        ObjectType.WRENCH: "#6A3D9A",
+        ObjectType.SPIRIT_LEVEL: "#E7298A",
         ObjectType.UNKNOWN: "#9D9D9D",
     }
 )

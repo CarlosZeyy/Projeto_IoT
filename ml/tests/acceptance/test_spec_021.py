@@ -434,7 +434,8 @@ def test_ca13_defaults_are_byte_for_byte_the_same(tmp_path: Path) -> None:
 
 
 def test_extra_known_types_and_hand_tool_group() -> None:
-    assert ("screw", "nut", "other", *HAND_TOOLS, *POWER_TOOLS) == KNOWN_OBJECT_TYPES
+    # SPEC-044 section 3.1: only the 12 types this SPEC knew are checked (the first 12, in order).
+    assert ("screw", "nut", "other", *HAND_TOOLS, *POWER_TOOLS) == tuple(KNOWN_OBJECT_TYPES)[:12]
     assert TOOL_OBJECT_TYPES == HAND_TOOLS
 
 

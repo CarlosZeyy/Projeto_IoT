@@ -269,7 +269,7 @@ def test_ca15e_too_few_items_to_extend(tmp_path: Path, capsys) -> None:
 @pytest.mark.parametrize(
     ("extra", "message"),
     [
-        (["--defer-types", "hammer"], "unknown object type: hammer"),
+        (["--defer-types", "lathe"], "unknown object type: lathe"),  # hammer is known (SPEC-044)
         (["--extend-test-types", "screw"], "object type is not new: screw"),
         (
             ["--extend-test-types", "allen_key", "--defer-types", "allen_key"],

@@ -28,6 +28,9 @@ def test_enum_values() -> None:
         "saw",
         "drill",
         "cordless_screwdriver",
+        "hammer",
+        "wrench",
+        "spirit_level",
     ]
     assert [m.value for m in Grade] == ["perfect", "good", "fair", "poor", "unusable"]
     assert [m.value for m in Source] == ["live", "simulated"]
@@ -74,6 +77,9 @@ def test_grade_groups() -> None:
         ObjectType.SAW,
         ObjectType.DRILL,
         ObjectType.CORDLESS_SCREWDRIVER,
+        ObjectType.HAMMER,
+        ObjectType.WRENCH,
+        ObjectType.SPIRIT_LEVEL,
     } == GRADE_FORBIDDEN_OBJECT_TYPES
     assert {
         ObjectType.PLIERS,
@@ -96,7 +102,7 @@ def test_grade_groups_partition_object_type() -> None:
     assert not GRADE_REQUIRED_OBJECT_TYPES & GRADE_OPTIONAL_OBJECT_TYPES
     assert not GRADE_FORBIDDEN_OBJECT_TYPES & GRADE_OPTIONAL_OBJECT_TYPES
     assert frozenset().union(*groups) == set(ObjectType)
-    assert sum(len(group) for group in groups) == len(ObjectType) == 12
+    assert sum(len(group) for group in groups) == len(ObjectType) == 15
 
 
 POWER_TOOLS = (
@@ -107,13 +113,30 @@ POWER_TOOLS = (
 )
 
 
-def test_power_tools_come_last_in_order() -> None:
-    assert tuple(ObjectType)[-4:] == POWER_TOOLS
-    assert list(ObjectType).index(ObjectType.PHILLIPS_SCREWDRIVER) == len(ObjectType) - 5
+def test_power_tools_come_after_the_hand_tools() -> None:
+    members = list(ObjectType)
+    start = members.index(ObjectType.PHILLIPS_SCREWDRIVER) + 1
+    assert tuple(members[start : start + 4]) == POWER_TOOLS
 
 
 def test_power_tools_are_never_graded() -> None:
     for object_type in POWER_TOOLS:
+        assert object_type in GRADE_FORBIDDEN_OBJECT_TYPES
+        assert object_type not in GRADE_OPTIONAL_OBJECT_TYPES
+        assert object_type not in GRADE_REQUIRED_OBJECT_TYPES
+
+
+IDENTIFIED_TOOLS = (ObjectType.HAMMER, ObjectType.WRENCH, ObjectType.SPIRIT_LEVEL)
+
+
+def test_identified_tools_come_last_in_order() -> None:
+    assert tuple(ObjectType)[-3:] == IDENTIFIED_TOOLS
+    assert list(ObjectType).index(ObjectType.CORDLESS_SCREWDRIVER) == len(ObjectType) - 4
+    assert [m.value for m in IDENTIFIED_TOOLS] == ["hammer", "wrench", "spirit_level"]
+
+
+def test_identified_tools_are_never_graded() -> None:
+    for object_type in IDENTIFIED_TOOLS:
         assert object_type in GRADE_FORBIDDEN_OBJECT_TYPES
         assert object_type not in GRADE_OPTIONAL_OBJECT_TYPES
         assert object_type not in GRADE_REQUIRED_OBJECT_TYPES

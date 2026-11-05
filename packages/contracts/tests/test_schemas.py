@@ -228,6 +228,60 @@ def test_power_tool_round_trip() -> None:
     assert json.loads(m.model_dump_json())["object_type"] == "cordless_screwdriver"
 
 
+IDENTIFIED_TOOLS = ["hammer", "wrench", "spirit_level"]
+
+
+@pytest.mark.parametrize("object_type", IDENTIFIED_TOOLS)
+def test_identified_tool_without_grade_accepted(object_type: str) -> None:
+    m = InspectionCreate.model_validate(unknown_payload() | {"object_type": object_type})
+    assert m.object_type == object_type
+    assert m.grade is None and m.grade_score is None and m.grade_confidence is None
+
+
+@pytest.mark.parametrize("object_type", IDENTIFIED_TOOLS)
+def test_identified_tool_with_grade_rejected(object_type: str) -> None:
+    payload = base_payload(object_type=object_type, grade="good", grade_score=1.0)
+    payload["grade_confidence"] = 0.8
+    with pytest.raises(ValidationError, match="grade must be null for a grade-forbidden"):
+        InspectionCreate.model_validate(payload)
+
+
+@pytest.mark.parametrize("object_type", IDENTIFIED_TOOLS)
+def test_identified_tool_with_only_score_or_confidence_rejected(object_type: str) -> None:
+    for field, value in (("grade_score", 1.0), ("grade_confidence", 0.5)):
+        with pytest.raises(ValidationError, match=f"{field} must be null"):
+            InspectionCreate.model_validate(
+                unknown_payload() | {"object_type": object_type, field: value}
+            )
+
+
+def test_identified_tool_message_carries_no_values() -> None:
+    with pytest.raises(ValidationError) as info:
+        InspectionCreate.model_validate(base_payload(object_type="spirit_level", grade="poor"))
+    (error,) = info.value.errors()
+    assert "spirit_level" not in error["msg"] and "poor" not in error["msg"]
+
+
+def test_inspection_read_of_an_identified_tool() -> None:
+    read = unknown_payload() | {
+        "object_type": "wrench",
+        "received_at": datetime.now(UTC).isoformat(),
+        "is_defective": False,
+    }
+    m = InspectionRead.model_validate(read)
+    assert m.object_type is ObjectType.WRENCH and m.grade is None
+    with pytest.raises(ValidationError, match="grade-forbidden"):
+        InspectionRead.model_validate(base_payload(object_type="wrench") | read | {"grade": "good"})
+
+
+@pytest.mark.parametrize("object_type", IDENTIFIED_TOOLS)
+def test_identified_tool_round_trip(object_type: str) -> None:
+    m = InspectionCreate.model_validate(unknown_payload() | {"object_type": object_type})
+    again = InspectionCreate.model_validate_json(m.model_dump_json())
+    assert again == m
+    assert json.loads(m.model_dump_json())["object_type"] == object_type
+
+
 @pytest.mark.parametrize("object_type", list(ObjectType))
 @pytest.mark.parametrize("grade", [None, *Grade])
 def test_invariant_follows_the_grade_groups(object_type: ObjectType, grade: Grade | None) -> None:

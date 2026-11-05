@@ -172,7 +172,8 @@ ORIGIN_CONTRIBUTOR = "contributor"
 ORIGIN_EXTERNAL = "external"
 ORIGINS = frozenset({ORIGIN_CONTRIBUTOR, ORIGIN_EXTERNAL})
 # Whole-string patterns, always with ``re.fullmatch`` (SPEC-036 section 4.2).
-# ``T``/``XT``: hand tools (SPEC-016 section 4.4) and power tools (SPEC-021).
+# ``T``/``XT``: hand tools (SPEC-016 section 4.4), power tools (SPEC-021) and the
+# identification-only tools (SPEC-044), all from ``qc_edge.collect.ITEM_PREFIX_TYPES``.
 CONTRIBUTOR_ITEM_PATTERN = r"[SNOT]-[0-9]{3}"
 EXTERNAL_ITEM_PATTERN = r"X[SNOT]-[0-9]{4}"
 CONTRIBUTOR_PATTERN = r"c[0-9]{2}"
@@ -497,8 +498,9 @@ def _object_type_problem(object_type: str, item_id: str) -> str | None:
 
 
 def _grade_problem(grade: str, object_type: str) -> str | None:
-    # ``other`` and the power tools (SPEC-021) never have a grade; a filled grade is the same
-    # problem for both (``grade_on_other``, the code of SPEC-036 section 4.2).
+    # ``other``, the power tools (SPEC-021) and the identification-only tools (SPEC-044) never
+    # have a grade; a filled grade is the same problem for all of them (``grade_on_other``, the
+    # code of SPEC-036 section 4.2).
     if object_type in _UNGRADED_TYPES:
         return "grade_on_other" if grade else None
     if object_type in _GRADED_TYPES:

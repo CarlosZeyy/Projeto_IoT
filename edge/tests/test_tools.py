@@ -124,10 +124,11 @@ def test_labels_unknown_key_is_still_refused(tmp_path: Path, dummy_model: types.
         OnnxInferencer(_model_dir(dummy_model, tmp_path, labels))
 
 
-def test_labels_hammer_is_still_outside_the_contract(
+def test_labels_type_outside_the_contract_is_refused(
     tmp_path: Path, dummy_model: types.ModuleType
 ) -> None:
-    labels = {"object_types": ["screw", "hammer", "other"], "grades": list(GRADES)}
+    # "hammer" entered the contract in 0.7.0 (SPEC-044); "lathe" is still outside.
+    labels = {"object_types": ["screw", "lathe", "other"], "grades": list(GRADES)}
     directory = dummy_model.write_model_dir(
         tmp_path, type_probs=[0.4, 0.3, 0.3], object_types=("screw", "nut", "other")
     )
@@ -340,6 +341,9 @@ def test_collect_selector_offers_the_tools(settings: EdgeSettings) -> None:
         ("saw", "serra"),
         ("drill", "furadeira"),
         ("cordless_screwdriver", "parafusadeira"),
+        ("hammer", "martelo"),
+        ("wrench", "chave de aperto"),
+        ("spirit_level", "nível"),
         ("other", "outro"),
     ]
     positions = [

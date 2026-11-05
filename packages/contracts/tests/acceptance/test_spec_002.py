@@ -580,6 +580,10 @@ EXPECTED_LABELS = [
             "saw": "serra",
             "drill": "furadeira",
             "cordless_screwdriver": "parafusadeira",
+            # SPEC-044 section 3.1: labels of the 3 identification-only tools.
+            "hammer": "martelo",
+            "wrench": "chave de aperto",
+            "spirit_level": "nível",
         },
     ),
     (SOURCE_LABELS_PT, Source, {"live": "real", "simulated": "simulado"}),

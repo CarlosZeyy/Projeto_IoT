@@ -100,12 +100,13 @@ def power3(_power3: Path, tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------------------------
 
 
-def test_power_tools_are_the_grade_forbidden_types_of_the_contract_but_unknown() -> None:
+def test_power_tools_are_grade_forbidden_types_of_the_contract() -> None:
+    # SPEC-044: an explicit tuple; the grade forbidden group also has the identified tools.
     assert POWER_TOOL_OBJECT_TYPES == POWER
-    assert set(POWER) == {m.value for m in GRADE_FORBIDDEN_OBJECT_TYPES} - {"unknown"}
-    assert list(KNOWN_OBJECT_TYPES) == TWELVE
+    assert set(POWER) <= {m.value for m in GRADE_FORBIDDEN_OBJECT_TYPES} - {"unknown"}
+    assert list(KNOWN_OBJECT_TYPES)[:12] == TWELVE
     assert TOOL_OBJECT_TYPES == HAND  # tool_grade_coverage stays on the 5 hand tools
-    assert ("other", *POWER) == data.GRADE_FORBIDDEN_DATASET_TYPES
+    assert data.GRADE_FORBIDDEN_DATASET_TYPES[:5] == ("other", *POWER)
     assert not set(POWER) & set(data.GRADE_REQUIRED_DATASET_TYPES)
 
 

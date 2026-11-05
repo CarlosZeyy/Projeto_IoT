@@ -596,6 +596,88 @@ def test_power_tools_count_in_their_coverage_row(env: Env) -> None:
     assert (cell.grade, cell.images, cell.items) == (None, 1, 1)  # the external one never counts
 
 
+IDENTIFIED_TOOLS = ("hammer", "wrench", "spirit_level")
+
+
+def test_identified_tool_is_imported_without_grade(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CA-07 of SPEC-044 (first part): ``T-601`` ``hammer`` without a grade, contributor c01."""
+    env.add_file("martelo.jpg", plain_jpeg(color=(90, 40, 10)))
+    env.write_plan(
+        [contributor_row("martelo.jpg", item_id="T-601", object_type="hammer", grade="")]
+    )
+    assert env.run() == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "imported 1, skipped 0, failed 0"
+    (row,) = env.manifest()
+    assert (row["item_id"], row["object_type"], row["grade"]) == ("T-601", "hammer", "")
+    assert row["image_path"].startswith("raw/hammer/_/T-601__")
+    assert (env.dataset / row["image_path"]).is_file()
+    assert [(r["origin"], r["contributor"]) for r in env.sources()] == [("contributor", "c01")]
+
+
+@pytest.mark.parametrize("tool", IDENTIFIED_TOOLS)
+def test_every_identified_tool_is_accepted_with_t_or_xt_and_no_grade(env: Env, tool: str) -> None:
+    env.add_file("t.jpg", plain_jpeg())
+    env.add_file("x.png", encode(Image.new("RGB", (900, 700), (5, 60, 9)), "PNG"))
+    env.write_plan(
+        [
+            contributor_row("t.jpg", item_id="T-612", object_type=tool, grade=""),
+            external_row("x.png", item_id="XT-0612", object_type=tool, grade=""),
+        ]
+    )
+    assert env.run() == 0
+    assert [(r["item_id"], r["object_type"], r["grade"]) for r in env.manifest()] == [
+        ("T-612", tool, ""),
+        ("XT-0612", tool, ""),
+    ]
+    for row in env.manifest():
+        assert row["image_path"].startswith(f"raw/{tool}/_/")
+
+
+def test_graded_identified_tool_refuses_the_whole_plan(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CA-07 of SPEC-044: ``T-602`` ``wrench`` with a grade refuses the plan (exit 2, nothing
+    written), with the same code as ``other`` and the power tools."""
+    env.add_file("a.jpg", plain_jpeg(color=(1, 2, 3)))
+    env.add_file("b.jpg", plain_jpeg(color=(4, 5, 6)))
+    env.write_plan(
+        [
+            contributor_row("a.jpg", item_id="T-601", object_type="hammer", grade=""),
+            contributor_row("b.jpg", item_id="T-602", object_type="wrench", grade="good"),
+        ]
+    )
+    _expect_plan_problem(env, capsys, 3, "grade_on_other", "grade")
+
+
+@pytest.mark.parametrize("tool", IDENTIFIED_TOOLS)
+@pytest.mark.parametrize("item_id", ["O-603", "S-603", "N-603"])
+def test_identified_tool_needs_the_t_prefix(
+    env: Env, capsys: pytest.CaptureFixture[str], tool: str, item_id: str
+) -> None:
+    """CA-07 of SPEC-044: ``O-603`` ``spirit_level`` is an ``item_prefix_mismatch``."""
+    env.add_file("a.jpg", plain_jpeg())
+    env.write_plan([contributor_row("a.jpg", item_id=item_id, object_type=tool, grade="")])
+    _expect_plan_problem(env, capsys, 2, "item_prefix_mismatch", "object_type")
+
+
+def test_identified_tools_count_in_their_coverage_row(env: Env) -> None:
+    env.add_file("a.jpg", plain_jpeg())
+    env.add_file("b.jpg", plain_jpeg(color=(9, 9, 9)))
+    env.write_plan(
+        [
+            contributor_row("a.jpg", item_id="T-620", object_type="spirit_level", grade=""),
+            external_row("b.jpg", item_id="XT-0620", object_type="spirit_level", grade=""),
+        ]
+    )
+    assert env.run() == 0
+    (cell,) = [
+        c for c in compute_coverage(env.dataset / "manifest.csv") if c.object_type == "spirit_level"
+    ]
+    assert (cell.grade, cell.images, cell.items) == (None, 1, 1)  # the external one never counts
+
+
 def test_rerun_skips_and_excluded_image_is_imported_again(
     env: Env, capsys: pytest.CaptureFixture[str]
 ) -> None:

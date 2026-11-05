@@ -107,10 +107,12 @@ def test_openapi_spc_enum_is_unchanged(no_db_settings) -> None:
     assert spec["components"]["schemas"]["SpcObjectType"]["enum"] == SPC_ENUM
 
 
-def test_health_shows_the_contract_0_6_0(no_db_settings) -> None:
+def test_health_shows_a_contract_with_the_power_tools(no_db_settings) -> None:
+    """0.6.0 or later (SPEC-044 moved it to 0.7.0); the exact value is in test_identified_tools."""
     with TestClient(create_app(no_db_settings)) as no_db_client:
         body = no_db_client.get("/api/v1/health").json()
-    assert body["contract_version"] == "0.6.0"
+    major, minor, _ = (int(part) for part in body["contract_version"].split("."))
+    assert (major, minor) >= (0, 6)
 
 
 # --- write and read routes ----------------------------------------------------------------------

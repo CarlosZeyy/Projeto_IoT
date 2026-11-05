@@ -24,6 +24,7 @@ from qc_edge import collect as collect_module
 from qc_edge import jpeg as jpeg_module
 from qc_edge.collect import (
     GRADED_DATASET_TYPES,
+    IDENTIFIED_TOOL_OBJECT_TYPES,
     ITEM_PREFIX_TYPES,
     MANIFEST_COLUMNS,
     POWER_TOOL_OBJECT_TYPES,
@@ -652,9 +653,10 @@ def test_coverage_of_a_missing_manifest(tmp_path: Path) -> None:
         *[("nut", g.value) for g in Grade],
         *[(tool, g.value) for tool in TOOLS for g in Grade],
         *[(tool, None) for tool in POWER_TOOLS],
+        *[(tool, None) for tool in IDENTIFIED_TOOLS],
         ("other", None),
     ]
-    assert len(cells) == 40
+    assert len(cells) == 43
     assert all(c.images == 0 and c.items == 0 for c in cells)
 
 
@@ -683,7 +685,7 @@ def test_coverage_counts_images_and_items(tmp_path: Path) -> None:
         30,
     )
     rest = [c for c in cells if c not in (perfect, poor, other)]
-    assert len(rest) == 37 and all((c.images, c.items) == (0, 0) for c in rest)
+    assert len(rest) == 40 and all((c.images, c.items) == (0, 0) for c in rest)
     assert not perfect.complete
 
 
@@ -1039,6 +1041,7 @@ def test_append_adds_a_missing_final_line_break(tmp_path: Path) -> None:
 
 TOOLS = ("pliers", "adjustable_wrench", "allen_key", "flat_screwdriver", "phillips_screwdriver")
 POWER_TOOLS = ("angle_grinder", "saw", "drill", "cordless_screwdriver")
+IDENTIFIED_TOOLS = ("hammer", "wrench", "spirit_level")
 
 
 @pytest.mark.parametrize("tool", TOOLS)
@@ -1056,7 +1059,9 @@ def test_tool_types_mirror_the_contract() -> None:
         member.value for member in ObjectType if member in GRADE_OPTIONAL_OBJECT_TYPES
     ]
     assert {t.value for t in GRADED_DATASET_TYPES} == {"screw", "nut", *TOOLS}
-    assert ITEM_PREFIX_TYPES["T"] == frozenset({*TOOL_OBJECT_TYPES, *POWER_TOOL_OBJECT_TYPES})
+    assert ITEM_PREFIX_TYPES["T"] == frozenset(
+        {*TOOL_OBJECT_TYPES, *POWER_TOOL_OBJECT_TYPES, *IDENTIFIED_TOOL_OBJECT_TYPES}
+    )
 
 
 @pytest.mark.parametrize(

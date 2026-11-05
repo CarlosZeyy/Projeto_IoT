@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Aceito (aprovado pelo humano em 2026-11-01, nesta sessão; respostas na última seção) |
+| Status | Aceito (aprovado pelo humano em 2026-11-01, nesta sessão; respostas na última seção); decisões 3 e 6 alteradas em parte pelo ADR-025 |
 | Data | 2026-10-31; decisão 4 reescrita e decisões 5 e 6 acrescentadas em 2026-11-01 |
 | Decisores | Dupla (redigido pelo agente architect) |
 | Relacionados | ADR-004, ADR-014 e ADR-020 (complementados, não substituídos), ADR-003 (condição da Fase 3 substituída), ADR-022, SPEC-008, SPEC-011, SPEC-012, SPEC-019, SPEC-035, SPEC-036, SPEC-041, PRD §4.3 e §8, R-02, R-06, R-11, R-14, N-07, N-11 |

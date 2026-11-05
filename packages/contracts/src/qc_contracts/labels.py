@@ -29,6 +29,9 @@ OBJECT_TYPE_LABELS_PT: Mapping[ObjectType, str] = MappingProxyType(
         ObjectType.SAW: "serra",
         ObjectType.DRILL: "furadeira",
         ObjectType.CORDLESS_SCREWDRIVER: "parafusadeira",
+        ObjectType.HAMMER: "martelo",
+        ObjectType.WRENCH: "chave de aperto",
+        ObjectType.SPIRIT_LEVEL: "nível",
     }
 )
 

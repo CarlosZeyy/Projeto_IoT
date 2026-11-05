@@ -205,7 +205,8 @@ def test_extra_every_power_tool_in_history_and_label(code: str, label: str) -> N
 
 
 def test_extra_object_type_label_covers_the_12_types() -> None:
-    assert len(ObjectType) == 12
+    # SPEC-044 section 3.1: the 12 types of this SPEC are in the enum (no fixed count).
+    assert {"screw", "nut", "unknown", *HAND_TOOLS, *POWER_TOOLS} <= {m.value for m in ObjectType}
     for member in ObjectType:
         assert formatting.object_type_label(member) == OBJECT_TYPE_LABELS_PT[member]
 
@@ -225,9 +226,10 @@ def test_extra_history_csv_of_a_power_tool() -> None:
 def test_extra_chart_order_and_distinct_colors_with_the_power_tools() -> None:
     order = [ObjectType(t).value for t in charts.OBJECT_TYPE_ORDER]
     assert set(order) == {m.value for m in ObjectType}
-    assert len(order) == 12
+    assert len(order) == len(set(order))  # SPEC-044 section 3.1: each type once, no fixed count
     # The SPEC-016 relative order is kept and the power tools come together after the hand tools.
-    assert [t for t in order if t not in POWER_TOOLS] == ["screw", "nut", *HAND_TOOLS, "unknown"]
+    earlier = ["screw", "nut", *HAND_TOOLS, "unknown"]
+    assert [t for t in order if t in earlier] == earlier
     idx = [order.index(t) for t in POWER_TOOLS]
     assert idx == sorted(idx) and idx[-1] - idx[0] == 3
     assert idx[0] > order.index("phillips_screwdriver")

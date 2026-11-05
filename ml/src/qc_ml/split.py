@@ -14,7 +14,8 @@ earlier ``split_v<M>.json``) needs a decision once there is an earlier version:
 ``--defer-types`` (its images stay out of the split). The rows of a type without any line in
 the split are ignored when the split is read (``assign_splits``, ``rows_for``), with a
 ``deferred type images`` log line.
-The power tools (SPEC-021) use the same extension and deferral, with the whole type as stratum.
+The power tools (SPEC-021) and the identification-only tools (SPEC-044) use the same extension
+and deferral, with the whole type as stratum.
 
 ADR-024 and SPEC-041 section 4.6: the CLI refuses a ``split_v1`` whose test misses one of the 10
 ``screw``/``nut`` x grade strata or ``other/none``, counting only the non-external items
@@ -60,8 +61,8 @@ from qc_ml.data import (
     ITEM_PREFIX_TYPES,
     KNOWN_OBJECT_TYPES,
     NO_GRADE,
-    POWER_TOOL_OBJECT_TYPES,
     SPLIT_NAMES,
+    UNGRADED_TOOL_OBJECT_TYPES,
     configure_logging,
     dominant_grade,
     is_external_item,
@@ -502,7 +503,8 @@ def make_split(
     read as a graded type (SPEC-016 section 4.7): ``(type, dominant grade)`` when the tool is
     graded by ``tool_grade_coverage(df)`` (any type that is not a tool keeps its dominant
     grade), ``(type, "none")`` (the whole type) when the tool is ungraded and for every power
-    tool (``POWER_TOOL_OBJECT_TYPES``, never graded, SPEC-021 section 3.1). The checks of the two
+    tool (SPEC-021 section 3.1) and identification-only tool (SPEC-044 section 3.1), never graded
+    (``UNGRADED_TOOL_OBJECT_TYPES``). The checks of the two
     lists over every earlier version are made by ``type_decision_problems`` (the CLI); here an
     extended type with an item already in ``previous`` or ``history`` is a ``SplitError``, and
     an extended type that would have no item in test (fewer than 3 non-external items in
@@ -543,8 +545,9 @@ def make_split(
         coverage = tool_grade_coverage(df)
 
         def extension_strata(object_type: str, stratum: tuple[str, str]) -> tuple[str, str]:
-            if object_type in POWER_TOOL_OBJECT_TYPES:
-                return (object_type, NO_GRADE)  # SPEC-021: a power tool, the whole type
+            if object_type in UNGRADED_TOOL_OBJECT_TYPES:
+                # SPEC-021 and SPEC-044: a power or identification-only tool, the whole type
+                return (object_type, NO_GRADE)
             if object_type in coverage and not coverage[object_type]["graded"]:
                 return (object_type, NO_GRADE)  # an ungraded tool: the whole type
             return stratum

@@ -6,9 +6,10 @@ from enum import StrEnum
 class ObjectType(StrEnum):
     """Type of inspected object. The model class ``other`` always maps to ``UNKNOWN``.
 
-    The hand tools (phase 2, SPEC-016) come after the MVP members, and the power tools (phase 3,
-    SPEC-021, identification only) after the hand tools. Every member belongs to exactly one of
-    the grade groups below (ADR-021).
+    The hand tools (phase 2, SPEC-016) come after the MVP members, the power tools (phase 3,
+    SPEC-021, identification only) after the hand tools, and the identification-only tools of
+    ADR-025 (SPEC-044) after the power tools. Every member belongs to exactly one of the grade
+    groups below (ADR-021).
     """
 
     SCREW = "screw"
@@ -23,6 +24,9 @@ class ObjectType(StrEnum):
     SAW = "saw"
     DRILL = "drill"
     CORDLESS_SCREWDRIVER = "cordless_screwdriver"
+    HAMMER = "hammer"
+    WRENCH = "wrench"
+    SPIRIT_LEVEL = "spirit_level"
 
 
 class Grade(StrEnum):
@@ -49,9 +53,11 @@ class CaptureMode(StrEnum):
     COLLECT = "collect"
 
 
-# Grade groups of ADR-021 (contract 0.4.0; power tools from 0.6.0): disjoint, and together equal
-# to ``set(ObjectType)``. A grade-required type always has a grade; a grade-forbidden type never
-# has one (``unknown`` and the power tools, whose inner state is out of scope, PRD section 4.4);
+# Grade groups of ADR-021 (contract 0.4.0; power tools from 0.6.0; hammer, wrench and spirit
+# level from 0.7.0, ADR-025): disjoint, and together equal to ``set(ObjectType)``. A
+# grade-required type always has a grade; a grade-forbidden type never has one (``unknown``, the
+# power tools, whose inner state is out of scope, PRD section 4.4, and the identification-only
+# tools of ADR-025);
 # a grade-optional type may have it or not (the model says which types it grades, in the
 # ``ungraded_object_types`` of its ``labels.json``).
 GRADE_REQUIRED_OBJECT_TYPES: frozenset[ObjectType] = frozenset({ObjectType.SCREW, ObjectType.NUT})
@@ -62,6 +68,9 @@ GRADE_FORBIDDEN_OBJECT_TYPES: frozenset[ObjectType] = frozenset(
         ObjectType.SAW,
         ObjectType.DRILL,
         ObjectType.CORDLESS_SCREWDRIVER,
+        ObjectType.HAMMER,
+        ObjectType.WRENCH,
+        ObjectType.SPIRIT_LEVEL,
     }
 )
 GRADE_OPTIONAL_OBJECT_TYPES: frozenset[ObjectType] = frozenset(
