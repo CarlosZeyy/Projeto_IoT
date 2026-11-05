@@ -133,3 +133,16 @@ Nenhum.
 - [x] Não alterei código de produção, só arquivos em `*/tests/acceptance/` e este relatório.
 - [x] Nenhuma foto de `ml/data/` aberta; nenhum acesso ao Supabase de produção nem à VPS.
 
+## CA-15 (produção), registrado pelo orquestrador em 2026-11-05 (UTC)
+
+| Passo | Resultado |
+|---|---|
+| 1. `infra/migrate.py --status` antes | 001–006 applied, 007 pending |
+| 1. `infra/migrate.py` (pooler em modo session, 5432) | `applied migration 007 (007_identified_tool_object_types.sql)`; `--status`: 7 applied, 0 pending |
+| 2. `pg_get_constraintdef` de `inspections_object_type_check` e `inspections_grade_null_iff_unknown` | `hammer`, `wrench` e `spirit_level` presentes nas duas |
+| 3. Deploy de `partqc-api` e `partqc-web` (webhook ainda não configurado; disparado como o botão Deploy, depois da migração) | os dois `finished`; containers `healthy` |
+| 4. `GET /api/v1/health` | `status ok`, `contract_version 0.7.0`, `db ok`; dashboard 200; `GET /api/v1/metrics/summary` com 15 tipos em `by_object_type` |
+| 5. Borda | o notebook roda a borda a partir da `main` (merge `555c4b6`); nenhuma borda de produção em execução |
+| 6. `qc_edge.requeue` | sem outbox no notebook: nenhum item `dead` |
+
+Resultado: **PASS**. SEC-44-01 e SEC-44-02 conferidos (migração antes do deploy; os dois deploys com sucesso).
