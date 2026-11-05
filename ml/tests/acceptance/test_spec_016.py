@@ -1098,15 +1098,15 @@ def test_extra_invalid_type_decisions_exit_2(
     assert "Traceback" not in proc.stderr
 
 
-def test_extra_split_v1_ignores_the_lists(t_tools1: Path, tmp_path: Path) -> None:
+def test_extra_split_v1_defers_the_listed_type(t_tools1: Path, tmp_path: Path) -> None:
     ds = copy_dataset(t_tools1, tmp_path / "ds")
     splits = tmp_path / "splits"
     proc = split_cli(ds, splits, "--defer-types", "pliers")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     v1 = read_split(splits / "split_v1.csv")
-    assert any(type_of(p) == "pliers" for p in v1)
+    assert not any(type_of(p) == "pliers" for p in v1)
     meta = split_json(splits / "split_v1.csv")
-    assert meta["deferred_types"] == [] and meta["test_extended_types"] == []
+    assert meta["deferred_types"] == ["pliers"] and meta["test_extended_types"] == []
 
 
 def test_extra_readers_ignore_a_deferred_type(
