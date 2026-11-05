@@ -85,9 +85,7 @@ NOTICE = (
     "labels. No validation or test split; no quality metric exists for this model."
 )
 GRADES = ("perfect", "good", "fair", "poor", "unusable")
-FLOOR_STRATA = sorted(
-    [*(f"screw/{g}" for g in GRADES), *(f"nut/{g}" for g in GRADES), "other/none"]
-)
+FLOOR_STRATA = sorted([*(f"screw/{g}" for g in GRADES), "other/none"])
 VERSIONS_CA20 = [
     ("partqc-mnv3-provisional-v1", True),
     ("partqc-provisional-v1", True),
@@ -412,7 +410,7 @@ def test_ca02_missing_stratum_is_refused_and_nothing_is_written(
     item = next(
         r["item_id"]
         for r in read_rows(floor_ds)
-        if r["object_type"] == "nut" and r["grade"] == "fair"
+        if r["object_type"] == "screw" and r["grade"] == "fair"
     )
     drop_rows(floor_ds, lambda r: r["item_id"] == item)
     assert len({r["item_id"] for r in read_rows(floor_ds)}) == 32
@@ -421,9 +419,9 @@ def test_ca02_missing_stratum_is_refused_and_nothing_is_written(
     proc = split_cli(floor_ds, splits)
 
     assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "split_v1 below the floor: nut/fair" in proc.stderr.splitlines()
+    assert "split_v1 below the floor: screw/fair" in proc.stderr.splitlines()
     assert [ln for ln in proc.stderr.splitlines() if "below the floor" in ln] == [
-        "split_v1 below the floor: nut/fair"
+        "split_v1 below the floor: screw/fair"
     ]
     assert split_files(tmp_path) == []
 
@@ -432,7 +430,7 @@ def _below_floor_ds(floor_ds: Path) -> Path:
     item = next(
         r["item_id"]
         for r in read_rows(floor_ds)
-        if r["object_type"] == "nut" and r["grade"] == "fair"
+        if r["object_type"] == "screw" and r["grade"] == "fair"
     )
     drop_rows(floor_ds, lambda r: r["item_id"] == item)
     return floor_ds
@@ -446,9 +444,9 @@ def test_ca03_allow_below_floor_records_the_warning(floor_ds: Path, tmp_path: Pa
 
     assert proc.returncode == 0, proc.stderr
     meta = json.loads((splits / "split_v1.json").read_text(encoding="utf-8"))
-    assert {"code": "below_floor", "stratum": "nut/fair"} in meta["warnings"]
+    assert {"code": "below_floor", "stratum": "screw/fair"} in meta["warnings"]
     small = [w for w in meta["warnings"] if w.get("code") == "small_stratum"]
-    assert any("nut/fair" in json.dumps(w) for w in small), meta["warnings"]
+    assert any("screw/fair" in json.dumps(w) for w in small), meta["warnings"]
 
 
 def _second_split_setup(tmp_path: Path) -> tuple[Path, Path]:
@@ -1455,13 +1453,13 @@ def test_extra_many_strata_are_listed_in_lexicographic_order(
 ) -> None:
     drop_rows(
         floor_ds,
-        lambda r: r["item_id"] in {"S-005", "O-001", "N-003", "N-002"},
+        lambda r: r["item_id"] in {"S-005", "O-001", "S-003", "S-002"},
     )
     proc = split_cli(floor_ds, tmp_path / "splits")
     assert proc.returncode == 2
     lines = [ln for ln in proc.stderr.splitlines() if ln.startswith("split_v1 below the floor: ")]
     strata = [ln.removeprefix("split_v1 below the floor: ") for ln in lines]
-    assert strata == ["nut/fair", "nut/good", "other/none", "screw/unusable"]
+    assert strata == ["other/none", "screw/fair", "screw/good", "screw/unusable"]
 
 
 def test_extra_allow_flag_above_the_floor_adds_no_warning(floor_ds: Path, tmp_path: Path) -> None:
@@ -1535,7 +1533,7 @@ def test_extra_contributor_items_count_for_the_floor(tmp_path: Path) -> None:
 
 
 def test_extra_excluded_item_counts_as_missing(floor_ds: Path, tmp_path: Path) -> None:
-    rows = [r for r in read_rows(floor_ds) if r["object_type"] == "nut" and r["grade"] == "fair"]
+    rows = [r for r in read_rows(floor_ds) if r["object_type"] == "screw" and r["grade"] == "fair"]
     item = rows[0]["item_id"]
     gone = [r["image_path"] for r in rows if r["item_id"] == item]
     for image in gone:
@@ -1547,7 +1545,7 @@ def test_extra_excluded_item_counts_as_missing(floor_ds: Path, tmp_path: Path) -
     )
     proc = split_cli(floor_ds, tmp_path / "splits")
     assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "split_v1 below the floor: nut/fair" in proc.stderr.splitlines()
+    assert "split_v1 below the floor: screw/fair" in proc.stderr.splitlines()
 
 
 def test_extra_synthetic_zero_items_still_needs_externals(tmp_path: Path) -> None:
@@ -1563,11 +1561,11 @@ def test_extra_synthetic_labeler_is_applied_to_every_line(tmp_path: Path) -> Non
 
 
 def test_extra_dominant_grade_decides_the_stratum(floor_ds: Path, tmp_path: Path) -> None:
-    # Section 7, "Grau dominante": 2 of the 3 images of each nut/fair item become poor, so no item
-    # is in nut/fair any more, although every one still has a fair image.
+    # Section 7, "Grau dominante": 2 of the 3 images of each screw/fair item become poor, so no
+    # item is in screw/fair any more, although every one still has a fair image.
     rows = read_rows(floor_ds)
     fair = sorted(
-        {r["item_id"] for r in rows if r["object_type"] == "nut" and r["grade"] == "fair"}
+        {r["item_id"] for r in rows if r["object_type"] == "screw" and r["grade"] == "fair"}
     )
     changed = [
         [path, "poor", "a", "second look"]
@@ -1581,7 +1579,7 @@ def test_extra_dominant_grade_decides_the_stratum(floor_ds: Path, tmp_path: Path
     proc = split_cli(floor_ds, tmp_path / "splits")
 
     assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "split_v1 below the floor: nut/fair" in proc.stderr.splitlines()
+    assert "split_v1 below the floor: screw/fair" in proc.stderr.splitlines()
     assert split_files(tmp_path) == []
 
 

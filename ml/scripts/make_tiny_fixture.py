@@ -5,6 +5,7 @@ Run once, with the ``train`` extra (torch, onnx), from the repository root::
     uv run --package qc-ml python ml/scripts/make_tiny_fixture.py
     uv run --package qc-ml python ml/scripts/make_tiny_fixture.py --with-tools
     uv run --package qc-ml python ml/scripts/make_tiny_fixture.py --with-power-tools
+    uv run --package qc-ml python ml/scripts/make_tiny_fixture.py --identified-tools-no-nut
 
 ``--with-tools`` (SPEC-016 section 4.10) writes ``ml/tests/fixtures/tiny_model_tools/`` instead:
 the same structure, with a type head of 8 classes (``screw``, ``nut``, ``other`` and the 5 hand
@@ -13,6 +14,12 @@ tools) and ``labels.json`` with ``ungraded_object_types = ["allen_key"]``.
 ``--with-power-tools`` (SPEC-021 section 3.1) writes ``ml/tests/fixtures/tiny_model_power_tools/``:
 a type head of 12 classes (the 8 above and the 4 power tools) and ``labels.json`` with
 ``ungraded_object_types`` equal to the 4 power tools.
+
+``--identified-tools-no-nut`` (SPEC-045 section 3.1, ADR-025) writes
+``ml/tests/fixtures/tiny_model_no_nut/``: a type head of 5 classes without ``nut`` (``screw``,
+``other``, ``hammer``, ``wrench`` and ``spirit_level``) and ``labels.json`` with
+``ungraded_object_types`` equal to the 3 identification-only tools, like the official model
+trained with the photos of the contributors.
 
 The network is minimal (conv 3->8, global average pooling, two linear heads) and goes through the
 same ``ProbabilityWrapper`` and ``export_onnx`` as the real model, so the CI can test the parity,
@@ -32,6 +39,7 @@ from torch import nn
 from qc_ml.artifacts import DECISION_FILE
 from qc_ml.data import (
     DEFAULT_LABELS,
+    IDENTIFIED_TOOL_OBJECT_TYPES,
     MVP_OBJECT_TYPES,
     POWER_TOOL_OBJECT_TYPES,
     TOOL_OBJECT_TYPES,
@@ -55,6 +63,13 @@ POWER_TOOLS_LABELS = ModelLabels(
     object_types=(*MVP_OBJECT_TYPES, *TOOL_OBJECT_TYPES, *POWER_TOOL_OBJECT_TYPES),
     grades=DEFAULT_LABELS.grades,
     ungraded_object_types=POWER_TOOL_OBJECT_TYPES,
+)
+NO_NUT_OUT = Path("ml/tests/fixtures/tiny_model_no_nut")
+# SPEC-045 section 3.1: the model without nut (ADR-025), with the 3 identification-only tools.
+NO_NUT_LABELS = ModelLabels(
+    object_types=("screw", "other", *IDENTIFIED_TOOL_OBJECT_TYPES),
+    grades=DEFAULT_LABELS.grades,
+    ungraded_object_types=IDENTIFIED_TOOL_OBJECT_TYPES,
 )
 TINY_DECISION = Thresholds(
     type_threshold=0.70, unusable_threshold=0.50, grade_review_threshold=0.60
@@ -98,8 +113,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="12 types (hand and power tools) and the 4 power tools ungraded (SPEC-021)",
     )
+    kind.add_argument(
+        "--identified-tools-no-nut",
+        action="store_true",
+        help="5 types without nut (screw, other, hammer, wrench, spirit_level) (SPEC-045)",
+    )
     args = parser.parse_args(argv)
-    if args.with_power_tools:
+    if args.identified_tools_no_nut:
+        labels, default_out = NO_NUT_LABELS, NO_NUT_OUT
+    elif args.with_power_tools:
         labels, default_out = POWER_TOOLS_LABELS, POWER_TOOLS_OUT
     elif args.with_tools:
         labels, default_out = TOOLS_LABELS, TOOLS_OUT

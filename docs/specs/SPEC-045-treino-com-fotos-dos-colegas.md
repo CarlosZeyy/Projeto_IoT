@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Security |
+| Rodada atual | r1 |
 | Autor da implementação | ml-engineer (código do §3.1 e a operação do §4.7, depois do merge) |
 | Tags | security |
 | Depende de | ADR-025 `Aceito`; SPEC-044 mergeada (contrato 0.7.0 e constantes do `qc-ml`); SPEC-041, SPEC-036 e SPEC-037 `Done` (já estão). Para o modelo chegar à borda de produção: CA-15 da SPEC-044 |
@@ -85,7 +85,7 @@ def split_stratum(
 - Sem versão anterior, as imagens dos tipos de `--defer-types` saem do `split_v1` antes da alocação, e `split_v1.json` registra `deferred_types` (na ordem de `KNOWN_OBJECT_TYPES`). Os leitores do split já ignoram essas imagens (`assign_splits`, aviso `deferred type images`).
 - Um tipo adiado no `split_v1` continua "novo" na versão seguinte (ADR-022, decisão 4): precisa de `--extend-test-types` ou de `--defer-types` de novo.
 - No `split_v1`, um tipo de `--defer-types` sem nenhuma imagem no dataset sai com 2, sem gravar nada, com a linha `deferred type without images: <tipo>` na stderr. Um valor fora de `KNOWN_OBJECT_TYPES` continua com `unknown object type: <valor>`.
-- `--extend-test-types` continua sem efeito no `split_v1` (todo tipo presente e não adiado é dividido normalmente), com o aviso de hoje no log.
+- `--extend-test-types` continua sem efeito no `split_v1` (todo tipo presente e não adiado é dividido normalmente), com um aviso no log.
 - O piso é conferido depois do adiamento: adiar `screw` ou `other` faz a CLI recusar pelo piso.
 
 ### 4.4 Treino e avaliação sem porca
@@ -243,3 +243,4 @@ Fonte: a curadoria de 2026-11-04 (fora do repositório), aplicada ao `plano.csv`
 |---|---|---|---|
 | 2026-11-04 | SPEC criada como `Draft`: piso fixo sem porcas, `split_stratum` único, `--defer-types` no `split_v1`, gerador sem porca, fixture `tiny_model_no_nut`, operação de reimportação com o Anexo A, concordância, `split_v1` e treino; CAs 01 a 12 automatizados, CA-13 de operação e CAs 14 a 16 manuais | Decisão do humano de 2026-11-04 (ADR-025, `Proposto`) | Orquestrador, a pedido do humano |
 | 2026-11-04 | Aprovada pelo humano (`Ready`): "Aprovar tudo", com as recomendações da §9; rotulagem dupla dispensada e declarada (ADR-025, resposta 5) | Aceite do ADR-025 | Humano |
+| 2026-11-04 | §4.3: "com o aviso de hoje no log" → "com um aviso no log". Correção editorial, sem mudança de requisito, CA, valor ou escopo: o comportamento pedido (aviso no log e nenhum efeito do `--extend-test-types` no `split_v1`) é o mesmo, e nenhum CA confere o texto do aviso. Não vem de `SPEC_ISSUE` (o achado é baixo), então o fluxo de reaprovação do ADR-019 não se aplica (E-1); segue o precedente das correções só de texto das SPECs 010, 013, 025 e 039 (SPEC-040), sem reaprovação | RV-01 de `reviews/SPEC-045/r1-review-report.md` (o texto do aviso mudou porque o `--defer-types` passou a valer no `split_v1`) | Architect, a pedido do orquestrador |

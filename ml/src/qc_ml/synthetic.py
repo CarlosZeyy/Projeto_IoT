@@ -20,6 +20,9 @@ SPEC-044 section 3.1: optional identification-only tools (``T-NNN`` after the po
 external ``XT-NNNN`` after the external power tools), drawn as metal silhouettes (hammer,
 combination wrench and spirit level), always without grade (no rust).
 
+SPEC-045 section 3.1: ``include_nut=False`` leaves every ``N-``/``XN-`` item out, without changing
+the ``item_id`` (nor the file name) of any other item.
+
 No torch here.
 """
 
@@ -354,6 +357,7 @@ def make_synthetic_dataset(
     labeler: str = LABELER,
     identified_tool_items_per_type: int = 0,
     external_identified_tool_items_per_type: int = 0,
+    include_nut: bool = True,
 ) -> Path:
     """Create a synthetic dataset in ``root`` and return ``root``.
 
@@ -408,6 +412,12 @@ def make_synthetic_dataset(
     SPEC-041 section 3.1: ``items_per_stratum = 0`` is accepted when
     ``external_items_per_stratum > 0`` (a dataset only with external images), and ``labeler`` goes
     to every manifest row. Without these values the files are byte for byte the same.
+
+    SPEC-045 section 3.1: with ``include_nut=False``, no ``nut`` item is created (no ``N-``,
+    contributor ``N-501``... or external ``XN-``). The other items keep the ``item_id`` and the
+    file name they have with ``include_nut=True`` (the timestamps advance over the nut items as
+    if they were written); their pixels differ, because the single generator draws no nut image.
+    ``include_nut=True`` (the default) gives the same files as before SPEC-045, byte for byte.
 
     ``input_sha256`` is the SHA-256 of the file written. With ``c = k = t = e = p = q = i = j = 0``
     (the default) the files are byte for byte the ones of SPEC-011, and neither ``sources.csv``
@@ -550,6 +560,9 @@ def make_synthetic_dataset(
     for index, (item_id, object_type, grade, n_images, origin) in enumerate(plan):
         if origin == "capture":
             offset = index * images_per_item  # the timestamps of SPEC-011
+        if object_type == "nut" and not include_nut:
+            offset += n_images  # SPEC-045: the other items keep their file names
+            continue
         start = BASE_TIME + timedelta(seconds=offset)
         item_rows = _write_images(root, item_id, object_type, grade, n_images, start, rng, labeler)
         offset += n_images

@@ -17,10 +17,15 @@ the split are ignored when the split is read (``assign_splits``, ``rows_for``), 
 The power tools (SPEC-021) and the identification-only tools (SPEC-044) use the same extension
 and deferral, with the whole type as stratum.
 
-ADR-024 and SPEC-041 section 4.6: the CLI refuses a ``split_v1`` whose test misses one of the 10
-``screw``/``nut`` x grade strata or ``other/none``, counting only the non-external items
-(``floor_problems``). ``--allow-below-floor`` writes it anyway, with one ``below_floor`` warning
-per stratum, only with a recorded decision. From ``split_v2`` on, neither has any effect.
+ADR-025 and SPEC-045 sections 4.2 and 4.3: ``split_v1`` and the test extension share one stratum
+rule (``split_stratum``: the whole type for a tool the model does not grade); ``--defer-types``
+also works for ``split_v1`` (the images of the type leave it before the allocation).
+
+ADR-024 and SPEC-041 section 4.6, with the floor of ADR-025 (SPEC-045 section 4.1): the CLI
+refuses a ``split_v1`` whose test misses one of the 5 ``screw`` x grade strata or ``other/none``
+(``FLOOR_STRATA``), counting only the non-external items (``floor_problems``).
+``--allow-below-floor`` writes it anyway, with one ``below_floor`` warning per stratum, only with
+a recorded decision. From ``split_v2`` on, neither has any effect.
 
 No torch here (SPEC-011 section 4.5).
 
@@ -55,14 +60,15 @@ import numpy as np
 import pandas as pd
 
 from qc_ml.data import (
-    GRADED_OBJECT_TYPES,
     GRADES,
+    IDENTIFIED_TOOL_OBJECT_TYPES,
     ITEM_ID_PATTERN,
     ITEM_PREFIX_TYPES,
     KNOWN_OBJECT_TYPES,
     NO_GRADE,
+    POWER_TOOL_OBJECT_TYPES,
     SPLIT_NAMES,
-    UNGRADED_TOOL_OBJECT_TYPES,
+    TOOL_OBJECT_TYPES,
     configure_logging,
     dominant_grade,
     is_external_item,
@@ -94,12 +100,15 @@ TOO_FEW_TO_EXTEND = "too few items to extend the test: "
 TYPE_NOT_NEW = "object type is not new: "
 TYPE_IN_BOTH_LISTS = "object type in both --extend-test-types and --defer-types: "
 UNKNOWN_TYPE = "unknown object type: "
+DEFERRED_WITHOUT_IMAGES = "deferred type without images: "  # split_v1 only (SPEC-045 4.3)
 DEFERRED_LOG = "deferred type images: "
 BELOW_FLOOR = "split_v1 below the floor: "
 BELOW_FLOOR_CODE = "below_floor"
 # SPEC-041 section 4.6: the test of split_v1 needs a non-external item in each of these strata.
+# A fixed list since ADR-025 (SPEC-045 section 4.1): ``screw`` x the 5 grades and ``other``; a
+# nut in the dataset is stratified and split normally, but it is not part of the floor.
 FLOOR_STRATA: tuple[tuple[str, str], ...] = (
-    *((object_type, grade) for object_type in GRADED_OBJECT_TYPES for grade in GRADES),
+    *(("screw", grade) for grade in GRADES),
     ("other", NO_GRADE),
 )
 
@@ -153,6 +162,27 @@ def item_strata(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
         object_type = str(group["object_type"].iloc[0])
         strata[str(item_id)] = (object_type, dominant_grade(group["grade"]))
     return strata
+
+
+def split_stratum(
+    object_type: str,
+    item_stratum: tuple[str, str],
+    coverage: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, str]:
+    """Stratum used to allocate a non-external item, in split_v1 and in the test extension.
+
+    ADR-025, decision 8 (SPEC-045 section 4.2): ``(object_type, "none")`` (the whole type) for a
+    tool the model never grades: every power tool (SPEC-021) and identification-only tool
+    (SPEC-044), and a hand tool whose ``coverage[object_type]["graded"]`` is false (a hand tool
+    missing from ``coverage`` counts as not graded). Any other type keeps ``item_stratum``
+    (``(type, dominant grade)`` from ``item_strata``). ``coverage`` is ``tool_grade_coverage(df)``
+    over the ``df`` read by the CLI.
+    """
+    if object_type in POWER_TOOL_OBJECT_TYPES or object_type in IDENTIFIED_TOOL_OBJECT_TYPES:
+        return (object_type, NO_GRADE)
+    if object_type in TOOL_OBJECT_TYPES and not coverage.get(object_type, {}).get("graded"):
+        return (object_type, NO_GRADE)
+    return item_stratum
 
 
 def _allocate(
@@ -319,7 +349,9 @@ def type_decision_problems(
     in exactly one of the two lists (``new object type without decision: <type>``); a listed type
     that is not new is refused (``object type is not new: <type>``); an extended type needs at
     least 3 non-external items (``too few items to extend the test: <type>``). Without earlier
-    versions the lists are not used. Empty list = no problem.
+    versions (SPEC-045 section 4.3): ``--extend-test-types`` is not used, and each deferred type
+    needs at least one image in ``df`` (``deferred type without images: <type>``, in the order
+    of the list). Empty list = no problem.
 
     ``extended_before`` has the types in ``test_extended_types`` of the earlier versions: they are
     never new (``new_object_types``), so their new items follow ADR-014 (ADR-022, decision 5).
@@ -329,8 +361,11 @@ def type_decision_problems(
     for value in dict.fromkeys(extend + defer):
         if value not in KNOWN_OBJECT_TYPES:
             problems.append(UNKNOWN_TYPE + value)
-    if problems or not splits:
+    if problems:
         return problems
+    if not splits:
+        present = {str(t) for t in df["object_type"]}
+        return [DEFERRED_WITHOUT_IMAGES + t for t in dict.fromkeys(defer) if t not in present]
     new = new_object_types(df, splits, extended_before=extended_before)
     for object_type in dict.fromkeys(extend + defer):
         if object_type in extend and object_type in defer:
@@ -404,8 +439,11 @@ def floor_problems(df: pd.DataFrame, frame: pd.DataFrame) -> list[str]:
     """The strata of ``FLOOR_STRATA`` without any item in the test of ``frame``, sorted by name.
 
     ``df`` comes from ``load_manifest`` and ``frame`` from ``make_split``. Only the non-external
-    items count, each in the stratum of its dominant grade (``item_strata``, the same function of
-    the allocation). The 3 photos per item of the protocol are not checked here (SPEC-041 4.6).
+    items count, each in the stratum of its dominant grade (``item_strata``; for ``screw`` and
+    ``other``, the only types of the floor, it is also the ``split_stratum`` of the allocation).
+    An item of a deferred type has no line in ``frame``, so deferring ``screw`` or ``other`` puts
+    the split below the floor. The 3 photos per item of the protocol are not checked here
+    (SPEC-041 section 4.6; ADR-025, decision 7).
     """
     split_of = dict(zip(frame["image_path"], frame["split"], strict=True))
     external = df["item_id"].map(lambda i: is_external_item(str(i))).astype(bool)
@@ -473,8 +511,11 @@ def make_split(
 ) -> SplitResult:
     """Split ``df`` (from ``load_manifest``) by item, stratified by (type, dominant grade).
 
-    Without ``previous``: per stratum, ``n_test = n_val = round_half_up(0.15 * n)`` (at least 1
-    each with ``n >= 3``), the rest in train; ``n < 3`` -> all in train and ``small_stratum``.
+    Without ``previous``: the images of the ``defer_types`` leave ``df`` first (SPEC-045 section
+    4.3; ``extend_test_types`` is not used); the items are grouped by ``split_stratum`` (SPEC-045
+    section 4.2: the whole type for a tool the model does not grade, ``(type, dominant grade)``
+    for the others); per stratum, ``n_test = n_val = round_half_up(0.15 * n)`` (at least 1 each
+    with ``n >= 3``), the rest in train; ``n < 3`` -> all in train and ``small_stratum``.
 
     With ``previous`` (the last split): items already there keep their split, new images of an
     old item inherit it; new items go to train/val only (70:15 per stratum, same rules). An item
@@ -495,16 +536,13 @@ def make_split(
     After the allocation, the fraction of external images among the train images must not be
     above ``max_external_fraction`` (exact comparison with ``Fraction``).
 
-    ADR-022 (SPEC-016 section 4.7), only with ``previous`` (ignored for ``split_v1``): the images
-    of the ``defer_types`` leave ``df`` before anything else; the non-external items of each of
-    the ``extend_test_types`` are split 70/15/15 by the procedure of ``split_v1`` (a fresh
-    ``numpy`` generator from ``seed`` for each type), with ``small_stratum`` warnings carrying
-    ``"scope": "test_extension"``. The strata follow ADR-022, decision 3, with "type with grade"
-    read as a graded type (SPEC-016 section 4.7): ``(type, dominant grade)`` when the tool is
-    graded by ``tool_grade_coverage(df)`` (any type that is not a tool keeps its dominant
-    grade), ``(type, "none")`` (the whole type) when the tool is ungraded and for every power
-    tool (SPEC-021 section 3.1) and identification-only tool (SPEC-044 section 3.1), never graded
-    (``UNGRADED_TOOL_OBJECT_TYPES``). The checks of the two
+    ADR-022 (SPEC-016 section 4.7), with ``previous``: the images of the ``defer_types`` leave
+    ``df`` before anything else; the non-external items of each of the ``extend_test_types`` are
+    split 70/15/15 by the procedure of ``split_v1`` (a fresh ``numpy`` generator from ``seed``
+    for each type), with ``small_stratum`` warnings carrying ``"scope": "test_extension"``. The
+    strata are the ones of ``split_v1`` (``split_stratum``, ADR-025 decision 8): the whole type
+    for every power and identification-only tool and for a hand tool that is not graded by
+    ``tool_grade_coverage(df)``; ``(type, dominant grade)`` otherwise. The checks of the two
     lists over every earlier version are made by ``type_decision_problems`` (the CLI); here an
     extended type with an item already in ``previous`` or ``history`` is a ``SplitError``, and
     an extended type that would have no item in test (fewer than 3 non-external items in
@@ -514,8 +552,9 @@ def make_split(
     Raises:
         ValueError: ``max_external_fraction`` outside ``(0, 1]``.
         SplitError: invalid ratios, previous split or ``history`` value, ``history`` without
-            ``previous``, a frozen test image is missing, or the external fraction in train is
-            above ``max_external_fraction``.
+            ``previous``, a value of ``defer_types`` or ``extend_test_types`` outside
+            ``KNOWN_OBJECT_TYPES``, a frozen test image is missing, or the external fraction in
+            train is above ``max_external_fraction``.
         SplitIntegrityError: an item would end up in two splits, its images in ``previous`` are
             in two splits, ``history`` disagrees with ``previous`` for it, or an external item
             is in ``val``/``test`` in ``previous`` or in ``history``.
@@ -531,28 +570,19 @@ def make_split(
         raise SplitError(f"history has invalid splits: {', '.join(invalid)}")
     rng = np.random.default_rng(seed)
     resolve = item_id_resolver(df)  # before the excluded rows leave df (source 1)
+    unknown_types = sorted((set(extend_test_types) | set(defer_types)) - set(KNOWN_OBJECT_TYPES))
+    if unknown_types:
+        raise SplitError(f"unknown object types: {', '.join(unknown_types)}")
     extended: set[str] = set()
     if previous is not None:
-        listed = set(extend_test_types) | set(defer_types)
-        unknown_types = sorted(listed - set(KNOWN_OBJECT_TYPES))
-        if unknown_types:
-            raise SplitError(f"unknown object types: {', '.join(unknown_types)}")
         both = sorted(set(extend_test_types) & set(defer_types))
         if both:
             raise SplitError(f"object types both extended and deferred: {', '.join(both)}")
         extended = set(extend_test_types)
-        # SPEC-016 4.7: the criterion of section 4.6 on the df read by the CLI of the split.
-        coverage = tool_grade_coverage(df)
-
-        def extension_strata(object_type: str, stratum: tuple[str, str]) -> tuple[str, str]:
-            if object_type in UNGRADED_TOOL_OBJECT_TYPES:
-                # SPEC-021 and SPEC-044: a power or identification-only tool, the whole type
-                return (object_type, NO_GRADE)
-            if object_type in coverage and not coverage[object_type]["graded"]:
-                return (object_type, NO_GRADE)  # an ungraded tool: the whole type
-            return stratum
-
-        df = df[~df["object_type"].isin(list(defer_types))]
+    # SPEC-016 4.7 and SPEC-045 4.2: the grade criterion on the df read by the CLI of the split
+    # (before the deferral), for split_stratum.
+    coverage = tool_grade_coverage(df)
+    df = df[~df["object_type"].isin(list(defer_types))]  # SPEC-045 4.3: split_v1 too
     df = df[~df["image_path"].isin(list(excluded))]
     external = df["item_id"].map(lambda i: is_external_item(str(i))).astype(bool)
     strata = item_strata(df[~external])  # external items stay out of the strata
@@ -568,7 +598,7 @@ def make_split(
     if previous is None:
         groups: dict[tuple[str, str], list[str]] = defaultdict(list)
         for item_id, stratum in strata.items():
-            groups[stratum].append(item_id)
+            groups[split_stratum(types_by_item[item_id], stratum, coverage)].append(item_id)
         assignment, allocation_warnings = _allocate(groups, rng, r_val, r_test)
         warnings.extend(allocation_warnings)
         prev: dict[str, str] = {}
@@ -632,9 +662,9 @@ def make_split(
             elif old:
                 assignment[item_id] = old[0]
             elif item_type in extended:
-                extension_groups[item_type][extension_strata(item_type, strata[item_id])].append(
-                    item_id
-                )
+                extension_groups[item_type][
+                    split_stratum(item_type, strata[item_id], coverage)
+                ].append(item_id)
             else:
                 new_groups[strata[item_id]].append(item_id)
         new_assignment, allocation_warnings = _allocate(
@@ -1043,11 +1073,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     ``split_v<M>.json`` (the decision itself is part of the split history). A type extended in an
     earlier version is never new again (SPEC-040 section 4.7, ``recorded_extended_types``).
 
+    SPEC-045 section 4.3 (ADR-025): without earlier versions, ``--defer-types`` takes the images
+    of the listed types out of ``split_v1`` (recorded in ``deferred_types``, in the order of
+    ``KNOWN_OBJECT_TYPES``); a listed type without images exits 2 (``deferred type without
+    images: <type>``). ``--extend-test-types`` is not used for ``split_v1`` (a warning in the
+    log).
+
     SPEC-041 section 4.6 (ADR-024): without earlier versions, after ``make_split`` and before
-    anything is written, ``floor_problems``; a problem prints ``split_v1 below the floor:
-    <stratum>`` per stratum and the exit is 2, unless ``--allow-below-floor``, which adds a
-    ``below_floor`` warning per stratum to ``split_v1.json``. With earlier versions the flag is
-    accepted and ignored (a warning in the log).
+    anything is written, ``floor_problems`` (after the deferral); a problem prints ``split_v1
+    below the floor: <stratum>`` per stratum and the exit is 2, unless ``--allow-below-floor``,
+    which adds a ``below_floor`` warning per stratum to ``split_v1.json``. With earlier versions
+    the flag is accepted and ignored (a warning in the log).
     """
     configure_logging()
     try:
@@ -1110,11 +1146,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_ERROR
     # Recorded in the order of KNOWN_OBJECT_TYPES (every value is known at this point).
     extend = [t for t in KNOWN_OBJECT_TYPES if versions and t in args.extend_test_types]
-    defer = [t for t in KNOWN_OBJECT_TYPES if versions and t in args.defer_types]
-    if not versions and (args.extend_test_types or args.defer_types):
+    defer = [t for t in KNOWN_OBJECT_TYPES if t in args.defer_types]  # split_v1 too (SPEC-045)
+    if not versions and args.extend_test_types:
         logger.warning(
-            "--extend-test-types and --defer-types are not used for split_v1: every type "
-            "present is split normally"
+            "--extend-test-types is not used for split_v1: every type present and not deferred "
+            "is split normally"
         )
 
     try:

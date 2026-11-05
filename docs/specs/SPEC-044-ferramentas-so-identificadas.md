@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Security |
+| Status | Done |
 | Rodada atual | r1 |
 | Autor da implementação | developer (Parte A: contrato, banco, API, borda e dashboard) e depois ml-engineer (Parte B: constantes do `qc-ml`), na mesma rodada, como nas SPECs 016 e 021 |
 | Tags | contrato, security, deploy |
@@ -166,3 +166,4 @@ Mock só nas fronteiras externas: nenhum teste acessa o Supabase de produção n
 |---|---|---|---|
 | 2026-11-04 | SPEC criada como `Draft`: contrato 0.7.0 com `hammer`, `wrench` e `spirit_level` no grupo sem grau, migração `007`, borda, dashboard e constantes do `qc-ml`; CAs 01 a 14 automatizados e CA-15 manual em produção | Decisão do humano de 2026-11-04 (ADR-025, `Proposto`) | Orquestrador, a pedido do humano |
 | 2026-11-04 | Aprovada pelo humano (`Ready`): "Aprovar tudo", com as recomendações da §9; rotulagem dupla dispensada e declarada (ADR-025, resposta 5) | Aceite do ADR-025 | Humano |
+| 2026-11-05 | `Done`: PR #75 mergeado sob o ADR-016; CA-15 em produção PASS (migração `007`, deploys, `contract_version` 0.7.0), registrado em `reviews/SPEC-044/r1-test-report.md` | Saída do loop | Orquestrador |
