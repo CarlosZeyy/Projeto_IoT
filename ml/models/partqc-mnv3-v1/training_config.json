@@ -1,0 +1,210 @@
+{
+  "model_version": "partqc-mnv3-v1",
+  "config": {
+    "model_version": "partqc-mnv3-v1",
+    "dataset_dir": "ml/data",
+    "split_file": "ml/splits/split_v1.csv",
+    "backbone": "mobilenetv3_large_100",
+    "pretrained": true,
+    "grade_head": "ce",
+    "seed": 42,
+    "batch_size": 32,
+    "epochs_a": 8,
+    "lr_a": 0.001,
+    "epochs_b_max": 30,
+    "lr_b": 0.0001,
+    "unfreeze_last_blocks": 2,
+    "patience": 5,
+    "min_delta": 0.0001,
+    "label_smoothing": 0.1,
+    "lambda_grade": 1.0,
+    "weight_decay": 0.0001,
+    "num_workers": 2,
+    "models_root": "ml/models",
+    "reports_root": "ml/reports",
+    "checkpoints_root": "ml/checkpoints",
+    "smoke": false,
+    "external_sources": null
+  },
+  "deviations_from_defaults": [],
+  "labels": {
+    "object_types": [
+      "screw",
+      "other",
+      "pliers",
+      "allen_key",
+      "flat_screwdriver",
+      "phillips_screwdriver",
+      "saw",
+      "drill",
+      "cordless_screwdriver",
+      "hammer",
+      "wrench",
+      "spirit_level"
+    ],
+    "grades": [
+      "perfect",
+      "good",
+      "fair",
+      "poor",
+      "unusable"
+    ]
+  },
+  "ungraded_object_types": [
+    "pliers",
+    "allen_key",
+    "flat_screwdriver",
+    "phillips_screwdriver",
+    "saw",
+    "drill",
+    "cordless_screwdriver",
+    "hammer",
+    "wrench",
+    "spirit_level"
+  ],
+  "split_file": "split_v1.csv",
+  "split_sha256": "61346ce5612fbbe0cbb8b2c5926d2703c939702fa276eaa60c16070f22fdd5fe",
+  "manifest_sha256": "e31c5c927f8d87c7e17224457c222f1b541933c9352cbccd8a7d78d4733f2289",
+  "grade_class_weights": [
+    0.5636363636363636,
+    1.3777777777777778,
+    1.3777777777777778,
+    0.775,
+    2.066666666666667
+  ],
+  "history": [
+    {
+      "epoch": 1,
+      "phase": "A",
+      "train_loss": 3.908864091082317,
+      "val_loss": 3.840381622314453,
+      "val_type_accuracy": 0.4482758620689655,
+      "val_grade_qwk": -0.13461538461538458
+    },
+    {
+      "epoch": 2,
+      "phase": "A",
+      "train_loss": 3.0232829117193454,
+      "val_loss": 3.585472583770752,
+      "val_type_accuracy": 0.5517241379310345,
+      "val_grade_qwk": 0.11504424778761058
+    },
+    {
+      "epoch": 3,
+      "phase": "A",
+      "train_loss": 2.5925678974244653,
+      "val_loss": 3.572190284729004,
+      "val_type_accuracy": 0.5517241379310345,
+      "val_grade_qwk": 0.029126213592232997
+    },
+    {
+      "epoch": 4,
+      "phase": "A",
+      "train_loss": 2.328907646783968,
+      "val_loss": 3.563995361328125,
+      "val_type_accuracy": 0.5517241379310345,
+      "val_grade_qwk": 0.046511627906976716
+    },
+    {
+      "epoch": 5,
+      "phase": "A",
+      "train_loss": 2.11649865638919,
+      "val_loss": 3.5276122093200684,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.23809523809523814
+    },
+    {
+      "epoch": 6,
+      "phase": "A",
+      "train_loss": 2.070655049347296,
+      "val_loss": 3.518923759460449,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.42592592592592593
+    },
+    {
+      "epoch": 7,
+      "phase": "A",
+      "train_loss": 1.9719179665170066,
+      "val_loss": 3.5104165077209473,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.11111111111111116
+    },
+    {
+      "epoch": 8,
+      "phase": "A",
+      "train_loss": 1.8772713091315292,
+      "val_loss": 3.542834758758545,
+      "val_type_accuracy": 0.6206896551724138,
+      "val_grade_qwk": 0.1544715447154471
+    },
+    {
+      "epoch": 9,
+      "phase": "B",
+      "train_loss": 2.683762358456123,
+      "val_loss": 3.432642698287964,
+      "val_type_accuracy": 0.6206896551724138,
+      "val_grade_qwk": 0.11111111111111116
+    },
+    {
+      "epoch": 10,
+      "phase": "B",
+      "train_loss": 2.3528294912198695,
+      "val_loss": 3.435636043548584,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.10909090909090913
+    },
+    {
+      "epoch": 11,
+      "phase": "B",
+      "train_loss": 2.1212026898453877,
+      "val_loss": 3.3952386379241943,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.09999999999999998
+    },
+    {
+      "epoch": 12,
+      "phase": "B",
+      "train_loss": 2.0105331409268263,
+      "val_loss": 3.368384838104248,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.09999999999999998
+    },
+    {
+      "epoch": 13,
+      "phase": "B",
+      "train_loss": 1.8918799307288192,
+      "val_loss": 3.3702316284179688,
+      "val_type_accuracy": 0.6206896551724138,
+      "val_grade_qwk": 0.07547169811320753
+    },
+    {
+      "epoch": 14,
+      "phase": "B",
+      "train_loss": 1.8086738819029273,
+      "val_loss": 3.3859715461730957,
+      "val_type_accuracy": 0.6206896551724138,
+      "val_grade_qwk": 0.07547169811320753
+    }
+  ],
+  "best_epoch": 6,
+  "best_val_grade_qwk": 0.42592592592592593,
+  "stopped_early": true,
+  "versions": {
+    "python": "3.12.15",
+    "torch": "2.14.1",
+    "torchvision": "0.29.1",
+    "timm": "1.0.30",
+    "numpy": "2.5.4",
+    "scikit-learn": "1.9.1",
+    "onnx": "1.23.2",
+    "onnxruntime": "1.31.0",
+    "coral-pytorch": "1.4.0",
+    "qc-preprocess": "0.3.0",
+    "qc-ml": "0.0.0"
+  },
+  "device": "cpu",
+  "git_commit": "50e6e443231fac7fe2612d6bfac4976be94dcc37",
+  "started_at": "2026-11-05T03:44:58+00:00",
+  "finished_at": "2026-11-05T03:48:53+00:00",
+  "smoke": false
+}

@@ -1,0 +1,35 @@
+{
+  "object_types": [
+    "screw",
+    "other",
+    "pliers",
+    "allen_key",
+    "flat_screwdriver",
+    "phillips_screwdriver",
+    "saw",
+    "drill",
+    "cordless_screwdriver",
+    "hammer",
+    "wrench",
+    "spirit_level"
+  ],
+  "grades": [
+    "perfect",
+    "good",
+    "fair",
+    "poor",
+    "unusable"
+  ],
+  "ungraded_object_types": [
+    "pliers",
+    "allen_key",
+    "flat_screwdriver",
+    "phillips_screwdriver",
+    "saw",
+    "drill",
+    "cordless_screwdriver",
+    "hammer",
+    "wrench",
+    "spirit_level"
+  ]
+}

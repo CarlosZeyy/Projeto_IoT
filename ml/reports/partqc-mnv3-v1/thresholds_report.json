@@ -1,0 +1,944 @@
+{
+  "model_version": "partqc-mnv3-v1",
+  "model_sha256": "7d295bb68643fd8b61bf1980b1ce1692736f1d35bc9848370b6879a00990e420",
+  "generated_at": "2026-11-05T03:49:02+00:00",
+  "split_file": "split_v1.csv",
+  "split_sha256": "61346ce5612fbbe0cbb8b2c5926d2703c939702fa276eaa60c16070f22fdd5fe",
+  "manifest_sha256": "e31c5c927f8d87c7e17224457c222f1b541933c9352cbccd8a7d78d4733f2289",
+  "n_val_images": 29,
+  "decision": {
+    "type_threshold": 0.5,
+    "unusable_threshold": 0.95,
+    "grade_review_threshold": 0.31
+  },
+  "notes": [
+    "type_target_not_met",
+    "review_adjusted"
+  ],
+  "type_threshold": {
+    "value": 0.5,
+    "rule": "largest t in [0.50, 0.85] with false_unknown_rate <= 0.05 on the val images of every type except other",
+    "n_images": 24,
+    "false_unknown_rate": 0.5,
+    "curve": [
+      {
+        "threshold": 0.5,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.51,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.52,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.53,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.54,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.55,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.56,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.57,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.58,
+        "n_unknown": 12,
+        "false_unknown_rate": 0.5
+      },
+      {
+        "threshold": 0.59,
+        "n_unknown": 13,
+        "false_unknown_rate": 0.5416666666666666
+      },
+      {
+        "threshold": 0.6,
+        "n_unknown": 13,
+        "false_unknown_rate": 0.5416666666666666
+      },
+      {
+        "threshold": 0.61,
+        "n_unknown": 14,
+        "false_unknown_rate": 0.5833333333333334
+      },
+      {
+        "threshold": 0.62,
+        "n_unknown": 14,
+        "false_unknown_rate": 0.5833333333333334
+      },
+      {
+        "threshold": 0.63,
+        "n_unknown": 14,
+        "false_unknown_rate": 0.5833333333333334
+      },
+      {
+        "threshold": 0.64,
+        "n_unknown": 14,
+        "false_unknown_rate": 0.5833333333333334
+      },
+      {
+        "threshold": 0.65,
+        "n_unknown": 14,
+        "false_unknown_rate": 0.5833333333333334
+      },
+      {
+        "threshold": 0.66,
+        "n_unknown": 14,
+        "false_unknown_rate": 0.5833333333333334
+      },
+      {
+        "threshold": 0.67,
+        "n_unknown": 15,
+        "false_unknown_rate": 0.625
+      },
+      {
+        "threshold": 0.68,
+        "n_unknown": 15,
+        "false_unknown_rate": 0.625
+      },
+      {
+        "threshold": 0.69,
+        "n_unknown": 15,
+        "false_unknown_rate": 0.625
+      },
+      {
+        "threshold": 0.7,
+        "n_unknown": 15,
+        "false_unknown_rate": 0.625
+      },
+      {
+        "threshold": 0.71,
+        "n_unknown": 15,
+        "false_unknown_rate": 0.625
+      },
+      {
+        "threshold": 0.72,
+        "n_unknown": 15,
+        "false_unknown_rate": 0.625
+      },
+      {
+        "threshold": 0.73,
+        "n_unknown": 16,
+        "false_unknown_rate": 0.6666666666666666
+      },
+      {
+        "threshold": 0.74,
+        "n_unknown": 16,
+        "false_unknown_rate": 0.6666666666666666
+      },
+      {
+        "threshold": 0.75,
+        "n_unknown": 16,
+        "false_unknown_rate": 0.6666666666666666
+      },
+      {
+        "threshold": 0.76,
+        "n_unknown": 16,
+        "false_unknown_rate": 0.6666666666666666
+      },
+      {
+        "threshold": 0.77,
+        "n_unknown": 16,
+        "false_unknown_rate": 0.6666666666666666
+      },
+      {
+        "threshold": 0.78,
+        "n_unknown": 17,
+        "false_unknown_rate": 0.7083333333333334
+      },
+      {
+        "threshold": 0.79,
+        "n_unknown": 18,
+        "false_unknown_rate": 0.75
+      },
+      {
+        "threshold": 0.8,
+        "n_unknown": 18,
+        "false_unknown_rate": 0.75
+      },
+      {
+        "threshold": 0.81,
+        "n_unknown": 18,
+        "false_unknown_rate": 0.75
+      },
+      {
+        "threshold": 0.82,
+        "n_unknown": 18,
+        "false_unknown_rate": 0.75
+      },
+      {
+        "threshold": 0.83,
+        "n_unknown": 18,
+        "false_unknown_rate": 0.75
+      },
+      {
+        "threshold": 0.84,
+        "n_unknown": 18,
+        "false_unknown_rate": 0.75
+      },
+      {
+        "threshold": 0.85,
+        "n_unknown": 18,
+        "false_unknown_rate": 0.75
+      }
+    ]
+  },
+  "unusable_threshold": {
+    "value": 0.95,
+    "rule": "largest u with unusable_recall >= 0.90 on val screw/nut images with grade",
+    "n_images": 12,
+    "n_unusable": 1,
+    "unusable_recall": 1.0,
+    "unusable_precision": 0.3333333333333333,
+    "curve": [
+      {
+        "threshold": 0.05,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.1
+      },
+      {
+        "threshold": 0.06,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.1
+      },
+      {
+        "threshold": 0.07,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.1
+      },
+      {
+        "threshold": 0.08,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.1
+      },
+      {
+        "threshold": 0.09,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.1111111111111111
+      },
+      {
+        "threshold": 0.1,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.1111111111111111
+      },
+      {
+        "threshold": 0.11,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.1111111111111111
+      },
+      {
+        "threshold": 0.12,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.125
+      },
+      {
+        "threshold": 0.13,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.14285714285714285
+      },
+      {
+        "threshold": 0.14,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.16666666666666666
+      },
+      {
+        "threshold": 0.15,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.16666666666666666
+      },
+      {
+        "threshold": 0.16,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.2
+      },
+      {
+        "threshold": 0.17,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.2
+      },
+      {
+        "threshold": 0.18,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.2
+      },
+      {
+        "threshold": 0.19,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.2
+      },
+      {
+        "threshold": 0.2,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.25
+      },
+      {
+        "threshold": 0.21,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.22,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.23,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.24,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.25,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.26,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.27,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.28,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.29,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.3,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.31,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.32,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.33,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.34,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.35,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.36,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.37,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.38,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.39,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.4,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.41,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.42,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.43,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.44,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.45,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.46,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.47,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.48,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.49,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.5,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.51,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.52,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.53,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.54,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.55,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.56,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.57,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.58,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.59,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.6,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.61,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.62,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.63,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.64,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.65,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.66,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.67,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.68,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.69,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.7,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.71,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.72,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.73,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.74,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.75,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.76,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.77,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.78,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.79,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.8,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.81,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.82,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.83,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.84,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.85,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.86,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.87,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.88,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.89,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.9,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.91,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.92,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.93,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.94,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      },
+      {
+        "threshold": 0.95,
+        "unusable_recall": 1.0,
+        "unusable_precision": 0.3333333333333333
+      }
+    ]
+  },
+  "grade_review_threshold": {
+    "rule": "0.60 if needs_review is in [5%, 15%] of the val screw/nut/other images; else the r closest to 10%",
+    "n_images": 17,
+    "needs_review_rate_at_default": 0.9411764705882353,
+    "value": 0.31,
+    "needs_review_rate": 0.35294117647058826,
+    "curve": [
+      {
+        "threshold": 0.3,
+        "needs_review_rate": 0.35294117647058826
+      },
+      {
+        "threshold": 0.31,
+        "needs_review_rate": 0.35294117647058826
+      },
+      {
+        "threshold": 0.32,
+        "needs_review_rate": 0.4117647058823529
+      },
+      {
+        "threshold": 0.33,
+        "needs_review_rate": 0.4117647058823529
+      },
+      {
+        "threshold": 0.34,
+        "needs_review_rate": 0.4117647058823529
+      },
+      {
+        "threshold": 0.35,
+        "needs_review_rate": 0.47058823529411764
+      },
+      {
+        "threshold": 0.36,
+        "needs_review_rate": 0.5882352941176471
+      },
+      {
+        "threshold": 0.37,
+        "needs_review_rate": 0.6470588235294118
+      },
+      {
+        "threshold": 0.38,
+        "needs_review_rate": 0.6470588235294118
+      },
+      {
+        "threshold": 0.39,
+        "needs_review_rate": 0.8235294117647058
+      },
+      {
+        "threshold": 0.4,
+        "needs_review_rate": 0.8823529411764706
+      },
+      {
+        "threshold": 0.41,
+        "needs_review_rate": 0.8823529411764706
+      },
+      {
+        "threshold": 0.42,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.43,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.44,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.45,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.46,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.47,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.48,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.49,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.5,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.51,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.52,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.53,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.54,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.55,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.56,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.57,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.58,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.59,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.6,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.61,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.62,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.63,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.64,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.65,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.66,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.67,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.68,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.69,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.7,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.71,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.72,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.73,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.74,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.75,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.76,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.77,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.78,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.79,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.8,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.81,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.82,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.83,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.84,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.85,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.86,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.87,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.88,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.89,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.9,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.91,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.92,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.93,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.94,
+        "needs_review_rate": 0.9411764705882353
+      },
+      {
+        "threshold": 0.95,
+        "needs_review_rate": 0.9411764705882353
+      }
+    ]
+  }
+}
