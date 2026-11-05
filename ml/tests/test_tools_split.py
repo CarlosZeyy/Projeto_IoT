@@ -296,15 +296,21 @@ def test_unknown_type_exits_2_even_for_split_v1(tmp_path: Path, capsys) -> None:
     assert not (tmp_path / "splits").exists() or not any((tmp_path / "splits").iterdir())
 
 
-def test_split_v1_ignores_the_lists(tmp_path: Path) -> None:
+def test_split_v1_defers_and_ignores_the_extension(tmp_path: Path) -> None:
+    """SPEC-045 section 4.3: ``--defer-types`` is used in split_v1, ``--extend-test-types`` not."""
+    plain = make_synthetic_dataset(tmp_path / "plain")
     dataset = make_synthetic_dataset(tmp_path / "ds", tool_items_per_stratum=1)
-    assert _cli(dataset, tmp_path / "s1") == 0
+    assert _cli(plain, tmp_path / "s0") == 0
+    assert _cli(dataset, tmp_path / "s1", "--extend-test-types", "pliers") == 0
     assert _cli(dataset, tmp_path / "s2", "--defer-types", TOOLS) == 0
-    assert (tmp_path / "s1" / "split_v1.csv").read_bytes() == (
+    # deferring every tool gives the split of the dataset without tools
+    assert (tmp_path / "s0" / "split_v1.csv").read_bytes() == (
         tmp_path / "s2" / "split_v1.csv"
     ).read_bytes()
     meta = _meta(tmp_path / "s2" / "split_v1.json")
-    assert meta["deferred_types"] == [] and meta["test_extended_types"] == []
+    assert meta["deferred_types"] == list(TOOL_OBJECT_TYPES) and meta["test_extended_types"] == []
+    meta1 = _meta(tmp_path / "s1" / "split_v1.json")
+    assert meta1["deferred_types"] == [] and meta1["test_extended_types"] == []
     v1 = _split_map(tmp_path / "s1" / "split_v1.csv")
     assert any("/T-" in p for p in v1)
 
@@ -370,6 +376,7 @@ def test_make_split_checks_the_extension(ca15: tuple[Path, Path]) -> None:
     small = df[~((df["object_type"] == "allen_key") & ~df["item_id"].isin(["T-041", "T-042"]))]
     with pytest.raises(SplitError, match="too few items to extend the test: allen_key"):
         make_split(small, previous=v1, extend_test_types=["allen_key"])
-    # without previous (split_v1) the lists are not used
+    # without previous (split_v1, SPEC-045 section 4.3): defer_types is used, extend is not
     frame = make_split(df, defer_types=list(TOOL_OBJECT_TYPES)).frame
-    assert len(frame) == len(df)
+    assert len(frame) == int((~df["object_type"].isin(TOOL_OBJECT_TYPES)).sum())
+    assert len(make_split(df, extend_test_types=["pliers"]).frame) == len(df)

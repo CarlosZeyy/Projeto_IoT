@@ -1,0 +1,21 @@
+{
+  "object_types": [
+    "screw",
+    "other",
+    "hammer",
+    "wrench",
+    "spirit_level"
+  ],
+  "grades": [
+    "perfect",
+    "good",
+    "fair",
+    "poor",
+    "unusable"
+  ],
+  "ungraded_object_types": [
+    "hammer",
+    "wrench",
+    "spirit_level"
+  ]
+}

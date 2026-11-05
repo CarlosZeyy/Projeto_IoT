@@ -1,0 +1,5 @@
+{
+  "type_threshold": 0.7,
+  "unusable_threshold": 0.5,
+  "grade_review_threshold": 0.6
+}

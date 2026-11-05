@@ -86,41 +86,42 @@ def test_floor_problems_sorted_and_counts_only_own_items(tmp_path: Path) -> None
     df = load_manifest(root, external_sources=root / "external_sources.csv")
     result = split.make_split(df, max_external_fraction=1.0)
     problems = split.floor_problems(df, result.frame)
-    assert len(problems) == 11
+    # SPEC-045 section 4.1: the floor is screw x 5 grades and other/none (no nut stratum)
+    assert len(problems) == 6
     assert problems == sorted(problems)
-    assert problems[0] == "nut/fair"
-    assert "other/none" in problems
+    assert problems[0] == "other/none"
+    assert not [p for p in problems if p.startswith("nut/")]
 
 
 def test_floor_problems_uses_the_dominant_grade(tmp_path: Path) -> None:
-    """A tied item counts only in the most severe grade: nut/perfect stays below the floor."""
-    root = make_synthetic_dataset(tmp_path / "ds", items_per_stratum=3, images_per_item=1)
+    """A tied item counts only in the most severe grade: screw/perfect stays below the floor."""
+    root = make_synthetic_dataset(tmp_path / "ds", items_per_stratum=3, images_per_item=2)
     rows = read_rows(root)
     for row in rows:
-        if row["object_type"] == "nut" and row["grade"] == "perfect":
+        if row["object_type"] == "screw" and row["grade"] == "perfect" and row["angle"] == "1":
             row["grade"] = "good"
     write_rows(root, rows)
     df = load_manifest(root)
-    assert "nut/perfect" in split.floor_problems(df, split.make_split(df).frame)
+    assert "screw/perfect" in split.floor_problems(df, split.make_split(df).frame)
 
 
 def test_ca02_below_floor_refused_and_nothing_written(
     floor_dataset: Path, tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    _drop_item(floor_dataset, _item_of(floor_dataset, "nut", "fair"))
+    _drop_item(floor_dataset, _item_of(floor_dataset, "screw", "fair"))  # SPEC-045: no nut
     splits = tmp_path / "splits"
     assert _cli(floor_dataset, splits) == 2
-    assert "split_v1 below the floor: nut/fair" in capfd.readouterr().err.splitlines()
+    assert "split_v1 below the floor: screw/fair" in capfd.readouterr().err.splitlines()
     assert not list(splits.glob("split_v1.*"))
 
 
 def test_ca03_flag_writes_the_warnings(floor_dataset: Path, tmp_path: Path) -> None:
-    _drop_item(floor_dataset, _item_of(floor_dataset, "nut", "fair"))
+    _drop_item(floor_dataset, _item_of(floor_dataset, "screw", "fair"))  # SPEC-045: no nut
     splits = tmp_path / "splits"
     assert _cli(floor_dataset, splits, "--allow-below-floor") == 0
     warnings = json.loads((splits / "split_v1.json").read_text(encoding="utf-8"))["warnings"]
-    assert {"code": "below_floor", "stratum": "nut/fair"} in warnings
-    assert {"code": "small_stratum", "stratum": "nut/fair", "n_items": 2} in warnings
+    assert {"code": "below_floor", "stratum": "screw/fair"} in warnings
+    assert {"code": "small_stratum", "stratum": "screw/fair", "n_items": 2} in warnings
 
 
 def test_ca03_later_versions_ignore_the_floor(floor_dataset: Path, tmp_path: Path) -> None:
