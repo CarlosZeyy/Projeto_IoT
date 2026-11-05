@@ -197,7 +197,9 @@ def test_ca03_hammer_is_refused_with_23514(env: Env) -> None:
     with connect(env.db) as conn:
         for grade in ("good", None):
             with pytest.raises(psycopg.errors.CheckViolation) as info:
-                insert(conn, lot_id="L-CA03", at=T0, object_type="hammer", grade=grade)
+                # SPEC-044 section 4.2: hammer is now in the check; a value outside the enum
+                # is still refused with 23514.
+                insert(conn, lot_id="L-CA03", at=T0, object_type="lathe", grade=grade)
             assert info.value.sqlstate == "23514"
 
 
@@ -223,7 +225,8 @@ def test_ca04_post_tool_without_grade_and_read_it_back(env: Env) -> None:
     assert item["grade_confidence"] is None
     assert item["is_defective"] is False
 
-    bad = env.read(URL_INSPECTIONS, {"object_type": "hammer"})
+    # SPEC-044 CA-04: hammer is now a valid filter; a value outside the enum is still 422.
+    bad = env.read(URL_INSPECTIONS, {"object_type": "lathe"})
     assert bad.status_code == 422, bad.text
     assert "detail" in bad.json()
 
@@ -427,7 +430,7 @@ def test_extra_invalid_tool_payloads_are_422_and_not_stored(env: Env) -> None:
         payload(object_type="pliers", grade=None, grade_score=2.0, grade_confidence=None),
         payload(object_type="screw"),
         payload(object_type="unknown", grade="good", grade_score=1.0, grade_confidence=0.8),
-        payload(object_type="hammer"),
+        payload(object_type="lathe"),  # SPEC-044 section 4.1: hammer without grade is valid
     ]
     for body in cases:
         resp = env.write(URL_INSPECTIONS, body)
@@ -490,7 +493,13 @@ def test_extra_tool_migration_keeps_mvp_rows_and_runs_again(
         new_files = sorted(MIGRATIONS.glob("*.sql"))
         # SPEC-021 section 3.1: NNN_power_tool_object_types.sql also matches the old glob and
         # widens the same checks; it stays out of the "old" set and is pending with this one.
-        power_files = [p for p in new_files if "power_tool_object_types" in p.name]
+        # SPEC-044 section 3.1: NNN_identified_tool_object_types.sql also matches and widens
+        # the same checks; it is pending with the power tool one.
+        power_files = [
+            p
+            for p in new_files
+            if "power_tool_object_types" in p.name or "identified_tool_object_types" in p.name
+        ]
         tool_files = [
             p for p in new_files if "tool_object_types" in p.name and p not in power_files
         ]

@@ -1423,6 +1423,10 @@ def test_extra_by_object_type_and_series_charts() -> None:
         "serra",
         "furadeira",
         "parafusadeira",
+        # SPEC-044 section 3.1: and the 3 identification-only tools.
+        "martelo",
+        "chave de aperto",
+        "nível",
         "desconhecido",
     }
     series = [

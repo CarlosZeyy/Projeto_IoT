@@ -229,7 +229,9 @@ def test_extra_object_type_order_and_colors() -> None:
     # hand tools and unknown); the relative order of these 8 types is unchanged.
     power = {"angle_grinder", "saw", "drill", "cordless_screwdriver"}
     assert set(order) == {m.value for m in ObjectType}
-    assert [t for t in order if t not in power] == ["screw", "nut", *TOOLS, "unknown"]
+    # SPEC-044 section 3.1: only the relative order of the types of this SPEC is checked.
+    spec016 = ["screw", "nut", *TOOLS, "unknown"]
+    assert [t for t in order if t not in power and t in spec016] == spec016
     colors = charts.OBJECT_TYPE_COLORS
     keys = {ObjectType(k).value if not isinstance(k, str) else k for k in colors}
     labels = {OBJECT_TYPE_LABELS_PT[ObjectType(t)] for t in order}

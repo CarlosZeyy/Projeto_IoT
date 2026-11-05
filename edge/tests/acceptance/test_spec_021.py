@@ -677,7 +677,8 @@ def test_extra_coverage_has_one_row_per_power_tool(edge: Edge) -> None:
             assert (tool, grade) not in cells, (tool, grade)
     assert (cells[("drill", None)].images, cells[("drill", None)].items) == (4, 3)
     assert (cells[("saw", None)].images, cells[("saw", None)].items) == (0, 0)
-    assert len(cells) == 11 + 25 + 4
+    # SPEC-044 section 3.1: only the rows this SPEC introduced (one per power tool) are counted.
+    assert sum(1 for t, _ in cells if t in POWER_TOOLS) == 4
     order = [c.object_type for c in compute_coverage(edge.manifest)]
     assert [t for t in dict.fromkeys(order) if t in POWER_TOOLS] == list(POWER_TOOLS)
 

@@ -441,8 +441,11 @@ def test_extra_power_tool_migration_keeps_rows_and_runs_again(
         files = sorted(MIGRATIONS.glob("*.sql"))
         power = [p for p in files if p.name.endswith("_power_tool_object_types.sql")]
         assert len(power) == 1, files
+        # SPEC-044 section 3.1: only NNN_identified_tool_object_types.sql may widen the same
+        # checks after this one.
         assert power[0] == files[-1] or all(
             "object_type" not in p.read_text(encoding="utf-8")
+            or p.name.endswith("_identified_tool_object_types.sql")
             for p in files[files.index(power[0]) + 1 :]
         )
         old_dir = tmp_path / "old"

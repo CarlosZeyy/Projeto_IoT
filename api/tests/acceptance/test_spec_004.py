@@ -779,7 +779,7 @@ SPEC002_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_002.py"
 SPEC002_PREPROCESS = "packages/preprocess/tests/acceptance/test_spec_002.py"
 SPEC023_PREPROCESS = "packages/preprocess/tests/acceptance/test_spec_023.py"
 SPEC024_PREPROCESS = "packages/preprocess/tests/acceptance/test_spec_024.py"
-SPEC021_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_021.py"
+SPEC044_CONTRACTS = "packages/contracts/tests/acceptance/test_spec_044.py"
 
 # Tests collected per file on `main` (dad1880), measured with `pytest --collect-only -q`.
 MAIN_COUNTS = {
@@ -857,7 +857,7 @@ VERSION_FILES = {
 MODULE_OF = {"qc-preprocess": "qc_preprocess", "qc-contracts": "qc_contracts"}
 ALLOWED_EXACT = {
     (SPEC024_PREPROCESS, "qc_preprocess", "0.3.0"),
-    (SPEC021_CONTRACTS, "qc_contracts", "0.6.0"),
+    (SPEC044_CONTRACTS, "qc_contracts", "0.7.0"),
 }
 
 
