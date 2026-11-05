@@ -132,3 +132,4 @@ Nenhum.
 
 - [x] Não alterei código de produção, só arquivos em `*/tests/acceptance/` e este relatório.
 - [x] Nenhuma foto de `ml/data/` aberta; nenhum acesso ao Supabase de produção nem à VPS.
+
