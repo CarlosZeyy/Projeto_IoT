@@ -6,25 +6,53 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PartQC — console da borda</title>
 <style>
-body { font-family: system-ui, sans-serif; margin: 1.5rem; color: #1b1b1b; }
-h1 { font-size: 1.4rem; margin: 0 0 1rem; }
-h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
-.pairing { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
-.qr svg { width: 260px; height: 260px; background: #fff; }
-.url { font-family: monospace; word-break: break-all; }
-.warning { background: #fff3cd; border: 1px solid #e0b000; padding: 0.6rem; }
-table { border-collapse: collapse; }
-th, td { border: 1px solid #ccc; padding: 0.3rem 0.6rem; text-align: left; }
-dl { display: grid; grid-template-columns: max-content auto; gap: 0.2rem 1rem; margin: 0; }
-dt { font-weight: bold; }
-dd { margin: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+body { font-family: system-ui, ui-sans-serif, sans-serif; font-size: 18px; line-height: 1.45; margin: 0; background: #f3f5f8; color: #1b1b1b; }
+.topbar { background: #1f3a5f; color: #ffffff; padding: 0.9rem 0; }
+.topbar h1 { max-width: 1200px; margin: 0 auto; padding: 0 1.5rem; font-size: 1.6em; line-height: 1.25; color: #ffffff; }
+.topbar h1 span { font-weight: normal; }
+main { max-width: 1200px; margin: 0 auto; padding: 1.25rem 1.5rem 1.5rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); column-gap: 1.25rem; }
+.card { background: #ffffff; border: 1px solid #d9dee5; border-radius: 0.6rem; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); padding: 1rem 1.25rem 1.25rem; margin: 0 0 1.25rem; min-width: 0; }
+h2 { font-size: 1.2em; margin: 0 0 0.75rem; color: #1f3a5f; }
+a { color: #1f3a5f; }
+.pairing { display: flex; gap: 1.25rem; align-items: flex-start; flex-wrap: wrap; }
+.pairing > div:not(.qr) { flex: 1 1 12rem; min-width: 0; }
+.pairing p { margin: 0 0 0.6rem; }
+.qr { background: #ffffff; padding: 12px; border: 1px solid #d9dee5; border-radius: 0.4rem; }
+.qr svg { display: block; width: 260px; height: 260px; background: #fff; }
+.url { font-family: ui-monospace, monospace; font-size: 0.9em; word-break: break-all; }
+.warning { background: #fff3cd; color: #6b4e00; border: 1px solid #e0b000; border-left-width: 6px; border-radius: 0.4rem; padding: 0.75rem 1rem; margin: 0 0 1.25rem; }
+dl { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 0.6rem 1rem; align-items: baseline; margin: 0; }
+dt { font-weight: bold; color: #555555; }
+dd { margin: 0; min-width: 0; }
 ul.thresholds { margin: 0; padding-left: 1.2rem; }
-tr.complete td { background: #d7f2dd; font-weight: bold; }
+#sink-pending, #sink-dead, #sink-connectivity { justify-self: start; padding: 0.1rem 0.7rem; border-radius: 0.4rem; font-weight: bold; white-space: normal; background: #e9ecef; color: #343a40; }
+#sink-pending, #sink-dead { font-variant-numeric: tabular-nums; }
+#sink-connectivity[data-connectivity=online] { background: #d7f2dd; color: #0b5d1e; }
+#sink-connectivity[data-connectivity=offline], #sink-connectivity[data-connectivity^=auth] { background: #fde2e1; color: #8a1c13; }
+#sink-connectivity[data-connectivity=disabled] { background: #e9ecef; color: #343a40; }
+#sink-pending[data-count="0"], #sink-dead[data-count="0"] { background: #d7f2dd; color: #0b5d1e; }
+#sink-pending:not([data-count="0"]) { background: #fff3cd; color: #6b4e00; }
+#sink-dead:not([data-count="0"]) { background: #fde2e1; color: #8a1c13; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #d9dee5; padding: 0.35rem 0.7rem; text-align: left; }
+th { background: #e9eef5; }
+tbody tr:nth-child(even):not(.complete) td { background: #f6f8fa; }
+tr.complete td { background: #d7f2dd; color: #0b5d1e; font-weight: bold; }
+#coverage tbody td:nth-child(n+3), #coverage tfoot td { text-align: right; font-variant-numeric: tabular-nums; }
+.footnote { margin: 0; color: #555555; font-size: 0.85em; text-align: center; }
 </style>
 </head>
 <body>
+<header class="topbar">
 <h1>PartQC — console da borda (<span>$device_id</span>)</h1>
+</header>
+<main>
 $ip_warning
+<div class="cards">
+<section class="card">
+<h2>Pareamento</h2>
 <div class="pairing">
 <div class="qr">$qr_svg</div>
 <div>
@@ -34,25 +62,35 @@ $other_ips
 </div>
 $live_pairing
 </div>
+</section>
+<section class="card">
 <h2>Estado</h2>
 <dl>
 <dt>Modelo</dt><dd id="model-state">$model_state</dd>
 <dt>Limiares de decisão</dt><dd id="model-thresholds">$thresholds</dd>
-<dt>Pendentes</dt><dd id="sink-pending">$sink_pending</dd>
-<dt>Com falha definitiva</dt><dd id="sink-dead">$sink_dead</dd>
+<dt>Pendentes</dt><dd data-count="$sink_pending" id="sink-pending">$sink_pending</dd>
+<dt>Com falha definitiva</dt><dd data-count="$sink_dead" id="sink-dead">$sink_dead</dd>
 <dt>Conectividade com a nuvem</dt><dd id="sink-connectivity" data-connectivity="$connectivity_code">$connectivity</dd>
 <dt>Último envio</dt><dd id="sink-last-success">$last_success_at</dd>
 <dt>Latência por quadro (vídeo ao vivo)</dt><dd id="live-latency">$live_latency</dd>
 <dt>Dataset (modo coleta)</dt><dd class="url">$dataset_dir</dd>
 </dl>
+</section>
+</div>
+<section class="card">
 <h2>Últimas inspeções desta sessão</h2>
-<table>
+<table class="inspections">
 <thead><tr><th>Hora</th><th>Lote</th><th>Tipo</th><th>Grau</th></tr></thead>
 <tbody>
 $rows
 </tbody>
 </table>
+</section>
+<section class="card">
 <h2>Cobertura do dataset</h2>
 $coverage
+</section>
+<p class="footnote">A página atualiza sozinha a cada 5 s.</p>
+</main>
 </body>
 </html>
