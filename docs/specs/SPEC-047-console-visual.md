@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Ready |
-| Rodada atual | — |
+| Status | In Dev |
+| Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | — (sem `security`: nenhuma rota, header, entrada, segredo ou dado exibido muda; os CAs 09 e 10 conferem isso. Ver §9, pergunta 2) |
 | Depende de | Nada a esperar: SPECs 007, 008, 009, 010, 019, 025, 041 e 043 estão `Done` |
