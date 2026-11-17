@@ -158,7 +158,7 @@ Escopo das métricas abaixo da meta: `type_accuracy` nas 15 peças (30 imagens) 
 - **O que mudou nas matrizes (fatos, sem causa demonstrada):**
   - `type_confusion`: o v2 prevê `screw` para 8 imagens de teste que não são parafuso (4 de `pliers`, 3 de `phillips_screwdriver` e 1 de `wrench`); o v1 previa para 2 (1 de `pliers` e 1 de `wrench`). As 6 previsões de `saw` do v1 sumiram (0 no v2) e 1 imagem de `phillips_screwdriver` foi prevista como `drill`. As 3 imagens de `other` são `other` no v2 (2 de 3 no v1). As 19 fotos novas, todas de parafuso, são uma explicação possível para o desvio para `screw`, mas nada aqui a demonstra. Na borda, uma ferramenta prevista como `screw` recebe grau.
   - `grade_confusion`: o v2 previu `perfect` para 3 das 4 imagens da peça `fair` (o v1 previa `poor` para 3 delas).
-- **Validação:** melhor QWK de grau da validação 0,3556 (época 12) no v2 e 0,4259 (época 6) no v1 (`training_config.json`). Os limiares repetem as notas `type_target_not_met` (falso desconhecido da validação 0,4583 em 0,50, nas 24 imagens que não são `other`; 0,5000 no v1) e `review_adjusted` (com 0,60, 0,8824 das 17 imagens de validação de parafuso e `other` iriam para revisão; 0,30 deixa 0,1765). O `unusable_threshold` continua 0,95 (1 peça `unusable` na validação).
+- **Validação:** melhor QWK de grau da validação 0,3555 (época 12) no v2 e 0,4259 (época 6) no v1 (`training_config.json`). Os limiares repetem as notas `type_target_not_met` (falso desconhecido da validação 0,4584 em 0,50, nas 24 imagens que não são `other`; 0,5000 no v1) e `review_adjusted` (com 0,60, 0,8824 das 17 imagens de validação de parafuso e `other` iriam para revisão; 0,30 deixa 0,1765). O `unusable_threshold` continua 0,95 (1 peça `unusable` na validação).
 
 ### Dados
 
@@ -184,8 +184,9 @@ Nenhuma meta do PRD §7 pode ser afirmada como propriedade do sistema com este t
 - **Tipos com 1 ou 2 peças sem nenhuma medida:** `spirit_level`, `allen_key`, `drill`, `saw` e `cordless_screwdriver` ficaram só no treino (0 peças no teste).
 - **Tipos e fusões decididos por um agente**, por miniaturas (Anexo A da SPEC-045); o grau continua sendo o do Carlos, por imagem.
 - **Graus divergentes dentro de peças fundidas** (ex.: `S-509`): o grau é por foto, e o estrato do split é o grau dominante.
+- **Outro domínio de captura:** os colegas usaram outros celulares, outra distância e outra luz; a demo pela página `/capture` pode se comportar diferente.
 - **Nenhuma concordância entre rotuladores** (ADR-025, opção 6B): não existe `ml/reports/agreement.json` para este modelo.
-- **Escopo do `false_unknown_rate`:** o limiar é escolhido na validação com todos os tipos menos `other`; o teste conta só `screw`/`nut` (7 parafusos, 10 imagens). O 0,0000 do teste não mede a mesma coisa que o 0,4583 da validação e não inclui as 3 imagens de `hammer` previstas como `other` nem as 8 ferramentas previstas como `screw`.
+- **Escopo do `false_unknown_rate`:** o limiar é escolhido na validação com todos os tipos menos `other`; o teste conta só `screw`/`nut` (7 parafusos, 10 imagens). O 0,0000 do teste não mede a mesma coisa que o 0,4584 da validação e não inclui as 3 imagens de `hammer` previstas como `other` nem as 8 ferramentas previstas como `screw`.
 - **Nenhuma ferramenta graduada** (SPEC-016 §4.6): `tool_grade_metrics` é `{}`.
 
 Novas no v2:
