@@ -1,0 +1,234 @@
+{
+  "model_version": "partqc-mnv3-v2",
+  "config": {
+    "model_version": "partqc-mnv3-v2",
+    "dataset_dir": "ml/data",
+    "split_file": "ml/splits/split_v2.csv",
+    "backbone": "mobilenetv3_large_100",
+    "pretrained": true,
+    "grade_head": "ce",
+    "seed": 42,
+    "batch_size": 32,
+    "epochs_a": 8,
+    "lr_a": 0.001,
+    "epochs_b_max": 30,
+    "lr_b": 0.0001,
+    "unfreeze_last_blocks": 2,
+    "patience": 5,
+    "min_delta": 0.0001,
+    "label_smoothing": 0.1,
+    "lambda_grade": 1.0,
+    "weight_decay": 0.0001,
+    "num_workers": 2,
+    "models_root": "ml/models",
+    "reports_root": "ml/reports",
+    "checkpoints_root": "ml/checkpoints",
+    "smoke": false,
+    "external_sources": null
+  },
+  "deviations_from_defaults": [],
+  "labels": {
+    "object_types": [
+      "screw",
+      "other",
+      "pliers",
+      "allen_key",
+      "flat_screwdriver",
+      "phillips_screwdriver",
+      "saw",
+      "drill",
+      "cordless_screwdriver",
+      "hammer",
+      "wrench",
+      "spirit_level"
+    ],
+    "grades": [
+      "perfect",
+      "good",
+      "fair",
+      "poor",
+      "unusable"
+    ]
+  },
+  "ungraded_object_types": [
+    "pliers",
+    "allen_key",
+    "flat_screwdriver",
+    "phillips_screwdriver",
+    "saw",
+    "drill",
+    "cordless_screwdriver",
+    "hammer",
+    "wrench",
+    "spirit_level"
+  ],
+  "split_file": "split_v2.csv",
+  "split_sha256": "0437dbc05d8710be826a52aefadb8278650e6fedd116ab3e5dcb55f5c957f440",
+  "manifest_sha256": "598991b508a770c2921e9e9a19b448f196a101b23b287dcc15528a498795878d",
+  "grade_class_weights": [
+    0.6,
+    1.157142857142857,
+    1.7999999999999998,
+    0.648,
+    2.6999999999999997
+  ],
+  "history": [
+    {
+      "epoch": 1,
+      "phase": "A",
+      "train_loss": 3.8933667823916576,
+      "val_loss": 3.739110231399536,
+      "val_type_accuracy": 0.4827586206896552,
+      "val_grade_qwk": 0.13461538461538458
+    },
+    {
+      "epoch": 2,
+      "phase": "A",
+      "train_loss": 2.923052352634284,
+      "val_loss": 3.5139477252960205,
+      "val_type_accuracy": 0.5517241379310345,
+      "val_grade_qwk": 0.030303030303030276
+    },
+    {
+      "epoch": 3,
+      "phase": "A",
+      "train_loss": 2.501795390916001,
+      "val_loss": 3.4922943115234375,
+      "val_type_accuracy": 0.5517241379310345,
+      "val_grade_qwk": 0.09615384615384615
+    },
+    {
+      "epoch": 4,
+      "phase": "A",
+      "train_loss": 2.262178332427812,
+      "val_loss": 3.501216173171997,
+      "val_type_accuracy": 0.5517241379310345,
+      "val_grade_qwk": -0.010101010101010166
+    },
+    {
+      "epoch": 5,
+      "phase": "A",
+      "train_loss": 2.0876535353113392,
+      "val_loss": 3.5053749084472656,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.09677419354838712
+    },
+    {
+      "epoch": 6,
+      "phase": "A",
+      "train_loss": 1.9328242103910185,
+      "val_loss": 3.5094783306121826,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.12962962962962965
+    },
+    {
+      "epoch": 7,
+      "phase": "A",
+      "train_loss": 1.8510728338377072,
+      "val_loss": 3.4785561561584473,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.09909909909909909
+    },
+    {
+      "epoch": 8,
+      "phase": "A",
+      "train_loss": 1.7604282423446738,
+      "val_loss": 3.4746384620666504,
+      "val_type_accuracy": 0.6551724137931034,
+      "val_grade_qwk": 0.11363636363636365
+    },
+    {
+      "epoch": 9,
+      "phase": "B",
+      "train_loss": 2.5773353915396937,
+      "val_loss": 3.3914952278137207,
+      "val_type_accuracy": 0.6551724137931034,
+      "val_grade_qwk": 0.18279569892473113
+    },
+    {
+      "epoch": 10,
+      "phase": "B",
+      "train_loss": 2.211938879528984,
+      "val_loss": 3.3853812217712402,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.14583333333333337
+    },
+    {
+      "epoch": 11,
+      "phase": "B",
+      "train_loss": 2.0166486566835413,
+      "val_loss": 3.4201836585998535,
+      "val_type_accuracy": 0.5862068965517241,
+      "val_grade_qwk": 0.14583333333333337
+    },
+    {
+      "epoch": 12,
+      "phase": "B",
+      "train_loss": 1.8749029903463978,
+      "val_loss": 3.422114849090576,
+      "val_type_accuracy": 0.6206896551724138,
+      "val_grade_qwk": 0.3555555555555555
+    },
+    {
+      "epoch": 13,
+      "phase": "B",
+      "train_loss": 1.7450114651455906,
+      "val_loss": 3.397411823272705,
+      "val_type_accuracy": 0.6206896551724138,
+      "val_grade_qwk": 0.18000000000000005
+    },
+    {
+      "epoch": 14,
+      "phase": "B",
+      "train_loss": 1.6753695115365617,
+      "val_loss": 3.369378089904785,
+      "val_type_accuracy": 0.6551724137931034,
+      "val_grade_qwk": 0.18000000000000005
+    },
+    {
+      "epoch": 15,
+      "phase": "B",
+      "train_loss": 1.6439849939502653,
+      "val_loss": 3.364914894104004,
+      "val_type_accuracy": 0.6551724137931034,
+      "val_grade_qwk": 0.22330097087378642
+    },
+    {
+      "epoch": 16,
+      "phase": "B",
+      "train_loss": 1.5270854697201421,
+      "val_loss": 3.38836407661438,
+      "val_type_accuracy": 0.6551724137931034,
+      "val_grade_qwk": 0.16190476190476188
+    },
+    {
+      "epoch": 17,
+      "phase": "B",
+      "train_loss": 1.4899062328651302,
+      "val_loss": 3.443502426147461,
+      "val_type_accuracy": 0.6551724137931034,
+      "val_grade_qwk": 0.2142857142857143
+    }
+  ],
+  "best_epoch": 12,
+  "best_val_grade_qwk": 0.3555555555555555,
+  "stopped_early": true,
+  "versions": {
+    "python": "3.12.15",
+    "torch": "2.14.1",
+    "torchvision": "0.29.1",
+    "timm": "1.0.30",
+    "numpy": "2.5.4",
+    "scikit-learn": "1.9.1",
+    "onnx": "1.23.2",
+    "onnxruntime": "1.31.0",
+    "coral-pytorch": "1.4.0",
+    "qc-preprocess": "0.3.0",
+    "qc-ml": "0.0.0"
+  },
+  "device": "cpu",
+  "git_commit": "8d07355fe41e128b15837c525ebabad28acea0f8",
+  "started_at": "2026-11-17T15:10:30+00:00",
+  "finished_at": "2026-11-17T15:14:16+00:00",
+  "smoke": false
+}
