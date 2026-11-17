@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | In Dev |
+| Status | In Test |
 | Rodada atual | r1 |
 | Autor da implementação | developer |
 | Tags | — (sem `security`: nenhuma rota, header, entrada, segredo ou dado exibido muda; os CAs 09 e 10 conferem isso. Ver §9, pergunta 2) |
