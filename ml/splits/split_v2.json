@@ -1,0 +1,52 @@
+{
+  "split_file": "split_v2.csv",
+  "seed": 42,
+  "ratios": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "parent": "split_v1",
+  "manifest_sha256": "598991b508a770c2921e9e9a19b448f196a101b23b287dcc15528a498795878d",
+  "max_external_fraction": 0.3,
+  "external_fraction_train": 0.0,
+  "counts": {
+    "images": {
+      "train": 183,
+      "val": 29,
+      "test": 30
+    },
+    "items": {
+      "train": 87,
+      "val": 15,
+      "test": 15
+    },
+    "n_external_images": {
+      "train": 0,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "warnings": [
+    {
+      "code": "small_stratum",
+      "stratum": "screw/good",
+      "n_items": 1,
+      "scope": "new_items"
+    },
+    {
+      "code": "small_stratum",
+      "stratum": "screw/perfect",
+      "n_items": 1,
+      "scope": "new_items"
+    },
+    {
+      "code": "small_stratum",
+      "stratum": "screw/poor",
+      "n_items": 1,
+      "scope": "new_items"
+    }
+  ],
+  "test_extended_types": [],
+  "deferred_types": []
+}

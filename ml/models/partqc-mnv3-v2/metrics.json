@@ -1,0 +1,872 @@
+{
+  "model_version": "partqc-mnv3-v2",
+  "model_sha256": "2ed32f21a69c70b65287df3b347648e55c9c91f67e0c006a927251064ca27803",
+  "evaluated_at": "2026-11-17T15:14:25+00:00",
+  "split_file": "split_v2.csv",
+  "split_sha256": "0437dbc05d8710be826a52aefadb8278650e6fedd116ab3e5dcb55f5c957f440",
+  "manifest_sha256": "598991b508a770c2921e9e9a19b448f196a101b23b287dcc15528a498795878d",
+  "labels": {
+    "object_types": [
+      "screw",
+      "other",
+      "pliers",
+      "allen_key",
+      "flat_screwdriver",
+      "phillips_screwdriver",
+      "saw",
+      "drill",
+      "cordless_screwdriver",
+      "hammer",
+      "wrench",
+      "spirit_level"
+    ],
+    "grades": [
+      "perfect",
+      "good",
+      "fair",
+      "poor",
+      "unusable"
+    ],
+    "ungraded_object_types": [
+      "pliers",
+      "allen_key",
+      "flat_screwdriver",
+      "phillips_screwdriver",
+      "saw",
+      "drill",
+      "cordless_screwdriver",
+      "hammer",
+      "wrench",
+      "spirit_level"
+    ]
+  },
+  "decision": {
+    "type_threshold": 0.5,
+    "unusable_threshold": 0.95,
+    "grade_review_threshold": 0.3
+  },
+  "type_accuracy": 0.6,
+  "type_confusion": [
+    [
+      10,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      4,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      4,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  ],
+  "grade_qwk": 0.3908629441624365,
+  "grade_mae": 1.4,
+  "grade_off_by_one_accuracy": 0.5,
+  "grade_confusion": [
+    [
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    [
+      3,
+      0,
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      2
+    ],
+    [
+      0,
+      0,
+      1,
+      0,
+      0
+    ]
+  ],
+  "grade_per_class": {
+    "perfect": {
+      "precision": 0.25,
+      "recall": 0.5,
+      "f1": 0.3333333333333333,
+      "support": 2
+    },
+    "good": {
+      "precision": null,
+      "recall": 0.0,
+      "f1": null,
+      "support": 1
+    },
+    "fair": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 4
+    },
+    "poor": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 2
+    },
+    "unusable": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 1
+    }
+  },
+  "unusable_recall": 0.0,
+  "unusable_precision": 0.0,
+  "defective_recall": 0.6666666666666666,
+  "defective_precision": 0.6666666666666666,
+  "unknown_rate_on_other": 1.0,
+  "false_unknown_rate": 0.0,
+  "needs_review_rate": 0.6666666666666666,
+  "latency_ms_p50": 19.50879799994709,
+  "latency_ms_p95": 28.247959749933216,
+  "latency_machine": "notebook-borda",
+  "latency_runs": 100,
+  "counts": {
+    "train": {
+      "n_images": 183,
+      "n_items": 87,
+      "by_class": {
+        "screw": {
+          "n_images": 81,
+          "n_items": 36,
+          "by_grade": {
+            "perfect": {
+              "n_images": 27,
+              "n_items": 14
+            },
+            "good": {
+              "n_images": 14,
+              "n_items": 7
+            },
+            "fair": {
+              "n_images": 9,
+              "n_items": 6
+            },
+            "poor": {
+              "n_images": 25,
+              "n_items": 9
+            },
+            "unusable": {
+              "n_images": 6,
+              "n_items": 5
+            }
+          }
+        },
+        "other": {
+          "n_images": 30,
+          "n_items": 17,
+          "by_grade": {}
+        },
+        "pliers": {
+          "n_images": 7,
+          "n_items": 5,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 4,
+              "n_items": 2
+            },
+            "unusable": {
+              "n_images": 2,
+              "n_items": 2
+            }
+          }
+        },
+        "allen_key": {
+          "n_images": 6,
+          "n_items": 1,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 4,
+              "n_items": 1
+            },
+            "fair": {
+              "n_images": 2,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "flat_screwdriver": {
+          "n_images": 6,
+          "n_items": 6,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 2,
+              "n_items": 2
+            },
+            "fair": {
+              "n_images": 3,
+              "n_items": 3
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 1,
+              "n_items": 1
+            }
+          }
+        },
+        "phillips_screwdriver": {
+          "n_images": 8,
+          "n_items": 5,
+          "by_grade": {
+            "perfect": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "good": {
+              "n_images": 3,
+              "n_items": 1
+            },
+            "fair": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 3,
+              "n_items": 2
+            }
+          }
+        },
+        "saw": {
+          "n_images": 4,
+          "n_items": 1,
+          "by_grade": {}
+        },
+        "drill": {
+          "n_images": 11,
+          "n_items": 2,
+          "by_grade": {}
+        },
+        "cordless_screwdriver": {
+          "n_images": 4,
+          "n_items": 1,
+          "by_grade": {}
+        },
+        "hammer": {
+          "n_images": 9,
+          "n_items": 5,
+          "by_grade": {}
+        },
+        "wrench": {
+          "n_images": 13,
+          "n_items": 6,
+          "by_grade": {}
+        },
+        "spirit_level": {
+          "n_images": 4,
+          "n_items": 2,
+          "by_grade": {}
+        }
+      },
+      "by_origin": {
+        "capture": 19,
+        "contributor": 164,
+        "external": 0
+      },
+      "by_source": {}
+    },
+    "val": {
+      "n_images": 29,
+      "n_items": 15,
+      "by_class": {
+        "screw": {
+          "n_images": 12,
+          "n_items": 7,
+          "by_grade": {
+            "perfect": {
+              "n_images": 3,
+              "n_items": 2
+            },
+            "good": {
+              "n_images": 2,
+              "n_items": 2
+            },
+            "fair": {
+              "n_images": 3,
+              "n_items": 2
+            },
+            "poor": {
+              "n_images": 3,
+              "n_items": 2
+            },
+            "unusable": {
+              "n_images": 1,
+              "n_items": 1
+            }
+          }
+        },
+        "other": {
+          "n_images": 5,
+          "n_items": 3,
+          "by_grade": {}
+        },
+        "pliers": {
+          "n_images": 4,
+          "n_items": 1,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 3,
+              "n_items": 1
+            },
+            "fair": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "allen_key": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "flat_screwdriver": {
+          "n_images": 4,
+          "n_items": 1,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 3,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "phillips_screwdriver": {
+          "n_images": 2,
+          "n_items": 1,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "poor": {
+              "n_images": 2,
+              "n_items": 1
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "saw": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        },
+        "drill": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        },
+        "cordless_screwdriver": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        },
+        "hammer": {
+          "n_images": 1,
+          "n_items": 1,
+          "by_grade": {}
+        },
+        "wrench": {
+          "n_images": 1,
+          "n_items": 1,
+          "by_grade": {}
+        },
+        "spirit_level": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        }
+      },
+      "by_origin": {
+        "capture": 0,
+        "contributor": 29,
+        "external": 0
+      },
+      "by_source": {}
+    },
+    "test": {
+      "n_images": 30,
+      "n_items": 15,
+      "by_class": {
+        "screw": {
+          "n_images": 10,
+          "n_items": 7,
+          "by_grade": {
+            "perfect": {
+              "n_images": 2,
+              "n_items": 2
+            },
+            "good": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "fair": {
+              "n_images": 4,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 2,
+              "n_items": 2
+            },
+            "unusable": {
+              "n_images": 1,
+              "n_items": 1
+            }
+          }
+        },
+        "other": {
+          "n_images": 3,
+          "n_items": 3,
+          "by_grade": {}
+        },
+        "pliers": {
+          "n_images": 4,
+          "n_items": 1,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 3,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "allen_key": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "flat_screwdriver": {
+          "n_images": 1,
+          "n_items": 1,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 1,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "phillips_screwdriver": {
+          "n_images": 4,
+          "n_items": 1,
+          "by_grade": {
+            "perfect": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "good": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "fair": {
+              "n_images": 4,
+              "n_items": 1
+            },
+            "poor": {
+              "n_images": 0,
+              "n_items": 0
+            },
+            "unusable": {
+              "n_images": 0,
+              "n_items": 0
+            }
+          }
+        },
+        "saw": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        },
+        "drill": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        },
+        "cordless_screwdriver": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        },
+        "hammer": {
+          "n_images": 3,
+          "n_items": 1,
+          "by_grade": {}
+        },
+        "wrench": {
+          "n_images": 5,
+          "n_items": 1,
+          "by_grade": {}
+        },
+        "spirit_level": {
+          "n_images": 0,
+          "n_items": 0,
+          "by_grade": {}
+        }
+      },
+      "by_origin": {
+        "capture": 0,
+        "contributor": 30,
+        "external": 0
+      },
+      "by_source": {}
+    }
+  },
+  "grade_qwk_ci95": [
+    -0.03710575139146566,
+    0.7961165048543689
+  ],
+  "unusable_recall_ci95": [
+    0.0,
+    0.0
+  ],
+  "defective_recall_ci95": [
+    0.0,
+    1.0
+  ],
+  "n_items_test_by_grade": {
+    "perfect": 2,
+    "good": 1,
+    "fair": 1,
+    "poor": 2,
+    "unusable": 1
+  },
+  "tool_grade_metrics": {},
+  "warnings": [
+    "unusable_recall_ci95: unusable_recall was undefined in 347 of 1000 bootstrap resamples, left out of the interval",
+    "defective_recall_ci95: defective_recall was undefined in 11 of 1000 bootstrap resamples, left out of the interval",
+    "grade good has 1 item(s) in the test split (< 2): its metrics are very uncertain",
+    "grade fair has 1 item(s) in the test split (< 2): its metrics are very uncertain",
+    "grade unusable has 1 item(s) in the test split (< 2): its metrics are very uncertain",
+    "few test items for pliers: 1",
+    "few test items for allen_key: 0",
+    "few test items for flat_screwdriver: 1",
+    "few test items for phillips_screwdriver: 1",
+    "few test items for saw: 0",
+    "few test items for drill: 0",
+    "few test items for cordless_screwdriver: 0",
+    "few test items for hammer: 1",
+    "few test items for wrench: 1",
+    "few test items for spirit_level: 0"
+  ]
+}
