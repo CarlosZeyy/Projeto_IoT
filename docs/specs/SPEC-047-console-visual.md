@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Draft |
+| Status | Ready |
 | Rodada atual | — |
 | Autor da implementação | developer |
 | Tags | — (sem `security`: nenhuma rota, header, entrada, segredo ou dado exibido muda; os CAs 09 e 10 conferem isso. Ver §9, pergunta 2) |
@@ -294,3 +294,4 @@ O `docs/deployment-plan.md` §5 e o passo 7A (SPEC-039 §4.8) dizem: "nenhum mer
 ## Histórico
 
 - 2026-11-17: SPEC criada pelo architect, a pedido do humano (Carlos), para melhorar o visual do console antes da apresentação da noite. Status `Draft`, aguardando aprovação humana.
+| 2026-11-17 | Aprovada pelo humano (`Ready`): "Aprovar" (sem a tag `security`, só os dois textos novos da §4.1, numeração 047 com a 046 reservada); exceção ao §5 do deployment-plan: "Autorizo o merge" hoje, sem Deploy no Coolify (webhook não configurado), com `git pull` no notebook antes da apresentação | Pedido do humano | Humano |
