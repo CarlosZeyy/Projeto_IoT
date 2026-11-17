@@ -5,9 +5,9 @@
 | SPEC | [SPEC-045](../../docs/specs/SPEC-045-treino-com-fotos-dos-colegas.md) |
 | Rodada | operação, segundo modelo oficial (§4.7, passo 7; mesmos critérios do CA-16 do [r1](r1-operacao-test-report.md)) |
 | Tester | tester |
-| Commit testado | `79b95c2` (branch `ml/partqc-mnv3-v2`, commits `319b8f9` e `79b95c2` do ml-engineer, sobre `main` `234226d`) |
+| Commit testado | `79b95c2` (branch `ml/partqc-mnv3-v2`, commits `319b8f9` e `79b95c2` do ml-engineer, sobre `main` `234226d`); reconferência em `46b694f` |
 | Ambiente | worktree `.claude/worktrees/ml-v2`, sem torch (só onnxruntime) |
-| **Veredicto** | **FAIL**: o `split_v2`, o `metrics.json`, os arquivos e a paridade passam. A entrada do v2 no CHANGELOG tem 2 achados de baixa severidade: falta 1 das 8 limitações da decisão 7 e 3 números de validação estão arredondados a favor |
+| **Veredicto** | **PASS** na reconferência de 2026-11-17 em `46b694f` (BUG-01 e BUG-02 corrigidos; ver "Reconferência" no fim). Histórico: **FAIL** na primeira conferência, em `79b95c2`: o `split_v2`, o `metrics.json`, os arquivos e a paridade passavam, mas a entrada do v2 no CHANGELOG tinha 2 achados de baixa severidade (faltava 1 das 8 limitações da decisão 7 e 3 números de validação estavam arredondados a favor) |
 
 Nenhum agente abriu foto nesta conferência. Tudo foi feito sobre CSV e JSON, o `model.onnx` (só hash e paridade), o `parity_fixture.npz` (só chaves e formatos) e as CLIs do projeto. O manifest `ml/data/manifest.csv` não existe no worktree. Ele foi **lido**, sem nenhuma escrita, na pasta principal, para checar o hash e o `item_id`. Este relatório traz só contagens, `item_id` e hashes.
 
@@ -173,3 +173,20 @@ Nenhum.
 - [x] Não alterei código de produção, testes, CHANGELOG nem artefatos; só escrevi este relatório.
 - [x] Não abri nenhuma foto nem os PNG. O relatório não traz caminho de foto, `source_ref` nem `notes`.
 - [x] Trabalhei só no worktree `ml-v2`. Na pasta principal, só li o `ml/data/manifest.csv`, para o hash e o `item_id`.
+
+## Reconferência (2026-11-17, 15:57 UTC, commit `46b694f`)
+
+O ml-engineer corrigiu os dois achados no commit `46b694f` (`docs(ml): fix the partqc-mnv3-v2 changelog entry (r2 test findings)`, `Agent: ml-engineer`). As seções acima são da primeira conferência (`79b95c2`, **FAIL**) e ficam como histórico.
+
+| # | Conferência | Obtido | Resultado |
+|---|---|---|---|
+| 1 | Nada mudou além do CHANGELOG desde `c9c072c` | `git diff --stat c9c072c 46b694f`: só `ml/models/CHANGELOG.md` (3 inserções, 2 remoções). Desde `79b95c2`, nenhum arquivo mudou fora do CHANGELOG e deste relatório | PASS |
+| 2 | BUG-01 | o item "**Outro domínio de captura:** os colegas usaram outros celulares, outra distância e outra luz; a demo pela página `/capture` pode se comportar diferente" entrou na lista de limitações do v2 (o mesmo texto do v1). A lista tem agora os 8 itens da decisão 7, mais os 3 do v1 que vêm de outras decisões e os 3 novos do v2 (14 itens) | PASS |
+| 3 | BUG-02 | linha 161: 0,3556 → **0,3555**; linhas 161 e 188: 0,4583 → **0,4584**. Recalculei com `Decimal(repr(valor))` e a regra do `docs/architecture.md` §7: `best_val_grade_qwk` com `ROUND_FLOOR` dá 0,3555, e `false_unknown_rate` com `ROUND_CEILING` dá 0,4584. Não sobrou nenhuma ocorrência de 0,3556 ou 0,4583 na entrada do v2 | PASS |
+| 4 | Observação do autor sobre 0,8824 e 0,1765 | **concordo.** As duas são `needs_review_rate` da validação (15/17 = 0,88235… e 3/17 = 0,17647…). O §7 põe `needs_review_rate` na lista de "menor é melhor", com `ROUND_CEILING`, e o recálculo dá 0,8824 e 0,1765. O arredondamento para cima é conservador, não a favor, e já estava listado como correto no BUG-02 | PASS |
+| 5 | Tabela do CHANGELOG × gerador | `qc_ml.report changelog --model-dir ml/models/partqc-mnv3-v2 --previous ml/models/partqc-mnv3-v1` gerado de novo: tabela idêntica (linhas 119 a 137) | PASS |
+| 6 | `uv run ruff check .` | `All checks passed!` | PASS |
+
+O `split_v2`, o `metrics.json`, os artefatos e o `model.onnx` não mudaram desde a primeira conferência, então os resultados `PASS` de lá continuam valendo, inclusive a paridade e os 311 testes de `ml/tests`. Os testes não foram rodados de novo, porque a mudança é só de texto em Markdown.
+
+**Veredicto da reconferência: PASS.** Os critérios do CA-16 para o `partqc-mnv3-v2` estão cumpridos na parte automatizável. O Release no GitHub e a cópia para o `MODEL_DIR` da borda continuam sendo passos manuais do orquestrador e do humano.
